@@ -187,7 +187,7 @@ export class Arena {
     }
     ctx.restore();
     ctx.fillStyle = INK; ctx.font = '600 15px Caveat, cursive'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillText(kind === 'medkit' ? 'botiquín' : kind === 'armor' ? 'escudo' : WEAPONS[kind].name, x, l.y + 22);
+    ctx.fillText(kind === 'medkit' ? 'medkit' : kind === 'armor' ? 'armor' : WEAPONS[kind].name, x, l.y + 22);
   }
 
   private player(p: SnapPlayer) {
@@ -208,6 +208,6 @@ export class Arena {
     ctx.strokeStyle = RED; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_R + 5, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * p.hp) / PLAYER_HP); ctx.stroke();
     ctx.fillStyle = mine ? INK : GRAPHITE; ctx.font = '700 18px Caveat, cursive'; ctx.textBaseline = 'bottom';
-    ctx.fillText(mine ? 'vos' : seat?.name ?? '', p.x, p.y - PLAYER_R - 12);
+    ctx.fillText(mine ? 'you' : seat?.name ?? '', p.x, p.y - PLAYER_R - 12);
   }
 }

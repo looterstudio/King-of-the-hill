@@ -45,7 +45,7 @@ export class LocalNet {
       const sol = whale ? 0.4 + Math.random() * 2.2 : 0.004 + Math.random() * 0.07;
       const add = BigInt(Math.round(sol * 1e9));
       this.lamports += add;
-      this.emit({ t: 'inflow', inflow: { lamports: add.toString(), at: Date.now(), source: whale ? 'compra ballena' : 'fees de trading' } });
+      this.emit({ t: 'inflow', inflow: { lamports: add.toString(), at: Date.now(), source: whale ? 'whale buy' : 'trading fees' } });
       setTimeout(fee, 1200 + Math.random() * 3000);
     };
     setTimeout(fee, 900);

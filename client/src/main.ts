@@ -13,7 +13,7 @@ const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
 const fmtSol = (v: number) => `◎ ${v.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
 const hms = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return [s / 3600, (s % 3600) / 60, s % 60].map((v) => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-const LOOT_LABEL: Record<string, string> = { medkit: '+ botiquín', armor: '+ escudo', shotgun: 'escopeta', rifle: 'rifle', sniper: 'francotirador' };
+const LOOT_LABEL: Record<string, string> = { medkit: '+ medkit', armor: '+ armor', shotgun: 'shotgun', rifle: 'rifle', sniper: 'sniper' };
 // a hand-drawn loop around banner words
 const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden="true"><path d="M150 8 C 250 6, 296 34, 290 62 C 284 98, 210 114, 140 112 C 60 110, 6 92, 8 58 C 10 26, 70 8, 168 12"/></svg>';
 
@@ -57,7 +57,7 @@ function updatePlay() { $<HTMLButtonElement>('playBtn').disabled = !state.authed
 
 // ---------- auth ----------
 $('guestBtn').onclick = () => {
-  const name = $<HTMLInputElement>('guestName').value.trim() || 'invitado';
+  const name = $<HTMLInputElement>('guestName').value.trim() || 'guest';
   try { localStorage.setItem('pr_name', name); } catch { /* storage blocked */ }
   state.authMode = 'guest'; net.send({ t: 'guest', name });
 };
@@ -66,19 +66,19 @@ try { $<HTMLInputElement>('guestName').value = localStorage.getItem('pr_name') ?
 
 interface Phantom { connect(): Promise<{ publicKey: { toString(): string } }>; signMessage(m: Uint8Array, enc: 'utf8'): Promise<{ signature: Uint8Array }> }
 $('connectBtn').onclick = async () => {
-  if (DEMO) return err('En la demo entrá como invitado. La wallet se usa en la versión real.');
+  if (DEMO) return err('This demo runs on guest accounts. Wallets are used in the live game.');
   const w = window as unknown as { phantom?: { solana?: Phantom }; solana?: Phantom };
   const prov = w.phantom?.solana ?? w.solana;
-  if (!prov) return err('No encontramos Phantom. Instalalo desde phantom.app y recargá.');
+  if (!prov) return err('Phantom not found. Install it from phantom.app and reload.');
   try {
     const { publicKey } = await prov.connect();
     const { signature } = await prov.signMessage(new TextEncoder().encode(loginMessage(state.nonce)), 'utf8');
     state.authMode = 'wallet';
     net.send({ t: 'auth', wallet: publicKey.toString(), sig: bs58.encode(signature) });
-  } catch (e) { err((e as Error).message || 'Cancelaste la firma.'); }
+  } catch (e) { err((e as Error).message || 'Signature cancelled.'); }
 };
 
-$('playBtn').onclick = () => { net.send({ t: 'queue' }); $('queueInfo').textContent = 'Buscando una sala…'; };
+$('playBtn').onclick = () => { net.send({ t: 'queue' }); $('queueInfo').textContent = 'Finding a room…'; };
 $('leaveBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); $('queueInfo').textContent = ''; };
 
 // ---------- lobby ----------
@@ -86,11 +86,11 @@ const marks = (n: number) => '<i></i>'.repeat(Math.min(n, 15));
 function renderPot(p: PotView) {
   state.pot = p;
   jar.setSol(sol(p.lamports));
-  $('online').textContent = p.online.toLocaleString('es-AR');
+  $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
   $('tickets').innerHTML = p.tickets.length
     ? p.tickets.map((t) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''}"><span class="name"><span>${esc(t.name)}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
-    : '<li class="nobody">Nadie ganó una sala todavía. El primero aparece acá.</li>';
+    : '<li class="nobody">Nobody has won a room yet. The first winner shows up here.</li>';
 }
 
 function toast(text: string) {
@@ -104,8 +104,8 @@ function toast(text: string) {
 let shownSeats = new Set<number>();
 function renderSeats() {
   const fresh = new Set(state.seats.map((s) => s.id));
-  const filled = state.seats.map((s) => `<div class="seat full ${s.id === state.you ? 'me' : ''} ${shownSeats.has(s.id) ? '' : 'new'}"><div class="suit">${s.num}</div><div class="nm">${s.id === state.you ? 'vos' : esc(s.name)}</div></div>`);
-  const empty = Array.from({ length: ROOM_MAX - state.seats.length }, () => '<div class="seat">libre</div>');
+  const filled = state.seats.map((s) => `<div class="seat full ${s.id === state.you ? 'me' : ''} ${shownSeats.has(s.id) ? '' : 'new'}"><div class="suit">${s.num}</div><div class="nm">${s.id === state.you ? 'you' : esc(s.name)}</div></div>`);
+  const empty = Array.from({ length: ROOM_MAX - state.seats.length }, () => '<div class="seat">open</div>');
   $('seats').innerHTML = [...filled, ...empty].join('');
   shownSeats = fresh;
   $('fillBar').style.width = `${(state.seats.length / ROOM_MAX) * 100}%`;
@@ -113,7 +113,7 @@ function renderSeats() {
 
 // ---------- hud ----------
 const seatOf = (id: number | null) => (id === null ? null : state.seats.find((s) => s.id === id) ?? null);
-const label = (id: number | null) => { const s = seatOf(id); return s ? (s.id === state.you ? 'vos' : s.num) : '???'; };
+const label = (id: number | null) => { const s = seatOf(id); return s ? (s.id === state.you ? 'you' : s.num) : '???'; };
 
 function feed(html: string, mine = false) {
   const el = document.createElement('div'); el.innerHTML = html; if (mine) el.className = 'mine';
@@ -135,17 +135,17 @@ net.on((m: ServerMsg) => {
   switch (m.t) {
     case 'hello':
       state.nonce = m.nonce; state.authed = false; updatePlay();
-      $('holdReq').textContent = m.holdMinUsd > 0 ? `$${m.holdMinUsd} del token` : 'el token';
+      $('holdReq').textContent = m.holdMinUsd > 0 ? `$${m.holdMinUsd} of the token` : 'the token';
       $('guestBtn').classList.toggle('hidden', !m.allowGuests);
       $('guestName').classList.toggle('hidden', !m.allowGuests);
       // a reconnect loses the session; guests come back silently, wallets must sign again
-      if (state.authMode === 'guest') net.send({ t: 'guest', name: state.name || 'invitado' });
-      else if (state.authMode === 'wallet') { $('me').textContent = 'Se cortó la conexión. Volvé a conectar la wallet.'; $('me').classList.remove('on'); }
+      if (state.authMode === 'guest') net.send({ t: 'guest', name: state.name || 'guest' });
+      else if (state.authMode === 'wallet') { $('me').textContent = 'Connection lost. Connect your wallet again.'; $('me').classList.remove('on'); }
       if (state.screen !== 'lobby') show('lobby');
       break;
     case 'authed':
       state.authed = true; state.name = m.name; state.wallet = m.wallet;
-      $('me').textContent = `Jugador ${m.num} · ${m.name}${state.authMode === 'guest' ? ' (invitado)' : ''}`;
+      $('me').textContent = `Player ${m.num} · ${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}`;
       $('me').classList.add('on');
       updatePlay();
       break;
@@ -161,11 +161,11 @@ net.on((m: ServerMsg) => {
       const s = m.settled;
       $('lastDraw').className = 'draw-sum';
       $('lastDraw').innerHTML = s.winners.length
-        ? `<div>Ronda #${s.epoch} · pote <b>${fmtSol(sol(s.potLamports))}</b></div><ol class="ledger">${s.winners.slice(0, 6).map((w) => `<li><span class="name"><span>${esc(w.name || w.wallet.slice(0, 6))}</span></span><span class="marks"><em>${fmtSol(sol(w.lamports))}</em></span></li>`).join('')}</ol><div class="root">merkle root ${s.merkleRoot}</div>`
-        : `Ronda #${s.epoch}: nadie ganó una sala, así que ${fmtSol(sol(s.rollover))} pasan a la próxima.`;
+        ? `<div>Round #${s.epoch} · pot <b>${fmtSol(sol(s.potLamports))}</b></div><ol class="ledger">${s.winners.slice(0, 6).map((w) => `<li><span class="name"><span>${esc(w.name || w.wallet.slice(0, 6))}</span></span><span class="marks"><em>${fmtSol(sol(w.lamports))}</em></span></li>`).join('')}</ol><div class="root">merkle root ${s.merkleRoot}</div>`
+        : `Round #${s.epoch}: nobody won a room, so ${fmtSol(sol(s.rollover))} rolls into the next one.`;
       break;
     }
-    case 'queued': $('queueInfo').textContent = `En cola, puesto ${m.position}`; break;
+    case 'queued': $('queueInfo').textContent = `In queue, position ${m.position}`; break;
     case 'room': {
       state.seats = m.seats; state.you = m.you; state.startsAt = m.startsAt; state.phase = m.state;
       $('roomId').textContent = m.roomId.toUpperCase();
@@ -174,7 +174,7 @@ net.on((m: ServerMsg) => {
       if (m.state === 'live') {
         arena.reset(); arena.setRoom(m.seed, m.seats, m.you);
         state.alive = m.seats.length; $('feed').innerHTML = ''; $('tally').innerHTML = '';
-        show('game'); banner('¡A jugar!', 'juntá armas y escapá de la tormenta', true, 1600);
+        show('game'); banner('Go!', 'grab loot and outrun the storm', true, 1600);
       }
       break;
     }
@@ -185,15 +185,15 @@ net.on((m: ServerMsg) => {
       arena.markDeath(m.victim);
       $('tally').insertAdjacentHTML('beforeend', '<i></i>');
       const mine = m.victim === state.you || m.by === state.you;
-      const how = m.cause === 'ring' ? 'la tormenta' : m.cause === 'left' ? 'se fue' : label(m.by);
-      feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? 'por ' : ''}${esc(how)}</span>`, mine);
-      if (m.victim === state.you) banner('Eliminado', `quedan ${m.left} · seguís mirando la partida`, false, 2600);
+      const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : label(m.by);
+      feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? 'by ' : m.cause === 'ring' ? 'to ' : ''}${esc(how)}</span>`, mine);
+      if (m.victim === state.you) banner('Eliminated', `${m.left} left · spectating`, false, 2600);
       break;
     }
     case 'result': {
       const won = m.winner === state.you;
-      const word = m.winner === null ? 'Empate' : won ? '¡Ganaste!' : `Gana ${label(m.winner)}`;
-      const sub = m.ticketAwarded ? (won ? '+1 ticket para el próximo sorteo' : 'se lleva 1 ticket del pote') : won ? 'sin ticket: faltaron wallets verificadas en la sala' : '';
+      const word = m.winner === null ? 'Draw' : won ? 'You won!' : `${label(m.winner)} wins`;
+      const sub = m.ticketAwarded ? (won ? '+1 ticket for the next payout' : 'takes 1 ticket for the pot') : won ? 'no ticket: not enough verified wallets in this room' : '';
       banner(word, sub, won);
       setTimeout(() => { $('banner').classList.add('hidden'); show('lobby'); }, RESULT_MS);
       break;
@@ -227,8 +227,8 @@ function frame(now: number) {
     const n = state.seats.length;
     const counting = state.phase === 'countdown' && state.startsAt;
     $('waitStatus').innerHTML = counting
-      ? `<small>arranca en</small>${Math.max(0, Math.ceil((state.startsAt! - Date.now()) / 1000))}`
-      : `<small>esperando jugadores</small>${n}<span class="of">/${ROOM_MAX}</span>`;
+      ? `<small>starting in</small>${Math.max(0, Math.ceil((state.startsAt! - Date.now()) / 1000))}`
+      : `<small>waiting for players</small>${n}<span class="of">/${ROOM_MAX}</span>`;
   } else {
     arena.frame(dt);
     const me = arena.me();
@@ -241,7 +241,7 @@ function frame(now: number) {
     $('ammo').textContent = me ? (me.ammo < 0 ? '∞' : String(me.ammo)) : '';
     $('aliveCount').textContent = String(state.alive);
     const g = arena.ring, st = $('storm');
-    st.textContent = g.nr <= 0 && g.r <= 1 ? 'tormenta final' : g.closing ? `la tormenta se cierra · ${g.nextIn}s` : `la tormenta avanza en ${g.nextIn}s`;
+    st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
     if (state.pot) $('miniPot').textContent = fmtSol(sol(state.pot.lamports));
   }

@@ -81,12 +81,12 @@ const cleanName = (s: unknown) => String(s ?? '').replace(/[^\p{L}\p{N} _.-]/gu,
 async function checkHold(wallet: string): Promise<string | null> {
   if (config.holdMinUsd <= 0) return null;
   const usd = price.usd();
-  if (usd === null) return 'precio del token no disponible, probá en un minuto';
+  if (usd === null) return 'token price unavailable, try again in a minute';
   let h;
-  try { h = await pot.holderTokens(wallet); } catch { return 'no pude leer tu balance, probá de nuevo'; }
+  try { h = await pot.holderTokens(wallet); } catch { return 'could not read your balance, try again'; }
   const need = rawNeeded(config.holdMinUsd, usd, h.decimals);
   if (h.raw >= need) return null;
-  return `necesitás $${config.holdMinUsd} del token para jugar: ${fromRaw(need, h.decimals)} tokens (tenés ${fromRaw(h.raw, h.decimals)})`;
+  return `you need $${config.holdMinUsd} of the token to play: ${fromRaw(need, h.decimals)} tokens (you have ${fromRaw(h.raw, h.decimals)})`;
 }
 
 async function onMessage(c: Client, msg: ClientMsg) {
@@ -115,7 +115,7 @@ async function onMessage(c: Client, msg: ClientMsg) {
     case 'guest': {
       if (c.authed) return;
       if (!config.allowGuests) return c.send({ t: 'error', msg: 'connect a wallet to play' });
-      if (config.potSource === 'solana' && config.holdMinUsd > 0) return c.send({ t: 'error', msg: `conectá una wallet con $${config.holdMinUsd} del token para jugar` });
+      if (config.potSource === 'solana' && config.holdMinUsd > 0) return c.send({ t: 'error', msg: `connect a wallet holding $${config.holdMinUsd} of the token to play` });
       c.name = cleanName(msg.name); c.authed = true;
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);

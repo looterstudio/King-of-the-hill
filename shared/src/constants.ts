@@ -36,10 +36,10 @@ export const RING_DPS_START = 4;
 export type WeaponId = 'pistol' | 'shotgun' | 'rifle' | 'sniper';
 export interface WeaponDef { name: string; dmg: number; cd: number; speed: number; life: number; pellets: number; spread: number; ammo: number }
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
-  pistol: { name: 'pistola', dmg: 18, cd: 0.34, speed: 950, life: 0.75, pellets: 1, spread: 0.03, ammo: Infinity },
-  shotgun: { name: 'escopeta', dmg: 11, cd: 0.85, speed: 900, life: 0.32, pellets: 6, spread: 0.32, ammo: 8 },
+  pistol: { name: 'pistol', dmg: 18, cd: 0.34, speed: 950, life: 0.75, pellets: 1, spread: 0.03, ammo: Infinity },
+  shotgun: { name: 'shotgun', dmg: 11, cd: 0.85, speed: 900, life: 0.32, pellets: 6, spread: 0.32, ammo: 8 },
   rifle: { name: 'rifle', dmg: 13, cd: 0.11, speed: 1100, life: 0.8, pellets: 1, spread: 0.06, ammo: 45 },
-  sniper: { name: 'francotirador', dmg: 75, cd: 1.3, speed: 2000, life: 1.0, pellets: 1, spread: 0, ammo: 5 },
+  sniper: { name: 'sniper', dmg: 75, cd: 1.3, speed: 2000, life: 1.0, pellets: 1, spread: 0, ammo: 5 },
 };
 export type LootKind = 'shotgun' | 'rifle' | 'sniper' | 'medkit' | 'armor';
 export const LOOT_COUNT = 26;

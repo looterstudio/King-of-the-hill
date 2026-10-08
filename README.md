@@ -13,7 +13,7 @@ npm run dev:server      # game server on :8787 (mock pot, guests allowed)
 npm run dev:client      # vite on :5173, proxies /ws and /api to the server
 ```
 
-Open two tabs at http://localhost:5173, join as guests, and click **ENTRAR A UNA SALA** in both.
+Open two tabs at http://localhost:5173, join as guests, and click **Find a room** in both.
 A room starts at 10 players, or 20 s after the second player joins.
 
 Production: `npm run build && npm start` (the server serves `dist/`). Or `docker build -t pot-royale .`
