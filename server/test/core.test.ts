@@ -118,7 +118,7 @@ test('each storm circle sits inside the previous one', () => {
   for (let seed = 1; seed < 20; seed++) {
     const sim = new Sim(seed, World.custom([]));
     let prevR = sim.ring.r;
-    for (let i = 0; i < TICK_HZ * 420; i++) {
+    for (let i = 0; i < TICK_HZ * 480; i++) {
       sim.step(DT, new Map());
       const g = sim.ring;
       assert.ok(Math.hypot(g.nx - g.x, g.ny - g.y) + g.nr <= g.r + 1e-6, `seed ${seed} next circle escapes`);
@@ -530,7 +530,7 @@ function garage(kind: 'car' | 'heli' | 'plane', boxes: import('../../shared/src/
   // Sim reads vehicleSpots in its constructor; World.custom has none, so add the vehicle by hand
   if (!sim.vehicles.length) {
     const b = { ...newBody(0, 0, 0), ride: ['car', 'heli', 'plane'].indexOf(kind) + 1, grounded: true };
-    sim.vehicles.push({ id: 999, kind, hp: ({ car: 500, heli: 650, plane: 350 } as const)[kind], driver: 0, last: 0, body: b, gunCd: 0, bombCd: 0 });
+    sim.vehicles.push({ id: 999, kind, hp: ({ car: 500, heli: 650, plane: 350 } as const)[kind], driver: 0, last: 0, body: b, gunCd: 0, bombCd: 0, seats: [] });
   }
   sim.spawn([1, 2]);
   for (const p of sim.players.values()) { p.y = 0; p.gliding = false; p.grounded = true; }
@@ -619,4 +619,61 @@ test('supply drops fall into the next circle and land as a supply case full of l
   const got = sim.loot.filter((l) => !before.has(l.id));
   assert.ok(got.some((l) => l.kind === 'weapon' && WEAPONS[l.what as WeaponId].rarity === 'legendary'));
   assert.ok(got.some((l) => l.kind === 'perk' && (l.what === 'c4' || l.what === 'nuke')));
+});
+
+test('teammates ride along as passengers: they move with the vehicle and can shoot out of it', async () => {
+  const { Match } = await import('../src/match.ts');
+  const m = new Match('rp', 3, [1, 2, 3], Date.now(), { 1: 1, 2: 1, 3: 2 });
+  const sim = m.sim;
+  sim.world = World.custom([]);
+  sim.vehicles = [{ id: 999, kind: 'plane', hp: 350, driver: 0, last: 0, body: { ...newBody(0, 0, 0), ride: 3, grounded: true }, gunCd: 0, bombCd: 0, seats: [] }];
+  for (const p of sim.players.values()) { p.gliding = false; p.y = 0; p.grounded = true; }
+  const [a, b, c] = [1, 2, 3].map((id) => sim.players.get(id)!);
+  a.x = 2; a.z = 0; b.x = -2; b.z = 0; c.x = 3; c.z = 1;
+  sim.step(DT, new Map([[1, inp({ interact: true, seq: 1 })]]));
+  sim.step(DT, new Map([[2, inp({ interact: true, seq: 1 })]]));
+  sim.step(DT, new Map([[3, inp({ interact: true, seq: 1 })]])); // an enemy cannot board
+  assert.equal(a.ride, 3); assert.equal(b.seat, 1); assert.equal(c.ride, 0);
+  for (let i = 0; i < 150; i++) sim.step(DT, new Map([[1, inp({ fwd: 1, yaw: 0, pitch: 0.3, seq: i + 2 })]]));
+  assert.ok(a.y > 5 && Math.hypot(b.x - a.x, b.z - a.z) < 3 && Math.abs(b.y - a.y) < 1, 'the passenger flies with the plane');
+  sim.step(DT, new Map([[2, inp({ interact: true, seq: 99 })]]));
+  assert.equal(b.ride, 0); assert.ok(b.gliding, 'bailing out mid-air opens the glider');
+});
+
+test('rocket launcher blows up a car; a Stinger missile chases a helicopter down', () => {
+  const sim = garage('car'), b = sim.players.get(2)!;
+  b.x = 0; b.z = 30; b.slots[0] = 'rocket'; b.mags[0] = 1; b.cur = 0; b.fireCd = 0;
+  sim.step(DT, new Map([[2, inp({ fire: true, yaw: 0, pitch: 0.0 })]]));
+  for (let i = 0; i < 40; i++) sim.step(DT, new Map());
+  assert.ok((sim.vehicles[0]?.hp ?? 0) < 500, 'the rocket hit the car');
+  const heli = garage('heli'), pilot = heli.players.get(1)!, gunner = heli.players.get(2)!;
+  tickN(heli, 1, { interact: true });
+  tickN(heli, 60, { up: 1, yaw: 0 });
+  gunner.x = 40; gunner.z = 40; gunner.slots[0] = 'stinger'; gunner.mags[0] = 2; gunner.cur = 0; gunner.fireCd = 0;
+  const yaw = Math.atan2(-(pilot.x - gunner.x), -(pilot.z - gunner.z)), pitch = Math.atan2(pilot.y - gunner.y, Math.hypot(pilot.x - gunner.x, pilot.z - gunner.z));
+  heli.step(DT, new Map([[2, inp({ fire: true, yaw: yaw + 0.25, pitch })]])); // a little off target: the lock still finds it
+  const ev: unknown[] = [];
+  for (let i = 0; i < 60; i++) ev.push(...heli.step(DT, new Map([[1, inp({ fwd: 1, yaw: 1, seq: 100 + i })]])));
+  assert.ok((heli.vehicles[0]?.hp ?? 0) < 650, 'the missile caught the helicopter');
+});
+
+test('upgrade kits and benches add damage; a molotov sets the ground on fire', () => {
+  const sim = arena([1, 2]), a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -10;
+  a.perk = { kind: 'kit', n: 1 };
+  sim.step(DT, new Map([[1, inp({ perk: true })]]));
+  assert.equal(a.ups[0], 1);
+  sim.world.upgrades.push({ x: 2, y: 0.95, z: 0 });
+  sim.step(DT, new Map([[1, inp({ interact: true })]]));
+  assert.equal(a.ups[0], 2, 'bench upgrade');
+  sim.step(DT, new Map([[1, inp({ interact: true })]]));
+  assert.equal(a.ups[0], 2, 'only once per bench');
+  a.fireCd = 0;
+  const hit = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.08, fire: true })]])).find((e) => e.kind === 'hit');
+  assert.ok(hit && hit.kind === 'hit' && hit.dmg > WEAPONS.ar.dmg * 1.3, 'more damage');
+  const s2 = arena([1, 2]), c = s2.players.get(1)!, d = s2.players.get(2)!;
+  c.x = 0; c.z = 0; d.x = 0; d.z = -6; c.perk = { kind: 'molotov', n: 2 };
+  s2.step(DT, new Map([[1, inp({ perk: true, yaw: 0, pitch: -0.4 })]]));
+  for (let i = 0; i < 90; i++) s2.step(DT, new Map());
+  assert.ok(s2.effects.some((e) => e.kind === 'fire') || d.hp < 100, 'fire on the ground');
 });

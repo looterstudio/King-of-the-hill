@@ -25,14 +25,34 @@ interface ShellOpts { doorPos?: number; fh?: number; ink?: number; doors?: Side[
 export function generate(w: World, seed: number) {
   const r = rng(seed);
   const pick = <V>(a: V[]) => a[Math.floor(r() * a.length)];
+  // every place is written around its own origin; OX/OZ moves the whole thing onto the island
+  let OX = 0, OZ = 0;
+  const at = (x: number, z: number) => { OX = x; OZ = z; };
+  // ground-level boxes bucketed in 8 m cells, so "is this spot free?" never scans the whole island
+  const G = 8, ground = new Map<number, Box[]>();
+  const cellsOf = (x0: number, z0: number, x1: number, z1: number, f: (k: number) => void) => {
+    for (let i = Math.floor(x0 / G); i <= Math.floor(x1 / G); i++) for (let j = Math.floor(z0 / G); j <= Math.floor(z1 / G); j++) f(i * 4096 + j);
+  };
   const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, ink: number, kind: Box['kind']) => {
     if (x1 - x0 < 0.01 || y1 - y0 < 0.01 || z1 - z0 < 0.01) return;
-    w.boxes.push({ x0, y0, z0, x1, y1, z1, ink, kind });
+    const b: Box = { x0: x0 + OX, y0, z0: z0 + OZ, x1: x1 + OX, y1, z1: z1 + OZ, ink, kind };
+    w.boxes.push(b);
+    if (y0 < 0.5) cellsOf(b.x0, b.z0, b.x1, b.z1, (k) => { const l = ground.get(k); if (l) l.push(b); else ground.set(k, [b]); });
   };
-  const free = (x0: number, z0: number, x1: number, z1: number, pad = 1.2) =>
-    !w.boxes.some((b) => b.y0 < 0.5 && x1 > b.x0 - pad && x0 < b.x1 + pad && z1 > b.z0 - pad && z0 < b.z1 + pad);
-  const cases = (...s: Spot[]) => w.caseSpots.push(...s);
-  const loot = (x: number, y: number, z: number, n = 1, spread = 2) => { for (let i = 0; i < n; i++) w.lootSpots.push({ x: x + (r() - 0.5) * spread, y, z: z + (r() - 0.5) * spread }); };
+  const free = (x0: number, z0: number, x1: number, z1: number, pad = 1.2) => {
+    x0 += OX; x1 += OX; z0 += OZ; z1 += OZ;
+    let ok = true;
+    cellsOf(x0 - pad, z0 - pad, x1 + pad, z1 + pad, (k) => {
+      if (ok) for (const b of ground.get(k) ?? []) if (x1 > b.x0 - pad && x0 < b.x1 + pad && z1 > b.z0 - pad && z0 < b.z1 + pad) { ok = false; break; }
+    });
+    return ok;
+  };
+  const cases = (...s: Spot[]) => w.caseSpots.push(...s.map((c) => ({ ...c, x: c.x + OX, z: c.z + OZ })));
+  const loot = (x: number, y: number, z: number, n = 1, spread = 2) => { for (let i = 0; i < n; i++) w.lootSpots.push({ x: x + OX + (r() - 0.5) * spread, y, z: z + OZ + (r() - 0.5) * spread }); };
+  const roof = (q: { x0: number; z0: number; x1: number; z1: number; y: number }) => w.roofs.push({ ...q, x0: q.x0 + OX, x1: q.x1 + OX, z0: q.z0 + OZ, z1: q.z1 + OZ });
+  const gab = (q: { x0: number; z0: number; x1: number; z1: number; y: number; h: number; alongX: boolean }) => w.gables.push({ ...q, x0: q.x0 + OX, x1: q.x1 + OX, z0: q.z0 + OZ, z1: q.z1 + OZ });
+  const lake = (q: { x: number; z: number; r: number }) => w.lakes.push({ ...q, x: q.x + OX, z: q.z + OZ });
+  const road = (...q: { x0: number; z0: number; x1: number; z1: number }[]) => w.roads.push(...q.map((e) => ({ x0: e.x0 + OX, z0: e.z0 + OZ, x1: e.x1 + OX, z1: e.z1 + OZ })));
 
   // a wall along x (or z) between `a` and `b` with rectangular openings
   const wall = (alongX: boolean, fixed: number, a: number, b: number, y0: number, y1: number, ops: { a: number; b: number; lo: number; hi: number }[], ink: number, t = T) => {
@@ -75,12 +95,18 @@ export function generate(w: World, seed: number) {
       : s === 'e' ? { alongZ: true, c0: x1 - T - 1.4, c1: x1 - T, h0: x1 - T - 1.6, h1: x1, start: z0 + T + 1.2 }
       : s === 'n' ? { alongZ: false, c0: z0 + T, c1: z0 + T + 1.4, h0: z0, h1: z0 + T + 1.6, start: x0 + T + 1.2 }
       : { alongZ: false, c0: z1 - T - 1.4, c1: z1 - T, h0: z1 - T - 1.6, h1: z1, start: x0 + T + 1.2 };
+    // the space each door needs kept clear inside the room (its opening plus 1.6 m in front)
+    const pos = o.doorPos ?? 0.5, reach = 1.6, half = dw / 2 + 0.45;
+    const doorZones = doors.map((d) => d === 'n' ? [x0 + wd * pos - half, z0, x0 + wd * pos + half, z0 + reach]
+      : d === 's' ? [x0 + wd * pos - half, z1 - reach, x0 + wd * pos + half, z1]
+      : d === 'w' ? [x0, z0 + dp * pos - half, x0 + reach, z0 + dp * pos + half]
+      : [x1 - reach, z0 + dp * pos - half, x1, z0 + dp * pos + half]);
     const fits = (s: Side) => {
       const g = stripGeom(s), end = g.start + len + 0.9, limit = g.alongZ ? z1 - T : x1 - T;
       if (end > limit) return false;
-      if (!doors.includes(s)) return true;
-      const mid = g.alongZ ? (z0 + z1) / 2 : (x0 + x1) / 2; // that wall's door, centred
-      return mid + dw / 2 + 0.5 < g.start - 0.3 || mid - dw / 2 - 0.5 > end;
+      // the flight, the step-on space before it and the landing after it, against every door
+      const [rx0, rz0, rx1, rz1] = g.alongZ ? [g.c0 - 0.2, g.start - 1.2, g.c1 + 0.2, end] : [g.start - 1.2, g.c0 - 0.2, end, g.c1 + 0.2];
+      return doorZones.every(([dx0, dz0, dx1, dz1]) => rx1 <= dx0 || rx0 >= dx1 || rz1 <= dz0 || rz0 >= dz1);
     };
     const strip: Side = (['w', 'e', 'n', 's'] as Side[]).find(fits) ?? 'w';
     for (let f = 0; f < floors; f++) {
@@ -126,7 +152,7 @@ export function generate(w: World, seed: number) {
       if (wd > 7) loot(x0 + wd / 2, y0, z0 + dp * 0.7, r() < 0.5 ? 2 : 1, Math.min(wd, dp) * 0.4);
     }
     const top = base + floors * fh;
-    w.roofs.push({ x0, z0, x1, z1, y: top });
+    roof({ x0, z0, x1, z1, y: top });
     if (o.parapet && o.roofAccess) {
       crenel(true, z0 + 0.25, x0, x1, top, ink); crenel(true, z1 - 0.25, x0, x1, top, ink);
       crenel(false, x0 + 0.25, z0 + 0.5, z1 - 0.5, top, ink); crenel(false, x1 - 0.25, z0 + 0.5, z1 - 0.5, top, ink);
@@ -136,7 +162,7 @@ export function generate(w: World, seed: number) {
     return top;
   };
 
-  const gable = (x0: number, z0: number, x1: number, z1: number, y: number, h = 2.2) => w.gables.push({ x0: x0 - 0.3, z0: z0 - 0.3, x1: x1 + 0.3, z1: z1 + 0.3, y, h, alongX: x1 - x0 > z1 - z0 });
+  const gable = (x0: number, z0: number, x1: number, z1: number, y: number, h = 2.2) => gab({ x0: x0 - 0.3, z0: z0 - 0.3, x1: x1 + 0.3, z1: z1 + 0.3, y, h, alongX: x1 - x0 > z1 - z0 });
   const house = (cx: number, cz: number, door: Side, o: { floors?: number; ink?: number; flat?: boolean; wd?: number; dp?: number } = {}) => {
     const wd = o.wd ?? 9 + r() * 3, dp = o.dp ?? 9 + r() * 3, floors = o.floors ?? (r() < 0.6 ? 2 : 1), flat = o.flat ?? r() < 0.25;
     const top = shell(cx - wd / 2, cz - dp / 2, wd, dp, floors, { doors: [door], ink: o.ink ?? INK.BLUE, roofAccess: flat });
@@ -152,7 +178,7 @@ export function generate(w: World, seed: number) {
     }
   };
   const crate = (x: number, z: number, y = 0, s = 1.2, ink: number = INK.ORANGE) => box(x, y, z, x + s, y + s, z + s, ink, 'crate');
-  const tree = (x: number, z: number, big = 1) => w.trees.push({ x, z, h: (4 + r() * 4) * big, r: (1.6 + r() * 1.4) * big });
+  const tree = (x: number, z: number, big = 1, ink?: number) => w.trees.push({ x: x + OX, z: z + OZ, h: (4 + r() * 4) * big, r: (1.6 + r() * 1.4) * big, ink });
   const car = (x: number, z: number, alongX: boolean, ink: number = pick([INK.RED, INK.BLUE, INK.GREEN, INK.PINK, INK.ORANGE])) => {
     const [l, wd] = alongX ? [4.2, 1.9] : [1.9, 4.2];
     box(x, 0, z, x + l, 1.1, z + wd, ink, 'car');
@@ -167,7 +193,7 @@ export function generate(w: World, seed: number) {
   // a flat-topped hill with stairs on the given sides
   const plateau = (cx: number, cz: number, sx: number, sz: number, h: number, ink: number, ups: Side[], base = 0) => {
     box(cx - sx / 2, base, cz - sz / 2, cx + sx / 2, base + h, cz + sz / 2, ink, 'building');
-    w.roofs.push({ x0: cx - sx / 2, z0: cz - sz / 2, x1: cx + sx / 2, z1: cz + sz / 2, y: base + h });
+    roof({ x0: cx - sx / 2, z0: cz - sz / 2, x1: cx + sx / 2, z1: cz + sz / 2, y: base + h });
     for (const s of ups) {
       if (s === 'n') stairs(cx, cz - sz / 2, base, base + h, 'n', 4);
       if (s === 's') stairs(cx, cz + sz / 2, base, base + h, 's', 4);
@@ -175,11 +201,12 @@ export function generate(w: World, seed: number) {
       if (s === 'e') stairs(cx + sx / 2, cz, base, base + h, 'e', 4);
     }
   };
-  const poi = (name: string, x: number, z: number) => w.pois.push({ name, x, z });
+  const poi = (name: string, x: number, z: number) => w.pois.push({ name, x: x + OX, z: z + OZ });
   // heading: 0 faces -z (north), PI/2 faces -x (west), -PI/2 faces +x (east), PI faces +z
-  const vehicle = (kind: VehicleKind, x: number, z: number, head: number, y = 0) => w.vehicleSpots.push({ kind, x, y, z, head });
+  const vehicle = (kind: VehicleKind, x: number, z: number, head: number, y = 0) => w.vehicleSpots.push({ kind, x: x + OX, y, z: z + OZ, head });
   const N = 0, W = Math.PI / 2, E = -Math.PI / 2, S = Math.PI;
 
+  at(0, 0);
   // =====================================================================================
   // CROWN CITY: downtown around the King's Tower. Tall blocks, a plaza, a clock tower.
   // =====================================================================================
@@ -208,15 +235,17 @@ export function generate(w: World, seed: number) {
     shell(kx - 3.5, kz - 3.5, 7, 7, 5, { fh: 3.5, ink: INK.BROWN, doors: ['e'], roofAccess: true, golden: true });
     for (const [dx, dz] of [[-3.5, -3.5], [3, -3.5], [-3.5, 3], [3, 3]]) box(kx + dx, 17.5, kz + dz, kx + dx + 0.5, 20.5, kz + dz + 0.5, INK.BROWN, 'wall');
     box(kx - 4, 20.5, kz - 4, kx + 4, 21, kz + 4, INK.RED, 'floor');
-    w.gables.push({ x0: kx - 4, z0: kz - 4, x1: kx + 4, z1: kz + 4, y: 21, h: 3.5, alongX: true });
+    gab({ x0: kx - 4, z0: kz - 4, x1: kx + 4, z1: kz + 4, y: 21, h: 3.5, alongX: true });
     // downtown streets: a square around the plaza
-    for (const [a, b, c, d] of [[-62, -64, 62, -64], [62, -64, 62, 62], [62, 62, -62, 62], [-62, 62, -62, -64]]) w.roads.push({ x0: a, z0: b, x1: c, z1: d });
+    for (const [a, b, c, d] of [[-62, -64, 62, -64], [62, -64, 62, 62], [62, 62, -62, 62], [-62, 62, -62, -64]]) road({ x0: a, z0: b, x1: c, z1: d });
   }
 
+  at(0, 0);
   // =====================================================================================
   // SCRIBBLE SUBURBS (NW): a grid of houses with yards, a mansion and a sports park
   // =====================================================================================
   {
+    at(-140, -120);
     const cx = -130, cz = -130;
     poi('Scribble Suburbs', cx, cz);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
@@ -236,18 +265,20 @@ export function generate(w: World, seed: number) {
     for (const dz of [-10, 10]) { pillar(cx - 3, cz + dz, 2.4, 0.25, INK.PAPER); pillar(cx + 3, cz + dz, 2.4, 0.25, INK.PAPER); box(cx - 3.1, 2.4, cz + dz - 0.12, cx + 3.1, 2.65, cz + dz + 0.12, INK.PAPER, 'wall'); }
     for (const [dx, dz] of [[-9, -3], [-5, -3], [-9, 1], [-5, 1]]) pillar(cx + dx, cz + dz, 3, 0.3, INK.BROWN);
     box(cx - 9.6, 3, cz - 3.6, cx - 4.4, 3.35, cz + 1.6, INK.BROWN, 'floor');
-    w.gables.push({ x0: cx - 10, z0: cz - 4, x1: cx - 4, z1: cz + 2, y: 3.35, h: 1.6, alongX: true });
+    gab({ x0: cx - 10, z0: cz - 4, x1: cx - 4, z1: cz + 2, y: 3.35, h: 1.6, alongX: true });
     cases({ x: cx - 7, y: 0, z: cz - 1 });
     box(cx + 7.4, 0, cz + 1.4, cx + 8.6, 2.5, cz + 2.6, INK.RED, 'crate');
     stairs(cx + 8, cz + 2.6, 0, 2.5, 's', 1.2, INK.RED);
     loot(cx, 0, cz, 3, 10);
-    for (const [a, b, c, d] of [[cx - 45, cz - 15, cx + 45, cz - 15], [cx - 45, cz + 15, cx + 45, cz + 15], [cx - 15, cz - 45, cx - 15, cz + 45], [cx + 15, cz - 45, cx + 15, cz + 45]]) w.roads.push({ x0: a, z0: b, x1: c, z1: d });
+    for (const [a, b, c, d] of [[cx - 45, cz - 15, cx + 45, cz - 15], [cx - 45, cz + 15, cx + 45, cz + 15], [cx - 15, cz - 45, cx - 15, cz + 45], [cx + 15, cz - 45, cx + 15, cz + 45]]) road({ x0: a, z0: b, x1: c, z1: d });
   }
 
+  at(0, 0);
   // =====================================================================================
   // CASTLE CRAYON (N): a castle on a two-step hill, towers on every corner, a keep
   // =====================================================================================
   {
+    at(0, -160);
     const cx = 0, cz = -160;
     poi('Castle Crayon', cx, cz);
     plateau(cx, cz, 64, 44, 4, INK.GREEN, ['s', 'e', 'w']);
@@ -272,10 +303,12 @@ export function generate(w: World, seed: number) {
     cases({ x: cx - 24, y: 4, z: cz + 17 }, { x: cx + 26, y: 4, z: cz + 17 });
   }
 
+  at(0, 0);
   // =====================================================================================
   // MARGIN MART (NE): retail row, a supermarket with aisles, a water tower, parking
   // =====================================================================================
   {
+    at(142, -150);
     const cx = 128, cz = -120;
     poi('Margin Mart', cx, cz);
     const colors = [INK.PINK, INK.BLUE, INK.GREEN, INK.ORANGE, INK.RED];
@@ -294,28 +327,30 @@ export function generate(w: World, seed: number) {
     for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) pillar(tx + dx, tz + dz, 14, 0.5);
     box(tx - 3, 14, tz - 3, tx + 3, 18, tz + 3, INK.PINK, 'building');
     stairs(tx, tz + 3, 0, 18, 's', 1.4, INK.GRAPHITE);
-    w.roofs.push({ x0: tx - 3, z0: tz - 3, x1: tx + 3, z1: tz + 3, y: 18 });
+    roof({ x0: tx - 3, z0: tz - 3, x1: tx + 3, z1: tz + 3, y: 18 });
     cases({ x: tx, y: 18, z: tz, golden: true });
     // parking lot and lamps
     for (let i = 0; i < 12; i++) if (r() < 0.75) car(cx + 6 + (i % 4) * 6, cz + 4 + Math.floor(i / 4) * 7, false);
     for (let i = 0; i < 4; i++) pillar(cx + 4 + i * 8, cz + 30, 5, 0.25);
-    w.roads.push({ x0: cx - 50, z0: cz - 2, x1: cx + 50, z1: cz - 2 });
+    road({ x0: cx - 50, z0: cz - 2, x1: cx + 50, z1: cz - 2 });
   }
 
+  at(0, 0);
   // =====================================================================================
   // PAPER PORT (E): docks on the bay, a cargo ship you can board, a lighthouse, cranes
   // =====================================================================================
   {
+    at(178, 6);
     const cx = 152, cz = 14;
     poi('Paper Port', cx, cz);
-    w.lakes.push({ x: 232, z: cz, r: 66 });
+    lake({ x: 232, z: cz, r: 66 });
     // piers
     for (const pz of [-30, 0, 30]) { box(pz ? 170 : 160, 0, cz + pz - 3, 197, 0.5, cz + pz + 3, INK.BROWN, 'floor'); for (let k = 0; k < 5; k++) pillar(171 + k * 6, cz + pz + 3.2, 1.4, 0.4, INK.BROWN); }
     // the cargo ship moored at the middle pier: hull, deck, containers, a bridge tower at the stern
     const sx0 = 170, sx1 = 192, sz0 = cz + 4, sz1 = cz + 14;
     box(sx0, 0, sz0, sx1, 5, sz1, INK.RED, 'building');
     box(sx1, 0, sz0 + 1.5, sx1 + 4, 5, sz1 - 1.5, INK.RED, 'building'); // bow
-    w.roofs.push({ x0: sx0, z0: sz0, x1: sx1 + 4, z1: sz1, y: 5 });
+    roof({ x0: sx0, z0: sz0, x1: sx1 + 4, z1: sz1, y: 5 });
     box(sx0 + 9, 5, sz1 - 0.3, sx1 + 4, 6, sz1, INK.GRAPHITE, 'wall'); // rail on the sea side
     for (let i = 0; i < 3; i++) { container(sx0 + 11 + i * 3.8, sz0 + 3.5, false, 5); if (i !== 1) container(sx0 + 11 + i * 3.8, sz0 + 3.5, false, 7.6); }
     shell(sx0 + 0.5, sz0 + 1, 7, 8, 2, { base: 5, fh: 3.5, ink: INK.PAPER, doors: ['e'], roofAccess: true, golden: true });
@@ -328,17 +363,19 @@ export function generate(w: World, seed: number) {
     shell(cx - 20, cz - 12, 22, 14, 1, { fh: 7, ink: INK.GRAPHITE, doors: ['e', 'w'], bigDoor: 5, cases: 3, windows: false, roofAccess: true });
     for (const gz of [cz - 26, cz + 30]) {
       for (const dx of [0, 12]) { pillar(cx + dx, gz - 4, 16, 0.8, INK.ORANGE); pillar(cx + dx, gz + 4, 16, 0.8, INK.ORANGE); }
-      box(cx - 1, 16, gz - 4.4, cx + 30, 17, gz + 4.4, INK.ORANGE, 'floor'); w.roofs.push({ x0: cx - 1, z0: gz - 4.4, x1: cx + 30, z1: gz + 4.4, y: 17 });
+      box(cx - 1, 16, gz - 4.4, cx + 30, 17, gz + 4.4, INK.ORANGE, 'floor'); roof({ x0: cx - 1, z0: gz - 4.4, x1: cx + 30, z1: gz + 4.4, y: 17 });
       stairs(cx - 1, gz, 0, 17, 'w', 1.4, INK.ORANGE);
       cases({ x: cx + 22, y: 17, z: gz });
     }
     for (let i = 0; i < 10; i++) { const x = cx - 26 + (i % 5) * 7, z = cz + 17 + Math.floor(i / 5) * 4; if (i % 3) container(x, z, true); if (i % 4 === 0) container(x, z, true, 2.6); }
   }
 
+  at(0, 0);
   // =====================================================================================
   // STAPLE DEPOT (SE): warehouses with catwalks, a glue factory with chimneys, a container yard
   // =====================================================================================
   {
+    at(136, 126);
     const cx = 114, cz = 124;
     poi('Staple Depot', cx, cz);
     for (let i = 0; i < 3; i++) {
@@ -354,7 +391,7 @@ export function generate(w: World, seed: number) {
     const fx = cx - 34, fz = cz + 2;
     shell(fx, fz, 30, 18, 2, { fh: 5, ink: INK.BROWN, doors: ['n', 'e'], bigDoor: 4, cases: 3, roofAccess: true });
     for (const dx of [6, 16, 26]) box(fx + dx - 1, 10, fz + 13, fx + dx + 1, 24, fz + 15, INK.RED, 'wall');
-    for (const dx of [36, 43]) { box(fx + dx - 2.5, 0, fz + 4, fx + dx + 2.5, 9, fz + 9, INK.PAPER, 'building'); w.roofs.push({ x0: fx + dx - 2.5, z0: fz + 4, x1: fx + dx + 2.5, z1: fz + 9, y: 9 }); }
+    for (const dx of [36, 43]) { box(fx + dx - 2.5, 0, fz + 4, fx + dx + 2.5, 9, fz + 9, INK.PAPER, 'building'); roof({ x0: fx + dx - 2.5, z0: fz + 4, x1: fx + dx + 2.5, z1: fz + 9, y: 9 }); }
     box(fx + 30, 8.75, fz + 5.5, fx + 40.5, 9, fz + 7.5, INK.ORANGE, 'floor'); // pipe walk: drop off the roof onto the tanks
     cases({ x: fx + 43, y: 9, z: fz + 6.5, golden: true });
     // container yard: stacks and alleys
@@ -366,10 +403,12 @@ export function generate(w: World, seed: number) {
     }
   }
 
+  at(0, 0);
   // =====================================================================================
   // CRUMPLE JUNK (S): rows of crushed cars, a crusher, a crane, the scrap office
   // =====================================================================================
   {
+    at(-16, 158);
     const cx = -4, cz = 162;
     poi('Crumple Junk', cx, cz);
     for (let row = 0; row < 4; row++) for (let k = 0; k < 7; k++) {
@@ -386,20 +425,22 @@ export function generate(w: World, seed: number) {
     shell(kx - 3.5, kz - 3.5, 7, 7, 6, { fh: 3.5, ink: INK.ORANGE, doors: ['s'], roofAccess: true, cases: 0 });
     box(kx - 22, 20.75, kz - 1, kx - 3.5, 21, kz + 1, INK.ORANGE, 'floor');
     for (const zz of [kz - 1, kz + 0.8]) box(kx - 22, 21, zz, kx - 3.5, 21.6, zz + 0.2, INK.ORANGE, 'wall');
-    w.roofs.push({ x0: kx - 22, z0: kz - 1, x1: kx - 3.5, z1: kz + 1, y: 21 });
+    roof({ x0: kx - 22, z0: kz - 1, x1: kx - 3.5, z1: kz + 1, y: 21 });
     cases({ x: kx - 19, y: 21, z: kz, golden: true });
     // scrap office: a trailer with roof access
     shell(cx - 44, cz - 8, 12, 7, 1, { fh: 3.5, ink: INK.GREEN, doors: ['e'], cases: 2, roofAccess: true });
     loot(cx, 0, cz, 5, 40);
   }
 
+  at(0, 0);
   // =====================================================================================
   // ERASER LAKE (SW): the lake, the lake house on its island, piers and a boathouse
   // =====================================================================================
   {
+    at(-136, 126);
     const cx = -114, cz = 114;
     poi('Eraser Lake', cx, cz);
-    w.lakes.push({ x: cx, z: cz, r: 38 });
+    lake({ x: cx, z: cz, r: 38 });
     plateau(cx, cz, 24, 24, 0.3, INK.GREEN, []);
     shell(cx - 7, cz - 7, 14, 14, 2, { base: 0.3, doors: ['s', 'n'], ink: INK.BLUE, cases: 2, roofAccess: true, golden: true, parapet: true });
     // piers from the shore toward the island
@@ -413,10 +454,12 @@ export function generate(w: World, seed: number) {
     for (let i = 0; i < 12; i++) { const a = r() * Math.PI * 2; tree(cx + Math.cos(a) * (44 + r() * 10), cz + Math.sin(a) * (44 + r() * 10)); }
   }
 
+  at(0, 0);
   // =====================================================================================
   // INKWOOD (W): deep forest, the lookout lodge tower, cabins, a campfire clearing
   // =====================================================================================
   {
+    at(-170, -12);
     const cx = -170, cz = -8;
     poi('Inkwood', cx, cz);
     shell(cx - 3.5, cz - 3.5, 7, 7, 7, { fh: 3.5, ink: INK.BROWN, doors: ['e'], roofAccess: true, golden: true, parapet: true });
@@ -427,10 +470,12 @@ export function generate(w: World, seed: number) {
     loot(cx, 0, cz, 4, 40);
   }
 
+  at(0, 0);
   // =====================================================================================
   // TALLY FARMS (mid NW): red barns with haylofts, silos, crop rows, hay bales
   // =====================================================================================
   {
+    at(-70, -65);
     const cx = -100, cz = -45;
     poi('Tally Farms', cx, cz);
     for (const [bx, bz] of [[-14, -8], [12, 2]]) {
@@ -454,17 +499,19 @@ export function generate(w: World, seed: number) {
     fence(cx - 30, cz - 30, cx + 30, cz + 30, 'e');
   }
 
+  at(0, 0);
   // =====================================================================================
   // DOODLE DRIVE-IN (mid NE): a giant screen with a walkway on top, rows of parked cars
   // =====================================================================================
   {
+    at(76, -68);
     const cx = 74, cz = -62;
     poi('Doodle Drive-In', cx, cz);
     box(cx - 16, 3, cz - 20, cx + 16, 15, cz - 19.4, INK.BLUE, 'wall');
     box(cx - 16.4, 2.6, cz - 19.4, cx + 16.4, 3, cz - 19, INK.RED, 'wall'); box(cx - 16.4, 15, cz - 19.4, cx + 16.4, 15.4, cz - 19, INK.RED, 'wall');
     for (const dx of [-15, -5, 5, 15]) pillar(cx + dx, cz - 18.7, 15, 0.6, INK.GRAPHITE);
     box(cx - 16, 15, cz - 21, cx + 16, 15.25, cz - 18, INK.GRAPHITE, 'floor');
-    w.roofs.push({ x0: cx - 16, z0: cz - 21, x1: cx + 16, z1: cz - 18, y: 15.25 });
+    roof({ x0: cx - 16, z0: cz - 21, x1: cx + 16, z1: cz - 18, y: 15.25 });
     cases({ x: cx, y: 15.25, z: cz - 19.5, golden: true });
     stairs(cx + 16, cz - 19.5, 0, 15.25, 'e', 1.6, INK.GRAPHITE);
     for (let row = 0; row < 3; row++) for (let k = 0; k < 7; k++) if (r() < 0.8) car(cx - 18 + k * 5.5, cz - 8 + row * 9, false);
@@ -473,15 +520,17 @@ export function generate(w: World, seed: number) {
     loot(cx, 0, cz, 4, 30);
   }
 
+  at(0, 0);
   // =====================================================================================
   // PIT STOP (mid SE): gas station, a diner and a two-storey motel with an outside walkway
   // =====================================================================================
   {
+    at(76, 64);
     const cx = 64, cz = 66;
     poi('Pit Stop', cx, cz);
     for (const [dx, dz] of [[-6, -4], [6, -4], [-6, 4], [6, 4]]) pillar(cx + dx, cz + dz, 4.5, 0.5);
     box(cx - 8, 4.5, cz - 6, cx + 8, 5, cz + 6, INK.RED, 'floor');
-    w.roofs.push({ x0: cx - 8, z0: cz - 6, x1: cx + 8, z1: cz + 6, y: 5 });
+    roof({ x0: cx - 8, z0: cz - 6, x1: cx + 8, z1: cz + 6, y: 5 });
     for (const dx of [-3, 3]) box(cx + dx - 0.5, 0, cz - 0.4, cx + dx + 0.5, 1.6, cz + 0.4, INK.ORANGE, 'crate');
     cases({ x: cx, y: 5, z: cz + 2 });
     stairs(cx + 8, cz, 0, 5, 'e', 1.4, INK.GRAPHITE); // up onto the canopy
@@ -494,10 +543,12 @@ export function generate(w: World, seed: number) {
     for (let i = 0; i < 4; i++) car(mx + 2 + i * 6, mz - 10, false);
   }
 
+  at(0, 0);
   // =====================================================================================
   // GRAPHITE MINE (mid W): a hill with tunnels running through it, the mine head on top
   // =====================================================================================
   {
+    at(-84, 24);
     const cx = -86, cz = 16, sx = 36, sz = 30, h = 7, cw = 4, ch = 3.4;
     poi('Graphite Mine', cx, cz);
     const xs = [cx - sx / 2, cx - cw / 2, cx + cw / 2, cx + sx / 2], zs = [cz - sz / 2, cz - cw / 2, cz + cw / 2, cz + sz / 2];
@@ -505,7 +556,7 @@ export function generate(w: World, seed: number) {
     for (const [a, b] of [[0, 2], [2, 0], [0, 0], [2, 2]]) box(xs[a], 0, zs[b], xs[a + 1], h, zs[b + 1], INK.GRAPHITE, 'building');
     box(xs[1], ch, zs[0], xs[2], h, zs[3], INK.GRAPHITE, 'building');
     box(xs[0], ch, zs[1], xs[3], h, zs[2], INK.GRAPHITE, 'building');
-    w.roofs.push({ x0: xs[0], z0: zs[0], x1: xs[3], z1: zs[3], y: h });
+    roof({ x0: xs[0], z0: zs[0], x1: xs[3], z1: zs[3], y: h });
     stairs(cx + 10, cz - sz / 2, 0, h, 'n', 3);
     stairs(cx + sx / 2, cz + 9, 0, h, 'e', 3);
     // inside the tunnels: carts, cases, the golden one at the crossing
@@ -518,13 +569,15 @@ export function generate(w: World, seed: number) {
     shell(cx - 12, cz - 11, 8, 7, 1, { base: h, fh: 3, ink: INK.BROWN, doors: ['s'], cases: 1 });
   }
 
+  at(0, 0);
   // =====================================================================================
   // PAPER PLANE FIELD (S W): a runway, a hangar, a control tower and the planes
   // =====================================================================================
   {
+    at(-68, 170);
     const cx = -62, cz = 180;
     poi('Paper Plane Field', cx, cz);
-    w.roads.push({ x0: -104, z0: 189, x1: -18, z1: 189 }, { x0: -104, z0: 189, x1: -104, z1: 172 });
+    road({ x0: -104, z0: 189, x1: -18, z1: 189 }, { x0: -104, z0: 189, x1: -104, z1: 172 });
     shell(-118, 160, 22, 15, 1, { fh: 7, ink: INK.GRAPHITE, doors: ['s', 'e'], bigDoor: 8, cases: 3, roofAccess: true });
     gable(-118, 160, -96, 175, 7, 2.5);
     shell(cx - 6, 164, 7, 7, 4, { fh: 3.5, ink: INK.PAPER, doors: ['s'], roofAccess: true, golden: true, parapet: true });
@@ -534,36 +587,213 @@ export function generate(w: World, seed: number) {
     vehicle('car', -88, 178, E);
   }
 
-  // ---------- vehicles everywhere else: cars on the roads, helicopters on rooftops ----------
-  for (const [x, z, h] of [[62, -20, N], [-62, 20, S], [20, 62, W], [-20, -64, E], [62, 40, N], [-62, -40, S]] as const) vehicle('car', x, z, h);
-  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 + 0.2; vehicle('car', Math.cos(a) * 100, Math.sin(a) * 100, -a); }
-  vehicle('car', -145, -105, N); vehicle('car', -115, -155, E);         // suburbs
-  vehicle('car', 84, -122, E); vehicle('car', 175, -122, W);           // margin mart
-  vehicle('car', 96, -50, N);                                          // drive-in
-  vehicle('car', 80, 54, W); vehicle('car', 44, 80, N);                // pit stop
-  vehicle('car', -78, -40, N);                                         // farms
-  vehicle('car', 126, -4, S); vehicle('car', 64, 104, E);              // port, depot
-  vehicle('car', -40, 132, E); vehicle('car', -60, 30, N);              // junk, mine
-  vehicle('car', 0, -128, N);                                          // castle road
-  vehicle('heli', -10, 10, N, 24);                                     // on the King's Tower
-  vehicle('heli', 141, 6, W, 7);                                       // port warehouse roof
-  vehicle('heli', 5, -153, S, 8);                                      // castle courtyard
-  vehicle('heli', 95, 135, N, 10);                                     // factory roof
+  // =====================================================================================
+  // helpers for the big landmarks
+  // =====================================================================================
+  // a terraced mountain: each level a smaller block on the last, stairs up a different side each
+  // time (all four sides with `grand`), boulders and cases on the terraces, a golden case on top
+  const mountain = (cx: number, cz: number, r0: number, levels: number, lh: number, inks: number[], grand = false) => {
+    // every terrace must be deep enough for a flight of stairs plus room to step on and off it
+    const step = Math.max((2 * r0) / (levels + 0.6), 2 * ((lh / RISE) * RUN + 1.6));
+    levels = Math.max(1, Math.min(levels, Math.floor((2 * r0 - 10) / step) + 1));
+    for (let i = 0; i < levels; i++) {
+      const s0 = 2 * r0 - i * step, y0 = i * lh, ink = inks[Math.min(inks.length - 1, Math.floor((i / levels) * inks.length))];
+      box(cx - s0 / 2, y0, cz - s0 / 2, cx + s0 / 2, y0 + lh, cz + s0 / 2, ink, 'building');
+      roof({ x0: cx - s0 / 2, z0: cz - s0 / 2, x1: cx + s0 / 2, z1: cz + s0 / 2, y: y0 + lh });
+      const sides: Side[] = grand ? SIDES : [(['s', 'e', 'n', 'w'] as Side[])[i % 4]];
+      for (const sd of sides) {
+        const off = (r() - 0.5) * s0 * 0.4;
+        if (sd === 's') stairs(cx + off, cz + s0 / 2, y0, y0 + lh, 's', grand ? 6 : 3.5, INK.GRAPHITE);
+        if (sd === 'n') stairs(cx + off, cz - s0 / 2, y0, y0 + lh, 'n', grand ? 6 : 3.5, INK.GRAPHITE);
+        if (sd === 'e') stairs(cx + s0 / 2, cz + off, y0, y0 + lh, 'e', grand ? 6 : 3.5, INK.GRAPHITE);
+        if (sd === 'w') stairs(cx - s0 / 2, cz + off, y0, y0 + lh, 'w', grand ? 6 : 3.5, INK.GRAPHITE);
+      }
+      if (i > 0) { // on the terrace of the level below this one
+        const ring = s0 / 2 + step / 4;
+        for (let k = 0; k < 3; k++) {
+          const a = r() * Math.PI * 2, x = cx + Math.cos(a) * ring, z = cz + Math.sin(a) * ring;
+          if (r() < 0.5) cases({ x, y: y0, z }); else box(x - 0.9, y0, z - 0.9, x + 0.9, y0 + 1.3, z + 0.9, INK.GRAPHITE, 'crate');
+        }
+      }
+    }
+    const top = levels * lh;
+    cases({ x: cx, y: top, z: cz + 1.5, golden: true });
+    loot(cx, top, cz, 2, 4);
+    return top;
+  };
+  const cactus = (x: number, z: number) => {
+    const h = 2.4 + r() * 2.2;
+    box(x - 0.3, 0, z - 0.3, x + 0.3, h, z + 0.3, INK.GREEN, 'trunk');
+    if (r() < 0.7) { box(x + 0.3, h * 0.45, z - 0.2, x + 1.1, h * 0.45 + 0.4, z + 0.2, INK.GREEN, 'trunk'); box(x + 0.75, h * 0.45, z - 0.2, x + 1.1, h * 0.8, z + 0.2, INK.GREEN, 'trunk'); }
+    if (r() < 0.5) { box(x - 1.0, h * 0.35, z - 0.2, x - 0.3, h * 0.35 + 0.4, z + 0.2, INK.GREEN, 'trunk'); box(x - 1.0, h * 0.35, z - 0.2, x - 0.65, h * 0.65, z + 0.2, INK.GREEN, 'trunk'); }
+  };
+  // upgrade bench: a workbench that improves the gun in your hands, once per player per bench
+  const bench = (x: number, z: number, y = 0) => {
+    box(x - 1.1, y, z - 0.5, x + 1.1, y + 0.95, z + 0.5, INK.RED, 'crate');
+    box(x - 0.9, y + 0.95, z - 0.35, x - 0.3, y + 1.4, z + 0.35, INK.GRAPHITE, 'crate');
+    w.upgrades.push({ x: x + OX, y: y + 0.95, z: z + OZ });
+  };
 
+  // =====================================================================================
+  // BIOMES: snow across the north, sand dunes in the south-east
+  // =====================================================================================
+  w.biomes.push({ kind: 'snow', x0: -240, z0: -400, x1: 240, z1: -212 }, { kind: 'desert', x0: 150, z0: 160, x1: 400, z1: 400 });
+
+  // =====================================================================================
+  // THE SPIRE: a 30-floor skyscraper next to downtown, helipad on the roof
+  // =====================================================================================
+  {
+    at(78, -78);
+    poi('The Spire', 0, 0);
+    const top = shell(-8, -8, 16, 16, 30, { fh: 3.5, ink: INK.BLUE, doors: ['s', 'w'], bigDoor: 3, roofAccess: true, cases: 0, golden: true, parapet: true });
+    for (let f = 2; f < 30; f += 3) cases({ x: 4 - (f % 2) * 8, y: f * 3.5, z: 4 });
+    bench(0, 5, 15 * 3.5);
+    for (let i = 0; i < 4; i++) { // orange bands around the outside every few floors
+      const y = i * 26 + 12;
+      box(-8.5, y, -8.5, 8.5, y + 0.4, -8.15, INK.ORANGE, 'wall'); box(-8.5, y, 8.15, 8.5, y + 0.4, 8.5, INK.ORANGE, 'wall');
+      box(-8.5, y, -8.15, -8.15, y + 0.4, 8.15, INK.ORANGE, 'wall'); box(8.15, y, -8.15, 8.5, y + 0.4, 8.15, INK.ORANGE, 'wall');
+    }
+    box(-1, top, -1, 1, top + 10, 1, INK.RED, 'wall'); // antenna
+    vehicle('heli', -4, -4, N, top);
+    for (const [x, z] of [[12, 12], [-12, 12], [12, -12]]) box(x - 0.7, 0, z - 0.7, x + 0.7, 0.9, z + 0.7, INK.GREEN, 'wall');
+  }
+
+  // =====================================================================================
+  // MOUNT DOODLE: the big mountain to climb, a radio mast on the summit
+  // =====================================================================================
+  {
+    at(250, -100);
+    poi('Mount Doodle', 0, 0);
+    const top = mountain(0, 0, 52, 8, 5, [INK.GREEN, INK.GREEN, INK.GRAPHITE, INK.GRAPHITE, INK.PAPER]);
+    for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) pillar(dx * 0.6 - 3, dz * 0.6 - 3, top + 14, 0.3, INK.RED, top);
+    shell(3, 2, 7, 6, 1, { base: top, fh: 3, ink: INK.BROWN, doors: ['w'], cases: 1 });
+    bench(-3, 4, top);
+  }
+
+  // =====================================================================================
+  // SNOWPEAK + FROST LODGE: a snowy summit, a ski lodge with chalets, a frozen pond, a chairlift
+  // =====================================================================================
+  {
+    at(150, -330);
+    poi('Snowpeak', 0, 0);
+    mountain(0, 0, 44, 7, 5, [INK.GRAPHITE, INK.GRAPHITE, INK.BLUE, INK.BLUE, INK.PAPER]);
+  }
+  {
+    at(-140, -320);
+    poi('Frost Lodge', 0, 0);
+    shell(-12, -8, 24, 14, 2, { fh: 4, ink: INK.BROWN, doors: ['s', 'e'], bigDoor: 3, cases: 3, golden: false, roofAccess: false });
+    gable(-12, -8, 12, 6, 8, 4);
+    bench(0, 10);
+    for (const [x, z, d] of [[-30, 14, 'n'], [-16, 22, 'n'], [18, 20, 'n'], [30, 8, 'w']] as const) house(x, z, d, { floors: 1, ink: INK.BLUE, wd: 9, dp: 8, flat: false });
+    lake({ x: 0, z: 38, r: 13 });
+    // chairlift towers marching off toward Snowpeak
+    for (let i = 0; i < 9; i++) { const x = 30 + i * 22, z = -6 - i * 1.5; pillar(x, z, 14, 0.6, INK.GRAPHITE); box(x - 1.6, 14, z - 0.3, x + 1.6, 14.4, z + 0.3, INK.GRAPHITE, 'wall'); }
+    cases({ x: 22, y: 0, z: -2, golden: true });
+    for (let i = 0; i < 26; i++) tree(-60 + r() * 120, -40 + r() * 30, 1.1, INK.BLUE);
+    vehicle('car', 8, 18, E); vehicle('heli', -30, -24, N);
+  }
+
+  // =====================================================================================
+  // DESERT: Dune Town (a western main street), Dust Fort, the Ink Pyramid, an oasis, mesas
+  // =====================================================================================
+  {
+    at(325, 190);
+    poi('Dune Town', 0, 0);
+    road({ x0: -40, z0: 0, x1: 40, z1: 0 });
+    for (let i = 0; i < 4; i++) for (const side of [-1, 1]) {
+      const x0 = -36 + i * 18, z0 = side < 0 ? -18 : 6;
+      shell(x0, z0, 14, 12, i % 2 ? 2 : 1, { fh: 4, ink: [INK.ORANGE, INK.BROWN, INK.PINK, INK.ORANGE][i], doors: [side < 0 ? 's' : 'n'], cases: 2, roofAccess: true, parapet: true });
+      box(x0, 3.4, side < 0 ? -6 : 4.6, x0 + 14, 3.65, side < 0 ? -4.6 : 6, INK.BROWN, 'floor'); // porch roofs
+    }
+    bench(0, -3);
+    for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) pillar(48 + dx, -26 + dz, 12, 0.5, INK.BROWN);
+    box(45, 12, -29, 51, 15, -23, INK.BROWN, 'building'); roof({ x0: 45, z0: -29, x1: 51, z1: -23, y: 15 }); stairs(48, -23, 0, 15, 's', 1.4, INK.BROWN);
+    cases({ x: 48, y: 15, z: -26, golden: true });
+    for (let i = 0; i < 18; i++) cactus(-50 + r() * 100, 22 + r() * 30);
+    vehicle('car', -30, 0, E); vehicle('car', 30, 1, W);
+  }
+  {
+    at(166, 258);
+    poi('Dust Fort', 0, 0);
+    plateau(0, 0, 50, 50, 3, INK.ORANGE, ['n', 'w']);
+    const y = 3, x0 = -19, x1 = 19, z0 = -19, z1 = 19, tw = 3.5;
+    wall(true, z0, x0 + tw, x1 - tw, y, y + 4, [{ a: -2.5, b: 2.5, lo: 0, hi: 3.2 }], INK.BROWN, 0.8); crenel(true, z0, x0 + tw, x1 - tw, y + 4, INK.BROWN);
+    wall(true, z1, x0 + tw, x1 - tw, y, y + 4, [], INK.BROWN, 0.8); crenel(true, z1, x0 + tw, x1 - tw, y + 4, INK.BROWN);
+    wall(false, x0, z0 + tw, z1 - tw, y, y + 4, [{ a: -2.5, b: 2.5, lo: 0, hi: 3.2 }], INK.BROWN, 0.8); crenel(false, x0, z0 + tw, z1 - tw, y + 4, INK.BROWN);
+    wall(false, x1, z0 + tw, z1 - tw, y, y + 4, [], INK.BROWN, 0.8); crenel(false, x1, z0 + tw, z1 - tw, y + 4, INK.BROWN);
+    for (const [tx, tz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) shell(tx - 3.5, tz - 3.5, 7, 7, 3, { base: y, fh: 3.5, ink: INK.ORANGE, doors: [tz === z0 ? 's' : 'n'], doorPos: tx === x0 ? 0.8 : 0.2, roofAccess: true, parapet: true, cases: 1 });
+    shell(-6, -6, 12, 12, 2, { base: y, fh: 4, ink: INK.BROWN, doors: ['n', 'w'], roofAccess: true, golden: true, cases: 2, parapet: true });
+    bench(10, 10, y);
+    vehicle('car', -32, -10, S);
+  }
+  {
+    at(338, 338);
+    poi('Ink Pyramid', 0, 0);
+    mountain(0, 0, 34, 9, 3, [INK.ORANGE], true);
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; pillar(Math.cos(a) * 44, Math.sin(a) * 44, 7, 1.2, INK.ORANGE); }
+    vehicle('car', -44, -40, N);
+  }
+  {
+    at(200, 345);
+    poi('Oasis', 0, 0);
+    lake({ x: 0, z: 0, r: 16 });
+    for (let i = 0; i < 14; i++) { const a = r() * Math.PI * 2, d = 18 + r() * 8; tree(Math.cos(a) * d, Math.sin(a) * d, 1.3); }
+    shell(22, -8, 9, 8, 1, { fh: 3.5, ink: INK.ORANGE, doors: ['w'], cases: 2, roofAccess: true });
+    cases({ x: -22, y: 0, z: 10, golden: true });
+  }
+  at(0, 0);
+  for (let i = 0; i < 7; i++) { // mesas: flat-topped desert rocks, each with a way up and a case on top
+    const x = 175 + r() * 210, z = 175 + r() * 210, sx = 14 + r() * 12, sz = 12 + r() * 12, h = 4 + Math.floor(r() * 3) * 2;
+    if (w.pois.some((p) => Math.hypot(p.x - x, p.z - z) < 50) || !free(x - sx / 2 - 6, z - sz / 2 - 6, x + sx / 2 + 6, z + sz / 2 + 6, 2)) continue;
+    plateau(x, z, sx, sz, h, INK.BROWN, [pick(SIDES)]);
+    cases({ x, y: h, z });
+  }
+
+  // =====================================================================================
+  // ERASER RIDGE: two smaller climbs out west
+  // =====================================================================================
+  {
+    at(-330, 125);
+    poi('Eraser Ridge', 0, 0);
+    mountain(-6, -18, 30, 5, 4.5, [INK.GREEN, INK.GRAPHITE]);
+    mountain(22, 30, 22, 4, 4, [INK.GREEN, INK.GRAPHITE]);
+    bench(-6, 15);
+  }
+  at(0, 0);
+  // benches in a few classic places too
+  bench(28, -30); bench(-160, -98); bench(-240, 230);
+
+  // ---------- vehicles everywhere: cars on the roads, helicopters on rooftops ----------
+  for (const [x, z, h] of [[62, -20, N], [-62, 20, S], [20, 62, W], [-20, -64, E], [62, 40, N], [-62, -40, S]] as const) vehicle('car', x, z, h);
+  for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2 + 0.2; vehicle('car', Math.cos(a) * 210, Math.sin(a) * 210, -a); }
+  vehicle('car', -285, -225, N); vehicle('car', -255, -275, E);        // suburbs
+  vehicle('car', 226, -272, E); vehicle('car', 317, -272, W);         // margin mart
+  vehicle('car', 172, -118, N);                                       // drive-in
+  vehicle('car', 156, 118, W); vehicle('car', 120, 144, N);           // pit stop
+  vehicle('car', -148, -105, N);                                      // farms
+  vehicle('car', 304, 2, S); vehicle('car', 200, 230, E);             // port, depot
+  vehicle('car', -56, 290, E); vehicle('car', -144, 54, N);           // junk, mine
+  vehicle('car', 0, -288, N); vehicle('car', -300, -40, S);           // castle road, inkwood
+  vehicle('heli', -10, 10, N, 24);                                    // on the King's Tower
+  vehicle('heli', 319, 12, W, 7);                                     // port warehouse roof
+  vehicle('heli', 5, -313, S, 8);                                     // castle courtyard
+  vehicle('heli', 231, 261, N, 10);                                   // factory roof
+
+  at(0, 0);
   // =====================================================================================
   // roads: a ring road, spokes into downtown, and a road out to every place
   // =====================================================================================
-  const RING = 100, SEG = 24;
+  const RING = 210, SEG = 36;
   for (let i = 0; i < SEG; i++) {
     const a0 = (i / SEG) * Math.PI * 2, a1 = ((i + 1) / SEG) * Math.PI * 2;
-    w.roads.push({ x0: Math.cos(a0) * RING, z0: Math.sin(a0) * RING, x1: Math.cos(a1) * RING, z1: Math.sin(a1) * RING });
+    road({ x0: Math.cos(a0) * RING, z0: Math.sin(a0) * RING, x1: Math.cos(a1) * RING, z1: Math.sin(a1) * RING });
   }
-  for (const [x, z] of [[62, 0], [-62, 0], [0, 62], [0, -64]]) w.roads.push({ x0: x, z0: z, x1: (Math.sign(x) || 0) * RING, z1: (Math.sign(z) || 0) * RING });
+  for (const [x, z] of [[62, 0], [-62, 0], [0, 62], [0, -64]]) road({ x0: x, z0: z, x1: (Math.sign(x) || 0) * RING, z1: (Math.sign(z) || 0) * RING });
   for (const p of w.pois) {
     const d = Math.hypot(p.x, p.z);
-    if (d < 70) continue;
+    if (d < 150) continue;
     const ex = (p.x / d) * RING, ez = (p.z / d) * RING;
-    w.roads.push({ x0: p.x, z0: p.z, x1: ex, z1: ez });
+    road({ x0: p.x, z0: p.z, x1: ex, z1: ez });
     // a billboard by the road
     const bx = (ex + p.x) / 2, bz = (ez + p.z) / 2, nx = -p.z / d, nz = p.x / d, sx = bx + nx * 9, sz = bz + nz * 9;
     if (Math.abs(d - RING) > 24 && free(sx - 3.5, sz - 3.5, sx + 3.5, sz + 3.5, 2)) {
@@ -573,46 +803,56 @@ export function generate(w: World, seed: number) {
     }
   }
 
+  at(0, 0);
   // =====================================================================================
   // the wild in between: lone farmhouses, boulders, cover walls, crates, trees
   // =====================================================================================
   const nearPoi = (x: number, z: number, d: number) => w.pois.some((p) => Math.hypot(p.x - x, p.z - z) < (p.x === 0 && p.z === 0 ? 72 : d));
   const inLake = (x: number, z: number, pad = 0) => w.lakes.some((l) => Math.hypot(l.x - x, l.z - z) < l.r + pad);
-  for (let i = 0; i < 18; i++) {
+  const biome = (x: number, z: number) => w.biomes.find((b) => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1)?.kind ?? null;
+  for (let i = 0; i < 60; i++) {
     const x = (r() * 2 - 1) * (MAP_HALF - 22), z = (r() * 2 - 1) * (MAP_HALF - 22);
     if (nearPoi(x, z, 60) || inLake(x, z, 8) || !free(x - 9, z - 9, x + 9, z + 9, 3)) continue;
-    house(x, z, pick(SIDES), { ink: pick([INK.BLUE, INK.GREEN, INK.PAPER]) });
+    const b = biome(x, z); // adobe in the desert, snowy cabins up north
+    house(x, z, pick(SIDES), { ink: b === 'desert' ? INK.ORANGE : b === 'snow' ? INK.BLUE : pick([INK.BLUE, INK.GREEN, INK.PAPER]), flat: b === 'desert' ? true : undefined });
     if (r() < 0.5) cases({ x: x + 8, y: 0, z: z + 8 });
   }
-  for (let i = 0; i < 45; i++) { // boulders: stacked graphite blocks
+  for (let i = 0; i < 150; i++) { // boulders: stacked graphite blocks
     const x = (r() * 2 - 1) * (MAP_HALF - 8), z = (r() * 2 - 1) * (MAP_HALF - 8), s = 2 + r() * 3;
     if (nearPoi(x, z, 45) || inLake(x, z, 2) || !free(x, z, x + s, z + s, 2)) continue;
-    box(x, 0, z, x + s, s * 0.7, z + s * 0.9, INK.GRAPHITE, 'crate');
-    if (r() < 0.5) box(x + s * 0.2, s * 0.7, z + s * 0.15, x + s * 0.8, s * 1.1, z + s * 0.7, INK.GRAPHITE, 'crate');
+    const rock = biome(x, z) === 'desert' ? INK.BROWN : INK.GRAPHITE;
+    box(x, 0, z, x + s, s * 0.7, z + s * 0.9, rock, 'crate');
+    if (r() < 0.5) box(x + s * 0.2, s * 0.7, z + s * 0.15, x + s * 0.8, s * 1.1, z + s * 0.7, rock, 'crate');
   }
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < 450; i++) {
     const x = (r() * 2 - 1) * (MAP_HALF - 6), z = (r() * 2 - 1) * (MAP_HALF - 6), s = 1.1 + r() * 0.4;
     if (nearPoi(x, z, 30) || inLake(x, z) || !free(x, z, x + s, z + s, 1.5)) continue;
     crate(x, z, 0, s);
     if (r() < 0.25) crate(x + 0.05, z + 0.05, s, s - 0.1);
   }
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 220; i++) {
     const x = (r() * 2 - 1) * (MAP_HALF - 10), z = (r() * 2 - 1) * (MAP_HALF - 10), len = 4 + r() * 5, along = r() < 0.5;
     const [x0, z0, x1, z1] = along ? [x, z, x + len, z + 0.4] : [x, z, x + 0.4, z + len];
     if (nearPoi(x, z, 30) || inLake(x, z) || !free(x0, z0, x1, z1, 1.5)) continue;
     box(x0, 0, z0, x1, 1.1 + r() * 0.4, z1, INK.GRAPHITE, 'wall');
   }
-  for (let i = 0; i < 150; i++) { const x = (r() * 2 - 1) * (MAP_HALF - 4), z = (r() * 2 - 1) * (MAP_HALF - 4); if (!nearPoi(x, z, 42)) tree(x, z); }
+  for (let i = 0; i < 520; i++) {
+    const x = (r() * 2 - 1) * (MAP_HALF - 4), z = (r() * 2 - 1) * (MAP_HALF - 4);
+    if (nearPoi(x, z, 42)) continue;
+    const b = biome(x, z);
+    if (b === 'desert') { if (r() < 0.5 && free(x - 1.2, z - 1.2, x + 1.2, z + 1.2, 0.5)) cactus(x, z); }
+    else tree(x, z, 1, b === 'snow' ? INK.BLUE : undefined);
+  }
   w.trees = w.trees.filter((t) => Math.abs(t.x) < MAP_HALF - 2 && Math.abs(t.z) < MAP_HALF - 2 && free(t.x - 0.4, t.z - 0.4, t.x + 0.4, t.z + 0.4, 0.8) && !inLake(t.x, t.z, -2));
   for (const t of w.trees) box(t.x - 0.3, 0, t.z - 0.3, t.x + 0.3, t.h * 0.6, t.z + 0.3, INK.BROWN, 'trunk');
 
   // cases and loot out in the open, away from water
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 100; i++) {
     const x = (r() * 2 - 1) * (MAP_HALF - 10), z = (r() * 2 - 1) * (MAP_HALF - 10);
     if (!inLake(x, z, 2) && free(x - 1, z - 1, x + 1, z + 1, 0.5)) cases({ x, y: 0, z });
   }
   for (const c of [...w.caseSpots]) if (r() < 0.5) loot(c.x, c.y, c.z, 1, 3);
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 240; i++) {
     const x = (r() * 2 - 1) * (MAP_HALF - 8), z = (r() * 2 - 1) * (MAP_HALF - 8);
     if (!inLake(x, z) && free(x - 0.5, z - 0.5, x + 0.5, z + 0.5, 0.3)) w.lootSpots.push({ x, y: 0, z });
   }
@@ -621,7 +861,14 @@ export function generate(w: World, seed: number) {
   // stairs; any that would are left out, so no doorway, stairwell or room is ever plugged
   const STRUCT = new Set<Box['kind']>(['wall', 'stair', 'floor', 'building']);
   const PROP = new Set<Box['kind']>(['car', 'crate', 'container']);
-  const structural = w.boxes.filter((b) => STRUCT.has(b.kind));
-  const cuts = (p: Box) => structural.some((b) => p.x0 < b.x1 - 0.05 && p.x1 > b.x0 + 0.05 && p.y0 < b.y1 - 0.05 && p.y1 > b.y0 + 0.05 && p.z0 < b.z1 - 0.05 && p.z1 > b.z0 + 0.05);
+  const structural = new Map<number, Box[]>();
+  for (const b of w.boxes) if (STRUCT.has(b.kind)) cellsOf(b.x0, b.z0, b.x1, b.z1, (k) => { const l = structural.get(k); if (l) l.push(b); else structural.set(k, [b]); });
+  const cuts = (p: Box) => {
+    let hit = false;
+    cellsOf(p.x0, p.z0, p.x1, p.z1, (k) => {
+      if (!hit) for (const b of structural.get(k) ?? []) if (p.x0 < b.x1 - 0.05 && p.x1 > b.x0 + 0.05 && p.y0 < b.y1 - 0.05 && p.y1 > b.y0 + 0.05 && p.z0 < b.z1 - 0.05 && p.z1 > b.z0 + 0.05) { hit = true; break; }
+    });
+    return hit;
+  };
   w.boxes = w.boxes.filter((b) => !PROP.has(b.kind) || !cuts(b));
 }

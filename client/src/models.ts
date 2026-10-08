@@ -58,6 +58,14 @@ export function buildGun(id: WeaponId, m: GunMats): THREE.Group {
       add(box(0.04, 0.16, 0.04, m.dark, 0, 0.14, -0.05), box(0.1, 0.12, 0.12, m.accent, 0.12, -0.08, 0)); // handle and ammo box
       break;
     }
+    case 'rocket':
+      add(tube(0.09, 1.1, m.body, 0, 0.06, -0.2, 12), tube(0.1, 0.12, m.accent, 0, 0.06, -0.78, 12), tube(0.1, 0.1, m.dark, 0, 0.06, 0.34, 12));
+      add(box(0.05, 0.16, 0.06, m.dark, 0, -0.08, -0.05), box(0.05, 0.14, 0.06, m.dark, 0, -0.08, -0.35), box(0.06, 0.08, 0.14, m.accent, 0.1, 0.12, -0.15));
+      break;
+    case 'stinger':
+      add(tube(0.075, 1.25, m.dark, 0, 0.06, -0.2, 12), tube(0.08, 0.1, m.accent, 0, 0.06, -0.85, 12), box(0.18, 0.14, 0.12, m.body, 0, 0.2, -0.3));
+      add(box(0.05, 0.16, 0.06, m.dark, 0, -0.08, -0.02), box(0.22, 0.03, 0.03, m.accent, 0, 0.29, -0.3), box(0.03, 0.16, 0.03, m.accent, 0.1, 0.22, -0.3));
+      break;
     case 'heavy':
       add(box(0.07, 0.1, 0.42, m.body, 0, 0, -0.1), tube(0.022, 0.7, m.dark, 0, 0.01, -0.66), box(0.06, 0.06, 0.12, m.dark, 0, 0.01, -1.04));
       add(tube(0.04, 0.34, m.dark, 0, 0.12, -0.12, 12), tube(0.052, 0.06, m.accent, 0, 0.12, -0.32, 12), tube(0.052, 0.06, m.accent, 0, 0.12, 0.06, 12));
@@ -87,6 +95,14 @@ export function buildItem(what: string, ink: InkRenderer): THREE.Group {
     g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.12, 12), orange).translateY(0.06), box(0.1, 0.02, 0.4, blue, 0, 0.13, 0));
   } else if (what === 'fort') {
     g.add(box(0.36, 0.22, 0.18, ink.material(INK_IDS.BROWN), 0, 0.11, 0), box(0.36, 0.22, 0.18, ink.material(INK_IDS.BROWN), 0.04, 0.33, 0.02));
+  } else if (what === 'molotov') {
+    g.add(tube(0.07, 0.24, ink.material(INK_IDS.GREEN), 0, 0.12, 0).rotateX(Math.PI / 2), tube(0.03, 0.1, paper, 0, 0.29, 0).rotateX(Math.PI / 2), box(0.05, 0.08, 0.05, orange, 0, 0.37, 0));
+  } else if (what === 'shock') {
+    const s2 = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), blue); s2.position.y = 0.15; g.add(s2, new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.03, 6, 14).rotateX(Math.PI / 2), orange).translateY(0.15));
+  } else if (what === 'kit') {
+    g.add(box(0.44, 0.24, 0.3, red, 0, 0.12, 0), box(0.2, 0.06, 0.06, dark, 0, 0.28, 0), box(0.06, 0.2, 0.06, orange, 0.12, 0.34, 0));
+  } else if (what === 'rocket') {
+    g.add(tube(0.08, 0.6, dark, 0, 0, 0), new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 8), red).rotateX(-Math.PI / 2).translateY(0.4));
   } else if (what === 'c4') {
     g.add(box(0.34, 0.12, 0.22, ink.material(INK_IDS.BROWN), 0, 0.06, 0), box(0.12, 0.05, 0.14, dark, 0.06, 0.14, 0), box(0.02, 0.1, 0.02, red, -0.1, 0.17, 0.05));
   } else if (what === 'nuke') {
@@ -161,6 +177,17 @@ export function buildVehicle(ink: InkRenderer, kind: number, seed: number): Vehi
     const prop = new THREE.Group(); prop.position.set(0, 1.3, -2.95); prop.add(box(2.6, 0.22, 0.06, dark), box(0.22, 2.6, 0.06, dark)); prop.name = 'prop'; root.add(prop); spin.push(prop);
   }
   return { root, spin, kind };
+}
+
+// a patch of fire from a molotov: a ring of flame tongues
+export function buildFire(ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group();
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2, d = i % 2 ? 1.6 : 3.4, h = 0.9 + (i % 3) * 0.5;
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.45, h, 6), ink.material(i % 3 ? INK_IDS.ORANGE : INK_IDS.RED));
+    f.position.set(Math.cos(a) * d, h / 2, Math.sin(a) * d); f.name = 'flame'; g.add(f);
+  }
+  return g;
 }
 
 // a supply crate hanging under a striped balloon

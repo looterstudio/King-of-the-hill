@@ -9,8 +9,11 @@ can drop anywhere on the map. Play **solo, duos or squads**; the last player (or
 wins tickets, and the token's trading fees fill one shared pot that pays out to the winners every
 6 hours (00/06/12/18 UTC).
 
-- **The island.** Thirteen named places around downtown Crown City and the King's Tower, joined
-  by a ring road: Scribble Suburbs (house grid, mansion, sports park), Castle Crayon (walls, corner
+- **The island.** 800 × 800 m, 23 named places, a snowfield across the north and a desert in the
+  south-east. New: The Spire (a 30-floor skyscraper with a helipad), Mount Doodle, Snowpeak and
+  Eraser Ridge (terraced mountains to climb), Frost Lodge (ski lodge, chalets, chairlift), Dune
+  Town, Dust Fort, the Ink Pyramid and an Oasis. The classics, around downtown Crown City and the
+  King's Tower, joined by a ring road: Scribble Suburbs (house grid, mansion, sports park), Castle Crayon (walls, corner
   towers and a keep on a two-step hill), Margin Mart (shops, a supermarket with aisles, a water
   tower), Paper Port (piers, a cargo ship you can board, gantry cranes, a lighthouse), Staple Depot
   (warehouses with catwalks, a factory with chimneys and tanks), Crumple Junk (car-stack alleys,
@@ -23,6 +26,12 @@ wins tickets, and the token's trading fees fill one shared pot that pays out to 
   helicopters on rooftops (a nose gun that aims where you look) and planes at Paper Plane Field
   (wing guns and bombs). Crashes dent them, bullets and blasts wreck them, a wreck explodes on
   whoever is near. Driving uses the same client prediction as walking, so it responds instantly.
+- **Arsenal.** 12 guns including a Rocket Launcher and a Stinger whose missiles lock onto
+  helicopters and planes. 9 perks: grenades, molotovs (fire on the ground), shockwaves (throw people
+  through the air, yourself included), smoke, launch pads, instant forts, upgrade kits, C4 and the
+  atomic bomb. Upgrade benches and kits add up to three stars (+66% damage) to a gun.
+- **Squads in vehicles.** Teammates ride along as passengers (3 in cars and helicopters, 1 in a
+  plane) and shoot out of the windows; bail out of an aircraft and your glider opens.
 - **C4 and supply drops.** C4 sticks where it lands and goes off on the second press: 100 damage
   inside 2.5 m, your own included, so you survive your charge only with shields up. Every time the
   storm moves, a balloon crate drops into the next circle with a legendary gun, C4 or a nuke.

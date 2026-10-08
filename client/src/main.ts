@@ -146,6 +146,17 @@ function odometer(el: HTMLElement, text: string) {
   for (const ch of text) if (ch >= '0' && ch <= '9') cols[k++].style.transform = `translateY(-${Number(ch) * 10}%)`;
 }
 
+// ---------- stats strip: count up when it scrolls into view ----------
+{
+  const nums = Array.from(document.querySelectorAll<HTMLElement>('[data-count]'));
+  const run = () => nums.forEach((el) => {
+    const to = Number(el.dataset.count), suffix = el.dataset.suffix ?? '', t0 = performance.now();
+    const tick = (now: number) => { const k = Math.min(1, (now - t0) / 1200), e = 1 - (1 - k) ** 3; el.textContent = `${Math.round(to * e)}${suffix}`; if (k < 1) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  });
+  try { const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { run(); io.disconnect(); } }); if (nums[0]) io.observe(nums[0]); } catch { run(); }
+}
+
 // ---------- live rooms ----------
 function renderRooms(rooms: LobbyRoom[]) {
   // how busy each mode is, on its card
@@ -295,6 +306,7 @@ function drawIsland(ctx: CanvasRenderingContext2D, w: World, S: number, labels: 
   const k = S / (MAP_HALF * 2), X = (x: number) => (x + MAP_HALF) * k, Y = (z: number) => (z + MAP_HALF) * k;
   ctx.strokeStyle = 'rgba(29,51,184,0.12)'; ctx.lineWidth = 1;
   for (let i = 0; i <= S; i += S / 10) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, S); ctx.moveTo(0, i); ctx.lineTo(S, i); ctx.stroke(); }
+  for (const b of w.biomes) { ctx.fillStyle = b.kind === 'desert' ? 'rgba(240,170,60,0.22)' : 'rgba(150,180,240,0.25)'; ctx.fillRect(X(b.x0), Y(b.z0), (b.x1 - b.x0) * k, (b.z1 - b.z0) * k); }
   ctx.fillStyle = 'rgba(29,51,184,0.18)';
   for (const l of w.lakes) { ctx.beginPath(); ctx.arc(X(l.x), Y(l.z), l.r * k, 0, Math.PI * 2); ctx.fill(); }
   ctx.strokeStyle = 'rgba(43,47,58,0.45)'; ctx.lineWidth = Math.max(1.5, 6 * k);
@@ -454,6 +466,7 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'nuke') { sfx.siren(); feed(`<b style="color:var(--red)">☢ ${esc(label(m.by))} launched an atomic bomb</b>`, m.by === state.you); break; }
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
       if (m.kind === 'vhit') { hitmarker(false); sfx.hit(false); const v = game.vehiclesNow.find((x) => x[0] === m.vehicle); vehicleNumber(v, m.dmg); break; }
+      if (m.kind === 'upgrade') { if (m.by === state.you) { hint(`weapon upgraded ${'★'.repeat(m.level)} · +${Math.round(m.level * 22)}% damage`, 2200); sfx.open(true); } break; }
       if (m.kind === 'drop') {
         if (!m.landed) { feed('<b style="color:#c98a00">📦 supply drop incoming</b> · legendary inside', false); hint('supply drop incoming: legendary loot, find the balloon', 2600); sfx.siren(); }
         break;
@@ -567,7 +580,7 @@ function frame(now: number) {
       setText($('weapon'), def ? def.name : 'unarmed');
       $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
       setHTML($('weapons'), me.slots.map((s, i) => s
-        ? `<li class="${i === me.cur ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
+        ? `<li class="${i === me.cur ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}${me.ups?.[i] ? `<b class="stars">${'★'.repeat(me.ups[i])}</b>` : ''}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
         : `<li class="empty"><span>empty</span><em></em></li>`).join(''));
       const shields = me.items.big + me.items.mini;
       setHTML($('items'), `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
@@ -609,9 +622,9 @@ function frame(now: number) {
       const kind = VEHICLE_KINDS[ride - 1], def = VEHICLES[kind], hpPct = Math.max(0, Math.min(100, (me.vhp / def.hp) * 100));
       const kmh = Math.round(Math.hypot(game.me!.vx, game.me!.vy, game.me!.vz) * 3.6);
       setHTML($('vehHud'), `<div class="veh-name">${def.name}<b>${kmh}<small> km/h</small></b></div><div class="bar veh"><div style="width:${hpPct}%" class="${hpPct < 30 ? 'low' : ''}"></div></div>`
-        + `<div class="veh-keys">${kind === 'car' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
+        + `<div class="veh-keys">${game.me!.seat ? '<b>passenger</b> · <kbd>LMB</kbd> shoot out of it · <kbd>G</kbd> throw · <kbd>E</kbd> hop off' : kind === 'car' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
           : kind === 'heli' ? '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up / down · <kbd>Shift</kbd> fast · <kbd>LMB</kbd> nose gun'
-          : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'} · <kbd>E</kbd> get out</div>`);
+          : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'}${game.me!.seat ? '' : ' · <kbd>E</kbd> get out'}</div>`);
     }
     const nk = game.nukes[0];
     $('nukeWarn').classList.toggle('hidden', !nk);

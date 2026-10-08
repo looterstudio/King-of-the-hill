@@ -101,12 +101,36 @@
       </aside>
     </main>
 
+    <section class="stats-strip" aria-label="what is in the game">
+      <div><b data-count="100">0</b><span>players a room</span></div>
+      <div><b data-count="23">0</b><span>places to drop</span></div>
+      <div><b data-count="47">0</b><span>vehicles</span></div>
+      <div><b data-count="12">0</b><span>guns</span></div>
+      <div><b data-count="9">0</b><span>perks</span></div>
+      <div><b data-count="800" data-suffix=" m">0</b><span>island width</span></div>
+      <div><b data-count="6" data-suffix=" h">0</b><span>between payouts</span></div>
+    </section>
+
+    <section class="wall">
+      <h3 class="wall-title">Everything on the island <span>(and yes, all of it works)</span></h3>
+      <div class="wall-grid">
+      <article class="wall-card red"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M4 30 H60 V22 L48 19 L39 9 H21 L12 19 H4 Z"/></svg><h4>Cars, helis, planes</h4><p>47 vehicles on every island. Run people over, drive-by from the window, fly a helicopter with a nose gun or a fighter plane with bombs. Your squad rides with you.</p></article>
+      <article class="wall-card orange"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M6 20 H50 L58 16 L50 12 H6 Z M14 12 L10 4 M14 28 L10 36"/></svg><h4>Anti-air warfare</h4><p>Stinger missiles lock onto aircraft and chase them. Rocket launchers wreck cars. Planes crash in flames.</p></article>
+      <article class="wall-card blue"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M6 18 H44 V24 H24 L20 32 H12 L14 24 H6 Z M44 20 H58"/></svg><h4>12 guns, 3 upgrade stars</h4><p>From pistol to the one-shot Heavy Sniper and the SCAR. Upgrade benches and kits add up to +66% damage.</p></article>
+      <article class="wall-card pink"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M30 6 L36 20 L52 20 L39 29 L44 44 L30 35 L16 44 L21 29 L8 20 L24 20 Z"/></svg><h4>9 perks</h4><p>C4 (100 damage, your own too, shields save you), molotovs, shockwaves, smoke, launch pads, instant forts, upgrade kits and the atomic bomb.</p></article>
+      <article class="wall-card orange"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M30 16 m-10 0 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0 M22 24 L26 32 M38 24 L34 32 M22 32 H38 V44 H22 Z"/></svg><h4>Supply drops</h4><p>A balloon crate falls into every new circle: a guaranteed legendary, C4 or a nuke, full shields.</p></article>
+      <article class="wall-card green"><span class="badge">2x</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M4 40 L20 14 L28 26 L38 8 L56 40 Z"/></svg><h4>A huge island</h4><p>800 by 800 m: a 30-floor skyscraper, two castles, a desert town and a pyramid, a snowy peak and a ski lodge, mountains to climb, a port with a ship.</p></article>
+      <article class="wall-card teal"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M14 12 m-6 0 a6 6 0 1 0 12 0 a6 6 0 1 0 -12 0 M30 12 m-6 0 a6 6 0 1 0 12 0 a6 6 0 1 0 -12 0 M46 12 m-6 0 a6 6 0 1 0 12 0 a6 6 0 1 0 -12 0 M4 40 Q14 22 24 40 M20 40 Q30 22 40 40 M36 40 Q46 22 56 40"/></svg><h4>Solo, duos, squads</h4><p>Party codes put friends on one team. Spectate, free camera, anti-cheat that hides enemies behind walls.</p></article>
+      <article class="wall-card red"><span class="badge">$</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M12 30 m-8 0 a20 14 0 1 0 40 0 a20 14 0 1 0 -40 0 M40 22 L52 16 M18 18 V10 M26 16 V8"/></svg><h4>A real pot every 6 h</h4><p>Trading fees fill the King Pig. Every win is tickets; at 00/06/12/18 UTC the pot pays out on-chain.</p></article>
+      </div>
+    </section>
+
     <section class="flyover">
       <div class="fly-frame">
         <span class="tape tape-l"></span><span class="tape tape-r"></span>
         <canvas id="flyCanvas" aria-label="live view of the island"></canvas>
         <div id="flyTags" class="fly-tags"></div>
-        <div class="fly-label"><span class="rec">● live</span> the island · 14 places · every roof reachable</div>
+        <div class="fly-label"><span class="rec">● live</span> the island · 23 places · desert, snow, mountains · every roof reachable</div>
       </div>
       <div class="fly-side">
         <h3>Drive it. Fly it. Wreck it.</h3>

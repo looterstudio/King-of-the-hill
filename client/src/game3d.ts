@@ -3,18 +3,18 @@
 // server, interpolates everyone else 100 ms in the past, and draws it all through InkRenderer:
 // players, loot, pencil cases, grenades, smoke, pads, forts and incoming nukes.
 import * as THREE from 'three';
-import { EYE_H, INTERACT_R, ITEMS, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { EYE_H, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
 import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildCase, buildFigure, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, poseFigure, type Figure, type VehicleModel } from './models.ts';
+import { buildCase, buildFigure, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, poseFigure, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
-const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd'] as const;
+const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
 export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PINK, legendary: INK_IDS.ORANGE };
@@ -127,17 +127,17 @@ export class Game3D {
     };
     const m4 = (x: number, y: number, z: number, sx: number, sy: number, sz: number) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz));
     instanced(boxGeo, w.boxes.map((b) => ({ m: m4((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2, b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0), ink: b.ink })));
-    instanced(new THREE.IcosahedronGeometry(1, 1), w.trees.map((t) => ({ m: m4(t.x, t.h * 0.6 + t.r * 0.7, t.z, t.r, t.r * 0.9, t.r), ink: 4 })));
+    instanced(new THREE.IcosahedronGeometry(1, 1), w.trees.map((t) => ({ m: m4(t.x, t.h * 0.6 + t.r * 0.7, t.z, t.r, t.r * 0.9, t.r), ink: t.ink ?? 4 })));
     // clouds and the mountain ring
     const puffs: { m: THREE.Matrix4; ink: number }[] = [];
-    for (let i = 0; i < 26; i++) {
-      const cx = Math.sin(i * 12.9898 + w.seed) * 230, cz = Math.cos(i * 78.233 + w.seed) * 230, cy = 105 + (i % 5) * 9, sz = 6 + (i % 4) * 2;
+    for (let i = 0; i < 44; i++) {
+      const cx = Math.sin(i * 12.9898 + w.seed) * 440, cz = Math.cos(i * 78.233 + w.seed) * 440, cy = 140 + (i % 5) * 12, sz = 8 + (i % 4) * 3;
       for (let k = 0; k < 4; k++) puffs.push({ m: m4(cx + (k - 1.5) * sz * 0.9, cy + (k % 2) * sz * 0.35, cz + (k % 3) * 2, sz, sz * 0.6, sz * 0.8), ink: 0 });
     }
     instanced(new THREE.IcosahedronGeometry(1, 1), puffs);
     const peaks: { m: THREE.Matrix4; ink: number }[] = [];
-    for (let i = 0; i < 46; i++) {
-      const a = (i / 46) * Math.PI * 2, d = 285 + ((i * 37) % 9) * 14, h = 45 + ((i * 53 + w.seed) % 70), rad = 38 + ((i * 29) % 30);
+    for (let i = 0; i < 64; i++) {
+      const a = (i / 64) * Math.PI * 2, d = MAP_HALF + 90 + ((i * 37) % 9) * 22, h = 70 + ((i * 53 + w.seed) % 110), rad = 55 + ((i * 29) % 40);
       peaks.push({ m: m4(Math.cos(a) * d, h / 2 - 1, Math.sin(a) * d, rad, h, rad), ink: i % 3 === 0 ? 6 : 4 });
     }
     instanced(new THREE.ConeGeometry(1, 1, 7, 1), peaks);
@@ -173,10 +173,16 @@ export class Game3D {
       this.worldGroup.add(disc);
       for (let k = 1; k <= 3; k++) { const ring = new THREE.Mesh(new THREE.TorusGeometry(l.r * (0.25 + k * 0.18), 0.05, 4, 40).rotateX(Math.PI / 2), ink.material(INK_IDS.BLUE)); ring.position.set(l.x, 0.22, l.z); this.worldGroup.add(ring); }
     }
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400).rotateX(-Math.PI / 2), ink.material(INK_IDS.PAPER));
+    // biomes: sand and snow painted on the ground (a hair above it, below roads and lakes)
+    for (const b of w.biomes) {
+      const patch = new THREE.Mesh(new THREE.BoxGeometry(b.x1 - b.x0, 0.04, b.z1 - b.z0), ink.material(b.kind === 'desert' ? INK_IDS.ORANGE : INK_IDS.BLUE));
+      patch.position.set((b.x0 + b.x1) / 2, 0.02, (b.z0 + b.z1) / 2);
+      this.worldGroup.add(patch);
+    }
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(MAP_HALF * 7, MAP_HALF * 7).rotateX(-Math.PI / 2), ink.material(INK_IDS.PAPER));
     this.worldGroup.add(ground);
     // the island's edge sits well below the ground plane: coplanar surfaces shimmer from high up
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(400.6, 2, 400.6), ink.material(INK_IDS.GRAPHITE));
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(MAP_HALF * 2 + 0.6, 2, MAP_HALF * 2 + 0.6), ink.material(INK_IDS.GRAPHITE));
     edge.position.y = -1.6;
     this.worldGroup.add(edge);
   }
@@ -292,11 +298,16 @@ export class Game3D {
       let v = this.fx.get(id);
       if (!v) {
         const g = kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink)
-          : kind === 'pad' ? buildPad(this.ink) : kind === 'c4' ? buildItem('c4', this.ink) : kind === 'bomb' ? buildItem('nuke', this.ink) : kind === 'drop' ? buildSupply(this.ink) : buildNukeMarker(this.ink);
+          : kind === 'pad' ? buildPad(this.ink) : kind === 'c4' ? buildItem('c4', this.ink) : kind === 'bomb' ? buildItem('nuke', this.ink) : kind === 'drop' ? buildSupply(this.ink)
+          : kind === 'rocket' || kind === 'missile' ? buildItem('rocket', this.ink) : kind === 'molotov' ? buildItem('molotov', this.ink) : kind === 'shock' ? buildItem('shock', this.ink) : kind === 'fire' ? buildFire(this.ink) : buildNukeMarker(this.ink);
         this.ink.scene.add(g);
         v = { g, kind };
         this.fx.set(id, v);
       }
+      // rockets point the way they fly
+      if ((kind === 'rocket' || kind === 'missile') && v.g.userData.px !== undefined) { const dx = x - v.g.userData.px, dy = y - v.g.userData.py, dz = z - v.g.userData.pz; if (Math.hypot(dx, dy, dz) > 0.01) v.g.lookAt(x + dx, y + dy, z + dz); }
+      v.g.userData.px = x; v.g.userData.py = y; v.g.userData.pz = z;
+      if (kind === 'fire') for (const f of v.g.children) f.scale.y = 0.7 + Math.random() * 0.6;
       v.g.position.set(x, y, z);
       if (kind === 'drop') { this.drops.push({ x, z }); v.g.rotation.y += 0.02; }
       if (kind === 'bomb') v.g.rotation.x = Math.PI;
@@ -416,7 +427,7 @@ export class Game3D {
       if (!el) return;
       v.set(p.x, 14, p.z).project(cam);
       const d = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
-      if (high && v.z < 1 && d > 25 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1) {
+      if (high && v.z < 1 && d > 25 && d < 330 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1) {
         el.style.display = 'block';
         el.style.transform = `translate(${((v.x + 1) / 2) * W}px, ${((1 - v.y) / 2) * H}px) translate(-50%, -50%)`;
       } else el.style.display = 'none';
@@ -434,12 +445,12 @@ export class Game3D {
       this.ink.scene.add(m.root); this.vmodels.set(-1 - i, m);
     });
     const cam = this.ink.camera, a = this.time * 0.05;
-    cam.position.set(Math.cos(a) * 165, 78 + Math.sin(this.time * 0.13) * 12, Math.sin(a) * 165);
+    cam.position.set(Math.cos(a) * 300, 120 + Math.sin(this.time * 0.13) * 18, Math.sin(a) * 300);
     cam.lookAt(Math.cos(a + 0.6) * 25, 6, Math.sin(a + 0.6) * 25);
     if (cam.fov !== 58) { cam.fov = 58; cam.updateProjectionMatrix(); }
     const patrol = -1 - this.world.vehicleSpots.findIndex((s) => s.kind === 'heli');
     for (const [id, m] of this.vmodels) {
-      if (id === patrol) { const t = this.time * 0.25; m.root.position.set(Math.cos(t) * 60, 42 + Math.sin(t * 2) * 6, Math.sin(t) * 60); m.root.rotation.set(-0.15, -t, 0.2, 'YXZ'); }
+      if (id === patrol) { const t = this.time * 0.2; m.root.position.set(Math.cos(t) * 110, 60 + Math.sin(t * 2) * 8, Math.sin(t) * 110); m.root.rotation.set(-0.15, -t, 0.2, 'YXZ'); }
       for (const s of m.spin) { if (s.name === 'rotor') s.rotation.y += dt * 24; else if (s.name === 'tail') s.rotation.x += dt * 30; else if (s.name === 'prop') s.rotation.z += dt * 10; }
     }
     this.placeNames(W, H);
@@ -493,10 +504,10 @@ export class Game3D {
     if (!p || !me?.alive || p.gliding) return;
     if (p.ride) return; // the vehicle panel shows how to get out
     for (const v of this.vehiclesNow) {
-      const def = VEHICLES[VEHICLE_KINDS[v[1]]];
-      if (!v[8] && Math.hypot(v[2] - p.x, v[4] - p.z) < def.reach && Math.abs(v[3] - p.y) < 2.5) {
-        this.prompt = `E · ${v[1] === 0 ? 'drive the car' : v[1] === 1 ? 'fly the helicopter' : 'fly the plane'}`;
-      }
+      const def = VEHICLES[VEHICLE_KINDS[v[1]]], name = v[1] === 0 ? 'car' : v[1] === 1 ? 'helicopter' : 'plane';
+      if (Math.hypot(v[2] - p.x, v[4] - p.z) > def.reach || Math.abs(v[3] - p.y) > 2.5) continue;
+      if (!v[8]) this.prompt = `E · ${v[1] === 0 ? 'drive the car' : `fly the ${name}`}`;
+      else if (this.mates.has(v[8]) && (v[9] ?? 0) < def.seats) this.prompt = `E · ride in your teammate's ${name}`;
     }
     let best = INTERACT_R, text = '';
     for (const c of this.cases.values()) {
@@ -511,6 +522,12 @@ export class Game3D {
         best = d;
         const full = !me.slots.includes(null);
         text = `E · ${full ? 'swap for' : 'pick up'} ${WEAPONS[l.d[5] as WeaponId].name} <i style="color:${RARITY_CSS[WEAPONS[l.d[5] as WeaponId].rarity]}">${WEAPONS[l.d[5] as WeaponId].rarity}</i>`;
+      }
+    }
+    if (!text && this.world) for (const u of this.world.upgrades) {
+      if (Math.hypot(u.x - p.x, u.z - p.z) < 2.4 && Math.abs(u.y - 0.95 - p.y) < 1.6) {
+        const w = me.slots[me.cur];
+        text = w ? (me.ups[me.cur] >= 3 ? `${WEAPONS[w].name} is maxed out ★★★` : `E · upgrade your ${WEAPONS[w].name} at the bench <i style="color:#e8a317">${'★'.repeat(me.ups[me.cur] + 1)}</i>`) : '';
       }
     }
     if (text) this.prompt = text;
@@ -532,6 +549,10 @@ export class Game3D {
       const crouch = this.pred.slideT > 0 ? -0.6 : 0;
       const speed = Math.hypot(this.pred.vx, this.pred.vz);
       if (this.pred.grounded && speed > 1) this.bob += dt * speed * (speed > 7.4 ? 2.1 : 1.6);
+      if (this.pred.seat && me) {
+        const v = this.vehiclesNow.find((x) => x[0] === me.rideV);
+        if (v) pos.set(v[2], v[3], v[4]);
+      }
       if (this.pred.ride) {
         // third person chase camera, orbiting with the mouse; pulls back with speed
         const dist = (this.pred.ride === 1 ? 7.5 : 12) + Math.min(6, Math.abs(this.pred.spd) * 0.08), cp = Math.cos(look.pitch);
@@ -692,6 +713,6 @@ export class Game3D {
     this.free.x += (-Math.sin(yaw) * cp * c.fwd + Math.cos(yaw) * c.strafe) * sp;
     this.free.z += (-Math.cos(yaw) * cp * c.fwd - Math.sin(yaw) * c.strafe) * sp;
     this.free.y += (Math.sin(pitch) * c.fwd + (c.jump ? 1 : 0) - (c.slide ? 1 : 0)) * sp;
-    this.free.x = Math.max(-260, Math.min(260, this.free.x)); this.free.z = Math.max(-260, Math.min(260, this.free.z)); this.free.y = Math.max(2, Math.min(160, this.free.y));
+    const L = MAP_HALF + 60; this.free.x = Math.max(-L, Math.min(L, this.free.x)); this.free.z = Math.max(-L, Math.min(L, this.free.z)); this.free.y = Math.max(2, Math.min(200, this.free.y));
   }
 }

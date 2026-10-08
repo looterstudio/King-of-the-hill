@@ -65,6 +65,7 @@ class Sfx {
     if (!this.ctx || !this.enabled) return;
     const v = distance === 0 ? 1 : Math.max(0, 0.5 - distance / 220);
     if (v <= 0.01) return;
+    if (w === 'rocket' || w === 'stinger') { this.burst(500, 0.6, 0.8 * v, 0.6); this.tone(160, 50, 0.4 * v, 0.5, 'sawtooth'); return; }
     if (w === 'heavy' || w === 'hunting') { this.burst(900, 0.7, 0.9 * v, w === 'heavy' ? 0.8 : 0.5); this.tone(w === 'heavy' ? 80 : 120, 35, 0.55 * v, 0.45, 'triangle'); }
     else if (w === 'tac' || w === 'pump') { this.burst(1400, 0.5, 0.85 * v, 0.35); this.tone(90, 45, 0.35 * v, 0.25, 'triangle'); }
     else if (w === 'minigun') { this.burst(2600, 1, 0.35 * v, 0.06); }

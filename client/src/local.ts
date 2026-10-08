@@ -117,7 +117,7 @@ export class LocalNet {
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
         room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0 });
-        room.bots.push({ id, skill: 0.3 + Math.random() * 0.55, strafe: Math.random() < 0.5 ? 1 : -1, aimErr: 0, reaction: 0, target: null, los: false, losT: 0, wp: { x: 0, z: 0 }, stuck: 0, seq: 0, dropX: (Math.random() - 0.5) * 300, dropZ: (Math.random() - 0.5) * 300 });
+        room.bots.push({ id, skill: 0.3 + Math.random() * 0.55, strafe: Math.random() < 0.5 ? 1 : -1, aimErr: 0, reaction: 0, target: null, los: false, losT: 0, wp: { x: 0, z: 0 }, stuck: 0, seq: 0, dropX: (Math.random() - 0.5) * 640, dropZ: (Math.random() - 0.5) * 640 });
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }
       }, delay));
@@ -194,7 +194,7 @@ export class LocalNet {
       // pick the right gun for the range from what we carry
       const has = self.slots.map((w, i) => ({ w, i })).filter((x) => x.w) as { w: WeaponId; i: number }[];
       const shotgun = has.find((x) => x.w === 'pump' || x.w === 'tac'), sniper = has.find((x) => x.w === 'heavy' || x.w === 'hunting');
-      const rifle = has.filter((x) => !['pump', 'tac', 'heavy', 'hunting'].includes(x.w)).sort((a, z) => rank(z.w) - rank(a.w))[0];
+      const rifle = has.filter((x) => !['pump', 'tac', 'heavy', 'hunting', 'stinger'].includes(x.w)).sort((a, z) => rank(z.w) - rank(a.w))[0];
       const want = d < 12 && shotgun ? shotgun : d > 70 && sniper ? sniper : rifle ?? has[0];
       if (want && want.i !== self.cur) inp.slot = want.i + 1;
       if (b.reaction <= 0) { b.aimErr = (Math.random() - 0.5) * (1 - b.skill) * 0.12; b.reaction = 0.3 + Math.random() * 0.4; if (Math.random() < 0.15) b.strafe *= -1; }
@@ -208,7 +208,8 @@ export class LocalNet {
       inp.aim = d > 30;
       if (self.perk) {
         const k = self.perk.kind;
-        if (k === 'grenade' && d > 8 && d < 24 && Math.random() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
+        if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && Math.random() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
+        if (k === 'kit') inp.perk = true;
         if ((k === 'smoke' || k === 'fort') && self.hp < 45 && Math.random() < 0.08) inp.perk = true;
         if (k === 'nuke' && d > 40 && Math.random() < 0.05) inp.perk = true;
       }

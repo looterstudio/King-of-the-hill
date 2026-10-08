@@ -18,10 +18,10 @@ export const ROOM_MIN = 2;            // a room starts with fewer than 10 once t
 export const FILL_WAIT_MS = 45_000;   // how long a room waits for more players after the 2nd joins
 export const COUNTDOWN_MS = 5_000;
 export const RESULT_MS = 6_000;       // results screen before the room closes
-export const ROUND_MAX_MS = 480_000;  // hard cap: the storm has fully closed (~6 min) well before this
+export const ROUND_MAX_MS = 720_000;  // hard cap: the storm has fully closed (~9 min) well before this
 
 // ---- world (meters) ----
-export const MAP_HALF = 200;            // the island is 400 x 400 m
+export const MAP_HALF = 400;            // the island is 800 x 800 m
 export const GRAVITY = 24;
 export const PLAYER_R = 0.4;
 export const PLAYER_H = 1.8;
@@ -38,12 +38,13 @@ export const VIEW_RANGE = 170;          // players farther than this are not sen
 
 // battle royale storm: each phase waits, then shrinks toward a new circle inside the current one
 export interface RingPhase { wait: number; shrink: number; radius: number; dps: number }
-export const RING_START_R = 290;        // covers the corners of the island
+export const RING_START_R = 580;        // covers the corners of the island
 export const RING_PHASES: RingPhase[] = [
-  { wait: 50, shrink: 55, radius: 170, dps: 2 },
-  { wait: 35, shrink: 40, radius: 100, dps: 5 },
-  { wait: 25, shrink: 30, radius: 55, dps: 9 },
-  { wait: 20, shrink: 25, radius: 25, dps: 15 },
+  { wait: 60, shrink: 70, radius: 330, dps: 2 },
+  { wait: 45, shrink: 55, radius: 190, dps: 4 },
+  { wait: 35, shrink: 40, radius: 105, dps: 7 },
+  { wait: 25, shrink: 30, radius: 55, dps: 11 },
+  { wait: 20, shrink: 25, radius: 25, dps: 16 },
   { wait: 12, shrink: 18, radius: 0, dps: 28 },
 ];
 export const RING_DPS_START = 1;
@@ -52,11 +53,12 @@ export const RING_DPS_START = 1;
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 
-export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy';
-export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy'];
+export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy' | 'rocket' | 'stinger';
+export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy', 'rocket', 'stinger'];
 export interface WeaponDef {
   name: string; rarity: Rarity; dmg: number; cd: number; range: number; pellets: number; spread: number;
   mag: number; reload: number; zoom: number; auto: boolean; burst?: number; spinUp?: number; headMult?: number;
+  proj?: 'rocket' | 'missile'; // fires a projectile instead of a bullet
 }
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   pistol: { name: 'Pistol', rarity: 'common', dmg: 22, cd: 0.22, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.2, auto: false },
@@ -69,7 +71,17 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.2, auto: true, spinUp: 0.7 },
   scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.75, auto: true },
   heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 210, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
+  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.4, auto: false, proj: 'rocket' },
+  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.8, auto: false, proj: 'missile' },
 };
+// rockets fly straight and blow up on whatever they touch; Stinger missiles lock onto the nearest
+// helicopter or plane in front of you and chase it
+export const ROCKET = { speed: 58, radius: 6, life: 7 };
+export const MISSILE = { speed: 64, turn: 2.6, cone: 0.45, range: 420, radius: 5, life: 8 };
+// weapon upgrades: each level adds damage; benches upgrade once per player, kits anywhere
+export const UPGRADE = { max: 3, perLevel: 0.22, benchReach: 2.4 };
+export const MOLOTOV = { radius: 4.5, life: 7, dps: 15 };
+export const SHOCK = { radius: 7, push: 22, fuse: 1.4 };
 export const SLOTS = 4;
 
 export type ItemId = 'mini' | 'big' | 'med';
@@ -78,12 +90,15 @@ export const ITEMS: Record<ItemId, { name: string; rarity: Rarity; use: number; 
   big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 50, shieldCap: 100 },
   med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 100 },
 };
-export type PerkId = 'grenade' | 'smoke' | 'launch' | 'fort' | 'c4' | 'nuke';
+export type PerkId = 'grenade' | 'molotov' | 'shock' | 'smoke' | 'launch' | 'fort' | 'kit' | 'c4' | 'nuke';
 export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number }> = {
   grenade: { name: 'Grenades', rarity: 'uncommon', count: 3 },
+  molotov: { name: 'Molotov', rarity: 'uncommon', count: 2 },
+  shock: { name: 'Shockwave', rarity: 'rare', count: 2 },
   smoke: { name: 'Smoke', rarity: 'uncommon', count: 2 },
   launch: { name: 'Launch Pad', rarity: 'rare', count: 1 },
   fort: { name: 'Instant Fort', rarity: 'epic', count: 1 },
+  kit: { name: 'Upgrade Kit', rarity: 'rare', count: 1 },
   c4: { name: 'C4', rarity: 'epic', count: 2 },
   nuke: { name: 'Atomic Bomb', rarity: 'legendary', count: 1 },
 };
@@ -104,10 +119,11 @@ export const SUPPLY = { height: 110, fall: 7 };
 // ride code on the body: 0 on foot, 1 car, 2 helicopter, 3 plane
 export type VehicleKind = 'car' | 'heli' | 'plane';
 export const VEHICLE_KINDS: VehicleKind[] = ['car', 'heli', 'plane'];
-export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number; h: number; top: number; boost: number; accel: number; reach: number }> = {
-  car: { name: 'Car', hp: 500, r: 1.25, h: 1.7, top: 24, boost: 34, accel: 16, reach: 3.2 },
-  heli: { name: 'Helicopter', hp: 650, r: 2.3, h: 2.6, top: 25, boost: 32, accel: 14, reach: 4.2 },
-  plane: { name: 'Plane', hp: 350, r: 2.4, h: 1.8, top: 46, boost: 62, accel: 11, reach: 4.6 },
+// seats: passengers besides the driver (teammates only); they can shoot out of any vehicle
+export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number; h: number; top: number; boost: number; accel: number; reach: number; seats: number }> = {
+  car: { name: 'Car', hp: 500, r: 1.25, h: 1.7, top: 24, boost: 34, accel: 16, reach: 3.2, seats: 3 },
+  heli: { name: 'Helicopter', hp: 650, r: 2.3, h: 2.6, top: 25, boost: 32, accel: 14, reach: 4.2, seats: 3 },
+  plane: { name: 'Plane', hp: 350, r: 2.4, h: 1.8, top: 46, boost: 62, accel: 11, reach: 4.6, seats: 1 },
 };
 export const RAM = { minSpeed: 7, dmgPerMs: 4.2, cooldown: 0.6 };      // running people over
 export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle

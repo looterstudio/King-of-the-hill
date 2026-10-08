@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  BOMB, C4, CRASH, HELI_GUN, MAP_HALF, PLANE_GUN, RAM, SUPPLY, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  BOMB, C4, CRASH, HELI_GUN, MAP_HALF, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -14,17 +14,17 @@ import { World, moveBody, newBody, rayBox, type Body, type Box } from './world.t
 export { rng };
 
 export type LootKind = 'weapon' | 'item' | 'perk';
-export interface Loot { id: number; x: number; y: number; z: number; kind: LootKind; what: string; n: number; mag?: number }
+export interface Loot { id: number; x: number; y: number; z: number; kind: LootKind; what: string; n: number; mag?: number; up?: number }
 export interface Case { id: number; x: number; y: number; z: number; golden: boolean; open: boolean; supply?: boolean }
-export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb'; stuck?: boolean; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
-export interface Effect { id: number; kind: 'smoke' | 'pad' | 'nuke' | 'drop'; owner: number; x: number; y: number; z: number; t: number }
+export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
+export interface Effect { id: number; kind: 'smoke' | 'pad' | 'nuke' | 'drop' | 'fire'; owner: number; x: number; y: number; z: number; t: number }
 // a vehicle: its own body (the physics state while nobody drives), hp, who is in it
-export interface Vehicle { id: number; kind: VehicleKind; hp: number; driver: number; last: number; body: Body; gunCd: number; bombCd: number }
+export interface Vehicle { id: number; kind: VehicleKind; hp: number; driver: number; last: number; body: Body; gunCd: number; bombCd: number; seats: number[] }
 export interface Build { id: number; owner: number; idx: number[]; boxes: Box[]; t: number }
 
 export interface PlayerState extends Body {
   id: number; yaw: number; pitch: number; hp: number; shield: number; alive: boolean;
-  slots: (WeaponId | null)[]; mags: number[]; cur: number;
+  slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[]; // upgrade level per slot
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; fireCd: number; spin: number; burstLeft: number; burstT: number;
@@ -49,7 +49,8 @@ export type SimEvent =
   | { kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { kind: 'open'; caseId: number; by: number; golden: boolean }
   | { kind: 'vhit'; vehicle: number; by: number; dmg: number }
-  | { kind: 'drop'; x: number; z: number; landed: boolean };
+  | { kind: 'drop'; x: number; z: number; landed: boolean }
+  | { kind: 'upgrade'; by: number; level: number };
 
 export const emptyInput = (): Input => ({ seq: 0, fwd: 0, strafe: 0, yaw: 0, pitch: 0, jump: false, sprint: false, slide: false, grapple: false, fire: false, aim: false, reload: false, slot: 0, view: 0, interact: false, item: 0, perk: false, up: 0 });
 
@@ -71,6 +72,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 
 // one tick of movement for a player: on foot, or driving / flying. Returns the crash speed, if any.
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
+  if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
   if (p.ride) return moveVehicle(w, p, inp, dt, GRAVITY);
   moveBody(w, p, { ...inp, sprint: inp.sprint && !inp.aim && !using }, dt, GRAVITY, inp.aim || using ? WALK_SPEED * 0.55 : WALK_SPEED, SPRINT_SPEED, JUMP_V);
   return 0;
@@ -99,7 +101,7 @@ const FLOOR_RARITY: [Rarity, number][] = [['common', 50], ['uncommon', 30], ['ra
 const CASE_RARITY: [Rarity, number][] = [['common', 34], ['uncommon', 34], ['rare', 21], ['epic', 9], ['legendary', 2]];
 const GOLD_RARITY: [Rarity, number][] = [['epic', 55], ['legendary', 45]];
 const ITEM_TABLE: [ItemId, number][] = [['mini', 50], ['big', 25], ['med', 25]];
-const PERK_TABLE: [PerkId, number][] = [['grenade', 36], ['smoke', 20], ['launch', 18], ['fort', 13], ['c4', 13]];
+const PERK_TABLE: [PerkId, number][] = [['grenade', 30], ['molotov', 22], ['shock', 14], ['smoke', 14], ['launch', 14], ['fort', 11], ['kit', 12], ['c4', 12]];
 
 // ray vs player hitboxes (vertical cylinder body + head sphere); returns {t, head} or null
 export function rayPlayer(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, px: number, py: number, pz: number): { t: number; head: boolean } | null {
@@ -129,6 +131,7 @@ export class Sim {
   vehicles: Vehicle[] = [];
   private rams = new Map<number, number>(); // vehicle*65536+player -> time of the last hit
   private pendingDrop = false;
+  private benchUsed = new Set<string>();
   ring: Ring;
   shots: Shot[] = [];   // drained by whoever encodes snapshots
   lootVer = 0;
@@ -143,13 +146,13 @@ export class Sim {
   constructor(public seed: number, world?: World) {
     this.world = world ?? new World(seed);
     this.rand = rng(seed ^ 0x9e3779b9);
-    const first = RING_PHASES[0], c = this.nextCircle(0, 0, 0, RING_START_R - 110, first.radius);
+    const first = RING_PHASES[0], c = this.nextCircle(0, 0, 0, RING_START_R - 220, first.radius);
     this.ring = { x: 0, y: 0, r: RING_START_R, nx: c.x, ny: c.y, nr: first.radius, phase: 0, closing: false, dps: RING_DPS_START, nextAt: first.wait };
     const lr = rng(seed ^ 0x5bd1e995);
     for (const s of this.world.vehicleSpots) {
       const body = newBody(s.x, s.y, s.z);
       Object.assign(body, { ride: VEHICLE_KINDS.indexOf(s.kind) + 1, head: s.head, grounded: true });
-      this.vehicles.push({ id: this.nextId++, kind: s.kind, hp: VEHICLES[s.kind].hp, driver: 0, last: 0, body, gunCd: 0, bombCd: 0 });
+      this.vehicles.push({ id: this.nextId++, kind: s.kind, hp: VEHICLES[s.kind].hp, driver: 0, last: 0, body, gunCd: 0, bombCd: 0, seats: [] });
     }
     for (const s of this.world.caseSpots) this.cases.push({ id: this.nextId++, x: s.x, y: s.y, z: s.z, golden: !!s.golden, open: false });
     for (const s of this.world.lootSpots) {
@@ -179,11 +182,11 @@ export class Sim {
     return list[Math.floor(r() * list.length)];
   }
 
-  drop(x: number, y: number, z: number, kind: LootKind, what: string, n = 1, mag?: number) {
+  drop(x: number, y: number, z: number, kind: LootKind, what: string, n = 1, mag?: number, up = 0) {
     const def = kind === 'weapon' ? WEAPONS[what as WeaponId] : null;
     const at = this.world.settle(x, y, z) ?? { x, y: this.world.groundAt(x, z, y + 0.6), z };
     x = at.x; y = at.y; z = at.z;
-    this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : n, mag: def ? (mag ?? def.mag) : undefined });
+    this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : n, mag: def ? (mag ?? def.mag) : undefined, up: up || undefined });
     this.lootVer++;
   }
 
@@ -194,12 +197,12 @@ export class Sim {
     ids.forEach((id) => {
       const team = teamOf?.get(id) ?? id;
       let at = drop.get(team);
-      if (!at) { const a = this.rand() * Math.PI * 2, d = 40 + Math.sqrt(this.rand()) * 140; at = { x: Math.cos(a) * d, z: Math.sin(a) * d, n: 0 }; drop.set(team, at); }
+      if (!at) { const a = this.rand() * Math.PI * 2, d = 70 + Math.sqrt(this.rand()) * 300; at = { x: Math.cos(a) * d, z: Math.sin(a) * d, n: 0 }; drop.set(team, at); }
       const k = at.n++, x = at.x + (k % 2) * 3 - 1.5 * Math.min(1, k), z = at.z + Math.floor(k / 2) * 3;
       this.players.set(id, {
         ...newBody(x, 95 + this.rand() * 15, z), gliding: true, id,
         yaw: Math.atan2(x, z), pitch: -0.5, hp: PLAYER_HP, shield: 0, alive: true,
-        slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0,
+        slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
       });
@@ -220,13 +223,13 @@ export class Sim {
     if (by !== null && by !== id) { const k = this.players.get(by); if (k) k.kills++; }
     // everything they carried spills on the floor in a little ring
     const gy = this.world.groundAt(p.x, p.z, p.y + 0.1);
-    const spill: [LootKind, string, number, number | undefined][] = [];
-    p.slots.forEach((w, i) => { if (w && w !== 'pistol') spill.push(['weapon', w, 1, p.mags[i]]); });
-    for (const it of Object.keys(p.items) as ItemId[]) if (p.items[it] > 0) spill.push(['item', it, p.items[it], undefined]);
-    if (p.perk) spill.push(['perk', p.perk.kind, p.perk.n, undefined]);
-    spill.forEach(([k, what, n, mag], i) => {
+    const spill: [LootKind, string, number, number | undefined, number][] = [];
+    p.slots.forEach((w, i) => { if (w && w !== 'pistol') spill.push(['weapon', w, 1, p.mags[i], p.ups[i]]); });
+    for (const it of Object.keys(p.items) as ItemId[]) if (p.items[it] > 0) spill.push(['item', it, p.items[it], undefined, 0]);
+    if (p.perk) spill.push(['perk', p.perk.kind, p.perk.n, undefined, 0]);
+    spill.forEach(([k, what, n, mag, up], i) => {
       const a = (i / Math.max(1, spill.length)) * Math.PI * 2;
-      this.drop(p.x + Math.cos(a) * 1.2, gy, p.z + Math.sin(a) * 1.2, k, what, n, mag);
+      this.drop(p.x + Math.cos(a) * 1.2, gy, p.z + Math.sin(a) * 1.2, k, what, n, mag, up);
       if (k === 'perk') this.loot[this.loot.length - 1].n = n;
     });
     ev.push({ kind: 'elim', victim: id, by, cause, head });
@@ -267,6 +270,26 @@ export class Sim {
   private shoot(p: PlayerState, w: WeaponId, inp: Input, ev: SimEvent[]) {
     const def = WEAPONS[w];
     p.mags[p.cur]--;
+    if (def.proj) {
+      const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
+      const sp = def.proj === 'rocket' ? ROCKET.speed : MISSILE.speed, dmg = def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]);
+      let tgt: number | undefined;
+      if (def.proj === 'missile') { // lock onto the aircraft closest to the crosshair
+        let best = MISSILE.cone;
+        for (const v of this.vehicles) {
+          if (v.kind === 'car') continue;
+          const d = v.driver ? this.players.get(v.driver) : null;
+          if (d && d.team === p.team) continue;
+          const tx = v.body.x - p.x, ty = v.body.y + 1 - (p.y + EYE_H), tz = v.body.z - p.z, dist = Math.hypot(tx, ty, tz);
+          if (dist > MISSILE.range || dist < 3) continue;
+          const ang = Math.acos(clamp((tx * dx + ty * dy + tz * dz) / dist, -1, 1));
+          if (ang < best) { best = ang; tgt = v.id; }
+        }
+      }
+      this.projectiles.push({ id: this.nextId++, kind: def.proj, owner: p.id, x: p.x + dx * 0.9, y: p.y + EYE_H - 0.1 + dy * 0.9, z: p.z + dz * 0.9, vx: dx * sp, vy: dy * sp, vz: dz * sp, t: def.proj === 'rocket' ? ROCKET.life : MISSILE.life, tgt, dmg });
+      this.shots.push({ ox: p.x, oy: p.y + EYE_H, oz: p.z, ex: p.x + dx * 2, ey: p.y + EYE_H + dy * 2, ez: p.z + dz * 2, by: p.id, hit: false });
+      return;
+    }
     const spread = spreadFor(p, w, inp.aim);
     const view = clamp(inp.view, this.tick - REWIND_MAX_TICKS, this.tick);
     const past = this.positionsAt(view);
@@ -276,7 +299,7 @@ export class Sim {
       const cp = Math.cos(pitch);
       // pellets and long range fall off a little; headshots multiply
       this.ray(p, ox, oy, oz, -Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, def.range, (t, head) =>
-        def.dmg * (def.pellets > 1 ? clamp(1.2 - t / def.range, 0.35, 1) : 1) * (head ? (def.headMult ?? HEADSHOT_MULT) : 1), ev, past);
+        def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]) * (def.pellets > 1 ? clamp(1.2 - t / def.range, 0.35, 1) : 1) * (head ? (def.headMult ?? HEADSHOT_MULT) : 1), ev, past);
     }
   }
 
@@ -287,7 +310,7 @@ export class Sim {
     let hit: { head: boolean; q: PlayerState } | null = null, vhit: Vehicle | null = null;
     for (const q of this.players.values()) {
       // no friendly fire; pilots sit inside their aircraft (shoot the aircraft); drivers are exposed
-      if (!q.alive || q.id === p.id || q.team === p.team || q.ride >= 2) continue;
+      if (!q.alive || q.id === p.id || q.team === p.team || (q.ride >= 2 && !q.seat)) continue;
       const at = past?.get(q.id) ?? q;
       if (Math.abs(at.x - ox) > range || Math.abs(at.z - oz) > range) continue;
       const h = rayPlayer(ox, oy, oz, dx, dy, dz, at.x, at.y, at.z);
@@ -319,6 +342,7 @@ export class Sim {
     // wrecked: throw the driver out, then it blows up on them and everyone near
     const d = v.driver ? this.players.get(v.driver) : null;
     if (d) this.exitVehicle(d);
+    for (const id of [...v.seats]) { const q = this.players.get(id); if (q) this.exitVehicle(q); }
     this.vehicles = this.vehicles.filter((x) => x !== v);
     const b = v.body;
     this.explode(b.x, b.y + 1, b.z, VEH_BOOM.radius, VEH_BOOM.dmg, by || v.last || (d?.id ?? 0), ev, false);
@@ -336,6 +360,17 @@ export class Sim {
     const v = this.vehicles.find((x) => x.id === p.rideV);
     const ride = p.ride;
     p.rideV = 0; p.ride = 0;
+    if (p.seat) { // a passenger hops off; the vehicle carries on
+      p.seat = 0; p.spd = 0; p.vpitch = 0;
+      if (v) v.seats = v.seats.filter((id) => id !== p.id);
+      const b = v?.body ?? p, r = v ? VEHICLES[v.kind].r : 1;
+      const sx = Math.cos(b.head), sz = -Math.sin(b.head), out = r + 0.9;
+      const spots = [{ x: b.x - sx * out, y: b.y, z: b.z - sz * out }, { x: b.x + sx * out, y: b.y, z: b.z + sz * out }, { x: b.x, y: b.y + 3, z: b.z }];
+      const at = spots.find((s) => !this.world.overlaps(s.x, s.y, s.z)) ?? spots[2];
+      p.x = at.x; p.y = at.y; p.z = at.z; p.vx *= 0.3; p.vz *= 0.3; p.vy = 0;
+      if (p.y - this.world.groundAt(p.x, p.z, p.y) > 4) p.gliding = true;
+      return;
+    }
     if (!v) { p.spd = 0; p.vpitch = 0; return; }
     const b = v.body, r = VEHICLES[v.kind].r, h = VEHICLES[v.kind].h;
     Object.assign(b, { x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, head: p.head, vpitch: p.vpitch, spd: p.spd, grounded: p.grounded, ride });
@@ -352,7 +387,8 @@ export class Sim {
   private nearVehicle(p: PlayerState): Vehicle | null {
     let best: Vehicle | null = null, bd = Infinity;
     for (const v of this.vehicles) {
-      if (v.driver) continue;
+      const d0 = v.driver ? this.players.get(v.driver) : null;
+      if (d0 && (d0.team !== p.team || v.seats.length >= VEHICLES[v.kind].seats)) continue;
       const b = v.body, d = Math.hypot(b.x - p.x, b.z - p.z);
       if (d < VEHICLES[v.kind].reach && Math.abs(b.y - p.y) < 2.5 && d < bd) { bd = d; best = v; }
     }
@@ -397,13 +433,22 @@ export class Sim {
         if (impact > CRASH.minSpeed) this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), v.last, ev);
       }
     }
+    // passengers sit in their seats: beside / behind the driver, moving with the vehicle
+    for (const v of this.vehicles) for (let i = 0; i < v.seats.length; i++) {
+      const q = this.players.get(v.seats[i]);
+      if (!q || !q.alive) continue;
+      const b = v.body, side = i % 2 ? -1 : 1, back = v.kind === 'car' ? (i ? 1.2 : 0) : 0.8 + i * 0.4, lat = v.kind === 'plane' ? 0 : side * (v.kind === 'heli' ? 1.6 : 0.5);
+      const fx = -Math.sin(b.head), fz = -Math.cos(b.head), rx = Math.cos(b.head), rz = -Math.sin(b.head);
+      q.x = b.x + rx * lat - fx * back; q.z = b.z + rz * lat - fz * back; q.y = b.y + (v.kind === 'car' ? 0.3 : 0.2);
+      q.vx = b.vx; q.vy = b.vy; q.vz = b.vz; q.grounded = b.grounded; q.head = b.head; q.vpitch = b.vpitch; q.spd = b.spd;
+    }
     // running people over: anything moving fast enough hurts whoever it touches
     for (const v of [...this.vehicles]) {
       const b = v.body, sp = Math.hypot(b.vx, b.vy, b.vz), def = VEHICLES[v.kind];
       if (sp < RAM.minSpeed) continue;
       const owner = this.players.get(v.driver || v.last);
       for (const q of this.players.values()) {
-        if (!q.alive || q.ride || q.id === v.driver || (owner && owner.id !== q.id && owner.team === q.team)) continue;
+        if (!q.alive || q.ride || q.id === v.driver || v.seats.includes(q.id) || (owner && owner.id !== q.id && owner.team === q.team)) continue;
         if (Math.abs(q.x - b.x) > def.r + 0.6 || Math.abs(q.z - b.z) > def.r + 0.6 || q.y > b.y + def.h || q.y + 1.8 < b.y) continue;
         const key = v.id * 65536 + q.id;
         if (this.t - (this.rams.get(key) ?? -9) < RAM.cooldown) continue;
@@ -439,7 +484,7 @@ export class Sim {
       if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * 1.3 * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
     }
     for (const q of this.players.values()) {
-      if (!q.alive || (q.id !== owner && q.team === team) || q.ride >= 2) continue; // pilots: the aircraft takes it
+      if (!q.alive || (q.id !== owner && q.team === team) || (q.ride >= 2 && !q.seat)) continue; // pilots: the aircraft takes it
       const dx = q.x - x, dy = q.y + 1 - y, dz = q.z - z, d = Math.hypot(dx, dy, dz);
       if (d > radius) continue;
       if (!nuke) { // walls stop grenade blasts
@@ -472,9 +517,12 @@ export class Sim {
       p.perk.n--;
       return;
     }
-    if (kind === 'grenade' || kind === 'smoke') {
+    if (kind === 'kit') {
+      if (!p.slots[p.cur] || p.ups[p.cur] >= UPGRADE.max) return; // keep the kit for a gun that can take it
+      p.ups[p.cur]++;
+    } else if (kind === 'grenade' || kind === 'smoke' || kind === 'molotov' || kind === 'shock') {
       const v = GRENADE.speed;
-      this.projectiles.push({ id: this.nextId++, kind, owner: p.id, x: ex, y: ey, z: ez, vx: dx * v + p.vx * 0.5, vy: dy * v + 4, vz: dz * v + p.vz * 0.5, t: kind === 'grenade' ? GRENADE.fuse : 1.4 });
+      this.projectiles.push({ id: this.nextId++, kind, owner: p.id, x: ex, y: ey, z: ez, vx: dx * v + p.vx * 0.5, vy: dy * v + 4, vz: dz * v + p.vz * 0.5, t: kind === 'grenade' ? GRENADE.fuse : kind === 'shock' ? SHOCK.fuse : kind === 'molotov' ? 6 : 1.4 });
     } else if (kind === 'launch') {
       const gx = p.x - Math.sin(p.yaw) * 1.6, gz = p.z - Math.cos(p.yaw) * 1.6;
       this.effects.push({ id: this.nextId++, kind: 'pad', owner: p.id, x: gx, y: this.world.groundAt(gx, gz, p.y + 0.2), z: gz, t: PAD.life });
@@ -524,16 +572,31 @@ export class Sim {
       ev.push({ kind: 'open', caseId: best.id, by: p.id, golden: best.golden });
       return;
     }
+    // an upgrade bench: improves the gun in your hands, once per player per bench
+    const bi = this.world.upgrades.findIndex((u) => Math.hypot(u.x - p.x, u.z - p.z) < UPGRADE.benchReach && Math.abs(u.y - 0.95 - p.y) < 1.6);
+    if (bi >= 0 && p.slots[p.cur] && p.ups[p.cur] < UPGRADE.max && !this.benchUsed.has(`${bi}:${p.id}`)) {
+      this.benchUsed.add(`${bi}:${p.id}`); p.ups[p.cur]++;
+      ev.push({ kind: 'upgrade', by: p.id, level: p.ups[p.cur] });
+      return;
+    }
     let gun: Loot | null = null; bd = INTERACT_R;
     for (const l of this.loot) { if (l.kind !== 'weapon' || Math.abs(l.y - p.y) > 1.6) continue; const d = Math.hypot(l.x - p.x, l.z - p.z); if (d < bd) { bd = d; gun = l; } }
-    if (!gun) { const v = this.nearVehicle(p); if (v) this.enterVehicle(p, v); return; }
+    if (!gun) {
+      const v = this.nearVehicle(p);
+      if (v && !v.driver) this.enterVehicle(p, v);
+      else if (v) { // ride along with your teammate
+        v.seats.push(p.id); p.rideV = v.id; p.ride = VEHICLE_KINDS.indexOf(v.kind) + 1; p.seat = v.seats.length;
+        p.gliding = false; p.hook = false; p.use = null;
+      }
+      return;
+    }
     let slot = p.slots.findIndex((s) => s === null);
     if (slot < 0) { // full: drop what's in hand
       slot = p.cur;
       const held = p.slots[slot];
-      if (held) this.drop(p.x, this.world.groundAt(p.x, p.z, p.y + 0.1), p.z, 'weapon', held, 1, p.mags[slot]);
+      if (held) this.drop(p.x, this.world.groundAt(p.x, p.z, p.y + 0.1), p.z, 'weapon', held, 1, p.mags[slot], p.ups[slot]);
     }
-    p.slots[slot] = gun.what as WeaponId; p.mags[slot] = gun.mag ?? WEAPONS[gun.what as WeaponId].mag; p.cur = slot; p.reloadT = 0;
+    p.slots[slot] = gun.what as WeaponId; p.mags[slot] = gun.mag ?? WEAPONS[gun.what as WeaponId].mag; p.ups[slot] = gun.up ?? 0; p.cur = slot; p.reloadT = 0;
     this.loot.splice(this.loot.indexOf(gun), 1); this.lootVer++;
   }
 
@@ -573,20 +636,62 @@ export class Sim {
       } else {
         const slot = p.slots.findIndex((s) => s === null);
         if (slot < 0 || p.slots.includes(l.what as WeaponId)) continue;
-        p.slots[slot] = l.what as WeaponId; p.mags[slot] = l.mag ?? WEAPONS[l.what as WeaponId].mag;
+        p.slots[slot] = l.what as WeaponId; p.mags[slot] = l.mag ?? WEAPONS[l.what as WeaponId].mag; p.ups[slot] = l.up ?? 0;
       }
       this.loot.splice(i, 1); this.lootVer++;
+    }
+  }
+
+  // a rocket or missile: straight (or steering toward its locked aircraft), in short sub-steps so it
+  // can't skip through a thin wall; it blows up on anything solid, any player or vehicle it reaches
+  private stepRocket(g: Projectile, dt: number, ev: SimEvent[]): boolean {
+    const radius = g.kind === 'rocket' ? ROCKET.radius : MISSILE.radius, dmg = g.dmg ?? 100;
+    const tgt = g.tgt !== undefined ? this.vehicles.find((v) => v.id === g.tgt) : null;
+    if (tgt) {
+      const tx = tgt.body.x - g.x, ty = tgt.body.y + 1 - g.y, tz = tgt.body.z - g.z, d = Math.hypot(tx, ty, tz) || 1, sp = Math.hypot(g.vx, g.vy, g.vz);
+      const k = Math.min(1, MISSILE.turn * dt);
+      g.vx += ((tx / d) * sp - g.vx) * k; g.vy += ((ty / d) * sp - g.vy) * k; g.vz += ((tz / d) * sp - g.vz) * k;
+    }
+    for (let s = 0; s < 4; s++) {
+      const nx = g.x + (g.vx * dt) / 4, ny = g.y + (g.vy * dt) / 4, nz = g.z + (g.vz * dt) / 4;
+      const hitWorld = ny < 0.05 || this.world.near(nx, nz, nx, nz).some((i) => { const q = this.world.boxes[i]; return !q.dead && nx > q.x0 && nx < q.x1 && nz > q.z0 && nz < q.z1 && ny > q.y0 && ny < q.y1; });
+      const owner = this.players.get(g.owner);
+      const hitVeh = this.vehicles.some((v) => v.driver !== g.owner && Math.hypot(v.body.x - nx, v.body.z - nz) < VEHICLES[v.kind].r + 0.8 && ny > v.body.y - 0.5 && ny < v.body.y + VEHICLES[v.kind].h + 0.8);
+      const hitPlayer = [...this.players.values()].some((q) => q.alive && q.id !== g.owner && (!owner || q.team !== owner.team) && Math.hypot(q.x - nx, q.z - nz) < 0.7 && ny > q.y && ny < q.y + 1.9);
+      g.x = nx; g.y = ny; g.z = nz;
+      if (hitWorld || hitVeh || hitPlayer) { this.explode(g.x, Math.max(0.3, g.y), g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
+    }
+    if ((g.t -= dt) <= 0) { this.explode(g.x, g.y, g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
+    return true;
+  }
+
+  // a shockwave grenade: no damage, it throws everyone nearby (you too) through the air
+  private shockwave(x: number, y: number, z: number, ev: SimEvent[]) {
+    ev.push({ kind: 'boom', x, y, z, r: SHOCK.radius, nuke: false });
+    for (const q of this.players.values()) {
+      if (!q.alive || q.ride) continue;
+      const dx = q.x - x, dz = q.z - z, d = Math.hypot(dx, q.y + 1 - y, dz);
+      if (d > SHOCK.radius) continue;
+      const k = (1 - d / SHOCK.radius) * SHOCK.push + 6, l = Math.hypot(dx, dz) || 1;
+      q.vx += (dx / l) * k * 0.8; q.vz += (dz / l) * k * 0.8; q.vy = Math.max(q.vy, k * 0.75); q.grounded = false; q.gliding = false; q.slideT = 0;
     }
   }
 
   private stepProjectiles(dt: number, ev: SimEvent[]) {
     const keep: Projectile[] = [];
     for (const g of this.projectiles) {
+      if (g.kind === 'rocket' || g.kind === 'missile') { if (this.stepRocket(g, dt, ev)) keep.push(g); continue; }
       if (g.stuck) { if ((g.t -= dt) > 0) keep.push(g); else this.explode(g.x, g.y, g.z, C4.radius, C4.dmg, g.owner, ev, false, C4.core); continue; }
       g.vy -= GRAVITY * dt;
       const nx = g.x + g.vx * dt, ny = g.y + g.vy * dt, nz = g.z + g.vz * dt;
       // bounce off the ground and anything solid (bombs go off, C4 sticks)
       const b = this.world.near(nx, nz, nx, nz).map((i) => this.world.boxes[i]).find((q) => !q.dead && nx > q.x0 && nx < q.x1 && nz > q.z0 && nz < q.z1 && ny > q.y0 && ny < q.y1);
+      if ((b || ny < 0.05) && g.kind === 'molotov') { // shatters: a patch of fire where it lands
+        const fy = b && g.y >= b.y1 - 0.15 ? b.y1 : this.world.groundAt(g.x, g.z, g.y + 0.2);
+        this.effects.push({ id: this.nextId++, kind: 'fire', owner: g.owner, x: g.x, y: fy, z: g.z, t: MOLOTOV.life });
+        ev.push({ kind: 'boom', x: g.x, y: fy, z: g.z, r: 2, nuke: false });
+        continue;
+      }
       if ((b || ny < 0.05) && (g.kind === 'bomb' || g.kind === 'c4')) {
         if (g.kind === 'bomb') { this.explode(g.x, Math.max(0.3, g.y), g.z, BOMB.radius, BOMB.dmg, g.owner, ev, false); continue; }
         g.stuck = true; g.y = b && g.y >= b.y1 - 0.15 ? b.y1 + 0.05 : Math.max(0.05, g.y); keep.push(g); continue;
@@ -601,6 +706,8 @@ export class Sim {
       g.t -= dt;
       if (g.t > 0) { keep.push(g); continue; }
       if (g.kind === 'grenade') this.explode(g.x, g.y, g.z, GRENADE.radius, GRENADE.dmg, g.owner, ev, false);
+      else if (g.kind === 'shock') this.shockwave(g.x, g.y, g.z, ev);
+      else if (g.kind === 'molotov') this.effects.push({ id: this.nextId++, kind: 'fire', owner: g.owner, x: g.x, y: this.world.groundAt(g.x, g.z, g.y + 0.2), z: g.z, t: MOLOTOV.life });
       else if (g.kind === 'bomb' || g.kind === 'c4') this.explode(g.x, g.y, g.z, g.kind === 'bomb' ? BOMB.radius : C4.radius, g.kind === 'bomb' ? BOMB.dmg : C4.dmg, g.owner, ev, false);
       else this.effects.push({ id: this.nextId++, kind: 'smoke', owner: g.owner, x: g.x, y: g.y, z: g.z, t: SMOKE.life });
     }
@@ -620,6 +727,16 @@ export class Sim {
         continue;
       }
       e.t -= dt;
+      if (e.kind === 'fire' && this.tick % 10 === 0) { // burns whoever stands in it (its thrower included)
+        const owner = this.players.get(e.owner);
+        for (const q of this.players.values()) {
+          if (!q.alive || (q.ride >= 2 && !q.seat) || (owner && q.id !== owner.id && q.team === owner.team)) continue;
+          if (Math.hypot(q.x - e.x, q.z - e.z) > MOLOTOV.radius || Math.abs(q.y - e.y) > 2.5) continue;
+          const dmg = Math.round(MOLOTOV.dps / 3), h = this.hurt(q, dmg);
+          if (q.id !== e.owner) ev.push({ kind: 'hit', victim: q.id, by: e.owner, dmg, head: false, ...h });
+          if (q.hp <= 0) this.eliminate(q.id, q.id === e.owner ? null : e.owner, 'boom', ev);
+        }
+      }
       if (e.kind === 'pad') for (const p of this.players.values()) {
         if (p.alive && p.grounded && Math.hypot(p.x - e.x, p.z - e.z) < 1.4 && Math.abs(p.y - e.y) < 0.6) { p.vy = PAD.launch; p.grounded = false; p.launchT = 1.1; p.slideT = 0; }
       }
@@ -652,7 +769,7 @@ export class Sim {
         p.cur = inp.slot - 1; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.fireCd = Math.max(p.fireCd, 0.25);
       }
       if (inp.interact && !p.gliding) this.interact(p, ev);
-      if (inp.perk && !p.gliding && !p.ride) this.usePerk(p, ev);
+      if (inp.perk && !p.gliding && (!p.ride || p.seat > 0)) this.usePerk(p, ev); // passengers can throw things too
 
       // healing / shielding takes time and you walk slowly while doing it
       if (inp.item && !p.use && !p.gliding && !p.ride) {
@@ -683,12 +800,12 @@ export class Sim {
         // crashes dent the vehicle; aircraft guns and bombs
         const v = this.vehicles.find((x) => x.id === p.rideV);
         if (v && impact > CRASH.minSpeed) this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), p.id, ev);
-        if (p.ride >= 2) this.vehicleGuns(p, inp, ev);
+        if (p.ride >= 2 && !p.seat) this.vehicleGuns(p, inp, ev);
       } else this.autoPickup(p);
       if (!p.alive) continue;
 
       // on foot, or leaning out of a car window (drive-by); never from inside an aircraft
-      if (w && !p.gliding && p.reloadT === 0 && !p.use && p.ride <= 1) {
+      if (w && !p.gliding && p.reloadT === 0 && !p.use && (p.ride <= 1 || p.seat > 0)) {
         const def = WEAPONS[w];
         if (def.spinUp) p.spin = inp.fire ? Math.min(def.spinUp, p.spin + dt) : Math.max(0, p.spin - dt * 2);
         const spunUp = !def.spinUp || p.spin >= def.spinUp;

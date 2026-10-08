@@ -104,7 +104,7 @@ void main() {
   if (!sky) {
     float id = inkId(b);
     vec3 ink = inkColor(id);
-    float fade = 1.0 - smoothstep(90.0, 260.0, d);   // far things get lighter, like pencil pressure
+    float fade = 1.0 - smoothstep(130.0, 480.0, d);   // far things get lighter, like pencil pressure
     // fills: highlighter-ish tints for some inks
     if (id > 2.5 && id < 3.5) col = mix(col, vec3(1.0, 0.82, 0.45), 0.55 * fade);
     if (id > 0.5 && id < 1.5) col = mix(col, vec3(1.0, 0.80, 0.80), 0.6 * fade);
@@ -201,7 +201,7 @@ export class InkRenderer {
     this.renderer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1));
     this.basePr = Math.min(1.5, devicePixelRatio || 1);
     this.renderer.autoClear = false;
-    this.camera = new THREE.PerspectiveCamera(78, 1, 0.15, 700);
+    this.camera = new THREE.PerspectiveCamera(78, 1, 0.15, 1400);
     this.viewCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
     this.rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
     this.rt.depthTexture = new THREE.DepthTexture(4, 4, THREE.UnsignedIntType);
