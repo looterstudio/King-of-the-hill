@@ -51,7 +51,7 @@ export type ServerMsg =
   | { t: 'settled'; settled: SettledView }
   | { t: 'queued'; position: number }
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number }
-  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][] } // shot = [ox,oy,oz,ex,ey,ez,by,hit]
+  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left'; left: number; head: boolean }
   | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean }
   | { t: 'result'; winner: number | null; ticketAwarded: boolean; epoch: number };

@@ -9,7 +9,7 @@ export const INK = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5,
 
 export interface Box { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; ink: number; kind: 'building' | 'stair' | 'crate' | 'wall' | 'trunk' }
 export interface Tree { x: number; z: number; h: number; r: number }
-export interface Roof { x0: number; z0: number; x1: number; z1: number; y: number }
+export interface Roof { x0: number; z0: number; x1: number; z1: number; y: number; kind?: 'mesa' | 'tower' }
 
 const CELL = 8;
 const GRID = Math.ceil((MAP_HALF * 2) / CELL);
@@ -118,7 +118,8 @@ export const newBody = (x: number, y: number, z: number): Body => ({
   slideT: 0, dashT: 0, dashX: 0, dashZ: 0, dashReady: true, hook: false, gx: 0, gy: 0, gz: 0, hookCd: 0,
 });
 
-const GLIDE_SPEED = 15, GLIDE_FALL = -10;
+// gliding: look down to dive (fast fall, fast forward), look up to float and cover distance
+const GLIDE_SPEED = 12, GLIDE_DIVE_SPEED = 22, GLIDE_FALL = -7, GLIDE_DIVE_FALL = -30;
 const SLIDE_TIME = 0.75, SLIDE_SPEED = 11.5, DASH_TIME = 0.18, DASH_SPEED = 17;
 const WALL_GRACE = 0.2, WALL_PUSH = 7.5;
 export const HOOK_RANGE = 48;
@@ -178,15 +179,16 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
     p.vy -= gravity * dt;
   } else {
     p.slideT = 0;
-    const speed = p.gliding ? GLIDE_SPEED : inp.sprint && inp.fwd > 0 ? sprint : walk;
+    const dive = p.gliding ? Math.max(0, Math.min(1, (-inp.pitch - 0.3) / 0.9)) : 0;
+    const speed = p.gliding ? GLIDE_SPEED + (GLIDE_DIVE_SPEED - GLIDE_SPEED) * dive : inp.sprint && inp.fwd > 0 ? sprint : walk;
     if (p.grounded || p.gliding) { p.vx = wx * speed; p.vz = wz * speed; }
     else {
       // air: steer, but never bleed off momentum from a slide jump, dash or swing
       const ax = p.vx + wx * speed * dt * 4, az = p.vz + wz * speed * dt * 4, cur = Math.hypot(p.vx, p.vz), next = Math.hypot(ax, az), cap = Math.max(cur, speed);
       const k = next > cap ? cap / next : 1; p.vx = ax * k; p.vz = az * k;
     }
-    p.vy -= gravity * dt;
-    if (p.gliding && p.vy < GLIDE_FALL) p.vy = GLIDE_FALL;
+    if (p.gliding) { const cap = GLIDE_FALL + (GLIDE_DIVE_FALL - GLIDE_FALL) * dive; p.vy += (cap - p.vy) * Math.min(1, dt * 4); }
+    else p.vy -= gravity * dt;
   }
 
   const wasGrounded = p.grounded;
@@ -231,11 +233,31 @@ function generate(w: World, seed: number) {
   for (let bx = -SPAN; bx <= SPAN; bx++) for (let bz = -SPAN; bz <= SPAN; bz++) {
     const cx = bx * BLOCK, cz = bz * BLOCK;
     const roll = r();
-    if (roll < 0.14) { // park: trees and benches of cover
+    if (roll < 0.06 && Math.abs(bx) + Math.abs(bz) > 1) { // mesa: a raised plateau with a wide stair and cover on top
+      const h = 4.5 + Math.floor(r() * 3) * 1.5, s = 11, x0 = cx - s, z0 = cz - s;
+      box(x0, 0, z0, cx + s, h, cz + s, INK.GREEN, 'building');
+      w.roofs.push({ x0, z0, x1: cx + s, z1: cz + s, y: h, kind: 'mesa' });
+      const steps = Math.round(h / 0.5);
+      for (let i = 0; i < steps; i++) box(cx - 1.5, 0, z0 - (steps - i) * 0.6, cx + 1.5, (i + 1) * 0.5, z0 - (steps - i - 1) * 0.6, INK.GRAPHITE, 'stair');
+      for (let i = 0; i < 4; i++) { const px = x0 + 3 + r() * (2 * s - 6), pz = z0 + 3 + r() * (2 * s - 6); box(px, h, pz, px + 1.3, h + 1.3, pz + 1.3, INK.ORANGE, 'crate'); }
+      continue;
+    }
+    if (roll < 0.11) { // watchtower: tall platform on four posts, one long staircase up (or grapple it)
+      const top = 13, hw = 2.2;
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(cx + dx * hw - 0.25, 0, cz + dz * hw - 0.25, cx + dx * hw + 0.25, top, cz + dz * hw + 0.25, INK.BROWN, 'wall');
+      box(cx - hw - 0.4, top, cz - hw - 0.4, cx + hw + 0.4, top + 0.4, cz + hw + 0.4, INK.BROWN, 'building');
+      box(cx - hw - 0.4, top + 0.4, cz - hw - 0.4, cx + hw + 0.4, top + 1.3, cz - hw - 0.1, INK.BROWN, 'wall'); // a low rail for cover
+      w.roofs.push({ x0: cx - hw - 0.4, z0: cz - hw - 0.4, x1: cx + hw + 0.4, z1: cz + hw + 0.4, y: top + 0.4, kind: 'tower' });
+      const steps = Math.round((top + 0.4) / 0.5);
+      for (let i = 0; i < steps; i++) box(cx + hw + 0.4, 0, cz - hw - 0.4 + i * 0.6 - steps * 0.6 + 2 * hw + 0.8, cx + hw + 1.8, Math.min(top + 0.4, (i + 1) * 0.5), cz - hw - 0.4 + (i + 1) * 0.6 - steps * 0.6 + 2 * hw + 0.8, INK.GRAPHITE, 'stair');
+      for (let i = 0; i < 6; i++) w.trees.push({ x: cx + (r() - 0.5) * 24, z: cz + (r() - 0.5) * 24, h: 4 + r() * 3, r: 1.6 + r() * 1.2 });
+      continue;
+    }
+    if (roll < 0.2) { // park: trees and benches of cover
       for (let i = 0; i < 6; i++) w.trees.push({ x: cx + (r() - 0.5) * 26, z: cz + (r() - 0.5) * 26, h: 4 + r() * 3, r: 1.6 + r() * 1.2 });
       continue;
     }
-    if (roll < 0.22) { // plaza: low walls in a square
+    if (roll < 0.27) { // plaza: low walls in a square
       for (let i = 0; i < 4; i++) {
         const a = (i * Math.PI) / 2, len = 7 + r() * 5, ox = cx + Math.cos(a) * 9, oz = cz + Math.sin(a) * 9;
         if (i % 2 === 0) box(ox - 0.25, 0, oz - len / 2, ox + 0.25, 1.1, oz + len / 2, INK.GRAPHITE, 'wall');

@@ -53,6 +53,12 @@ test('walls stop you, stairs take you to the roof', () => {
   assert.ok(Math.abs(p.y - 4) < 1e-6, `on the roof, y=${p.y}`);
 });
 
+test('gliding: diving falls faster than floating', () => {
+  const flat = World.custom([]);
+  const fall = (pitch: number) => { const p = newBody(0, 80, 0); p.gliding = true; for (let i = 0; i < TICK_HZ * 2; i++) moveStep(flat, p, inp({ pitch, fwd: 1 }), DT); return 80 - p.y; };
+  assert.ok(fall(-1.3) > fall(0.2) * 2.5, 'looking down dives');
+});
+
 test('players glide in from the sky and land', () => {
   const sim = new Sim(3, World.custom([]));
   sim.spawn([1]);
@@ -191,7 +197,9 @@ test('the generated island: every rooftop is reachable by its stairs', () => {
   const w = new World(1234);
   assert.ok(w.roofs.length > 20);
   for (const roof of w.roofs) {
-    const top = w.boxes.filter((b) => b.kind === 'stair').some((b) => Math.abs(b.y1 - roof.y) < 1e-6 && (Math.abs(b.x1 - roof.x0) < 1e-6 || Math.abs(b.x0 - roof.x1) < 1e-6));
+    const touches = (b: { x0: number; x1: number; z0: number; z1: number }) =>
+      Math.abs(b.x1 - roof.x0) < 1e-6 || Math.abs(b.x0 - roof.x1) < 1e-6 || Math.abs(b.z1 - roof.z0) < 1e-6 || Math.abs(b.z0 - roof.z1) < 1e-6;
+    const top = w.boxes.filter((b) => b.kind === 'stair').some((b) => Math.abs(b.y1 - roof.y) < 1e-6 && touches(b));
     assert.ok(top, `roof at ${roof.x0},${roof.z0} has a top step`);
   }
 });

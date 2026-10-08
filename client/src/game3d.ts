@@ -7,6 +7,8 @@ import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_SLIDE, type RoomSeat, type 
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
 import { World, type Body } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
+import { buildFigure, buildGun, poseFigure, type Figure } from './models.ts';
+import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
@@ -14,7 +16,6 @@ const INTERP = 0.1;
 const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
-interface Avatar { root: THREE.Group; body: THREE.Mesh; head: THREE.Mesh; gun: THREE.Mesh; wing: THREE.Mesh; tag: HTMLDivElement }
 interface Tracer { start: THREE.Vector3; end: THREE.Vector3; life: number; mine: boolean }
 
 export class Game3D {
@@ -34,7 +35,9 @@ export class Game3D {
   private pending: Input[] = [];
   private seq = 0;
   private snaps: { s: Snap; at: number }[] = [];
-  private avatars = new Map<number, Avatar>();
+  private avatars = new Map<number, Figure & { tag: HTMLDivElement }>();
+  leader: [number, number] | null = null;
+  private viewChute: THREE.Group | null = null;
   private tracers: Tracer[] = [];
   private tracerGeo: THREE.BufferGeometry;
   private ropeGeo: THREE.BufferGeometry;
@@ -112,6 +115,14 @@ export class Game3D {
       for (let k = 0; k < 4; k++) puffs.push({ m: m4(cx + (k - 1.5) * sz * 0.9, cy + (k % 2) * sz * 0.35, cz + (k % 3) * 2, sz, sz * 0.6, sz * 0.8), ink: 0 });
     }
     instanced(new THREE.IcosahedronGeometry(1, 1), puffs);
+    // mountains ringing the island (scenery beyond the edge, not walkable)
+    const peaks: { m: THREE.Matrix4; ink: number }[] = [];
+    for (let i = 0; i < 46; i++) {
+      const a = (i / 46) * Math.PI * 2 + Math.sin(i * 3.7 + w.seed) * 0.05, d = 280 + ((i * 37) % 9) * 14;
+      const h = 45 + ((i * 53 + w.seed) % 70), rad = 38 + ((i * 29) % 30);
+      peaks.push({ m: m4(Math.cos(a) * d, h / 2 - 1, Math.sin(a) * d, rad, h, rad), ink: i % 3 === 0 ? 6 : 4 });
+    }
+    instanced(new THREE.ConeGeometry(1, 1, 7, 1), peaks);
     // ground: paper, only contact lines get drawn
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2), ink.material(INK_IDS.PAPER));
     this.worldGroup.add(ground);
@@ -122,39 +133,36 @@ export class Game3D {
   }
 
   // ---------------- avatars ----------------
-  private avatar(id: number): Avatar {
+  private avatar(id: number) {
     let a = this.avatars.get(id);
     if (a) return a;
-    const root = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.36, 0.75, 3, 8), this.ink.material(INK_IDS.RED));
-    body.position.y = 0.85;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), this.ink.material(INK_IDS.RED));
-    head.position.y = 1.62;
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.7), this.ink.material(INK_IDS.GRAPHITE));
-    gun.position.set(0.28, 1.25, -0.35);
-    // paper-plane glider for the drop
-    const wing = new THREE.Mesh(new THREE.ConeGeometry(1.3, 2.4, 3).rotateX(Math.PI / 2).scale(1, 0.2, 1), this.ink.material(INK_IDS.BLUE));
-    wing.position.y = 2.6;
-    root.add(body, head, gun, wing);
-    this.ink.scene.add(root);
+    const fig = buildFigure(this.ink, id);
+    this.ink.scene.add(fig.root);
     const tag = document.createElement('div');
     tag.className = 'tag';
     tag.textContent = this.seats.get(id)?.num ?? '';
     this.tagLayer.appendChild(tag);
-    a = { root, body, head, gun, wing, tag };
+    a = Object.assign(fig, { tag });
     this.avatars.set(id, a);
     return a;
   }
 
   // ---------------- first-person guns ----------------
   private buildGuns() {
-    const blue = this.ink.material(INK_IDS.BLUE, true), gray = this.ink.material(INK_IDS.GRAPHITE, true), orange = this.ink.material(INK_IDS.ORANGE, true);
-    const part = (g: THREE.Group, w: number, h: number, d: number, x: number, y: number, z: number, m: THREE.Material) => { const p = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); p.position.set(x, y, z); g.add(p); };
-    const make = (id: WeaponId, f: (g: THREE.Group) => void) => { const g = new THREE.Group(); f(g); g.position.set(0.24, -0.22, -0.45); g.visible = false; this.ink.viewScene.add(g); this.guns.set(id, g); };
-    make('rifle', (g) => { part(g, 0.07, 0.1, 0.6, 0, 0, -0.1, blue); part(g, 0.05, 0.16, 0.08, 0, -0.1, 0.05, gray); part(g, 0.05, 0.12, 0.06, 0, -0.1, -0.15, orange); part(g, 0.03, 0.03, 0.25, 0, 0.03, -0.5, gray); });
-    make('shotgun', (g) => { part(g, 0.09, 0.09, 0.55, 0, 0, -0.1, gray); part(g, 0.08, 0.06, 0.35, 0, -0.07, -0.18, orange); part(g, 0.06, 0.14, 0.08, 0, -0.1, 0.12, blue); });
-    make('sniper', (g) => { part(g, 0.06, 0.08, 0.8, 0, 0, -0.2, blue); part(g, 0.06, 0.06, 0.22, 0, 0.08, -0.12, gray); part(g, 0.05, 0.15, 0.07, 0, -0.1, 0.1, gray); });
-    make('pistol', (g) => { part(g, 0.06, 0.08, 0.28, 0, 0, -0.05, blue); part(g, 0.05, 0.14, 0.07, 0, -0.1, 0.05, gray); });
+    const mats = { body: this.ink.material(INK_IDS.BLUE, true), dark: this.ink.material(INK_IDS.GRAPHITE, true), accent: this.ink.material(INK_IDS.ORANGE, true) };
+    for (const id of WEAPON_ORDER) {
+      const g = buildGun(id, mats);
+      g.scale.setScalar(0.62); g.position.set(0.2, -0.2, -0.5); g.visible = false;
+      this.ink.viewScene.add(g); this.guns.set(id, g);
+    }
+    // the canopy edge you see overhead while gliding
+    const chute = new THREE.Group();
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2.6), this.ink.material(INK_IDS.RED, true));
+    dome.position.set(0, 1.6, 0);
+    chute.add(dome);
+    chute.visible = false;
+    this.ink.viewScene.add(chute);
+    this.viewChute = chute;
   }
 
   // ---------------- network ----------------
@@ -163,9 +171,17 @@ export class Game3D {
     if (this.snaps.length > 30) this.snaps.shift();
     this.ring = s.ring;
     this.alive = s.alive;
+    this.leader = s.leader;
+    const heard = new Set<number>();
     for (const sh of s.shots) {
       if (sh[6] === this.you) continue; // our own shots were already drawn when we pulled the trigger
       this.tracers.push({ start: new THREE.Vector3(sh[0], sh[1] - 0.15, sh[2]), end: new THREE.Vector3(sh[3], sh[4], sh[5]), life: 0.12, mine: false });
+      if (!heard.has(sh[6])) { // one sound per shooter per snapshot (shotgun pellets are one bang)
+        heard.add(sh[6]);
+        const o = s.others.find((p) => p[0] === sh[6]);
+        const cam = this.ink.camera.position;
+        sfx.shot(WEAPON_ORDER[o?.[8] ?? 0] ?? 'rifle', Math.max(1, Math.hypot(sh[0] - cam.x, sh[2] - cam.z)));
+      }
     }
     if (!s.self) return;
     this.self = s.self;
@@ -195,6 +211,8 @@ export class Game3D {
       const i = WEAPON_ORDER.indexOf(this.self.weapon), n = WEAPON_ORDER.length;
       slot = ((i + (slot === -1 ? 1 : -1) + n) % n) + 1;
     }
+    if (c.jump && this.pred && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
+    if (c.reload && this.self.reloadT === 0) sfx.reload();
     const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT);
@@ -207,6 +225,7 @@ export class Game3D {
     if (c.fire && this.localCd === 0 && this.self.mag[wi] > 0 && this.self.reloadT === 0 && !this.pred.gliding) {
       this.localCd = def.cd;
       this.gunKick = 1;
+      sfx.shot(w);
       const spread = spreadFor(this.pred, w, c.aim);
       const ox = this.pred.x, oy = this.pred.y + EYE_H, oz = this.pred.z;
       for (let i = 0; i < Math.min(def.pellets, 5); i++) {
@@ -283,17 +302,11 @@ export class Game3D {
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
-      a.root.position.set(o[1], o[2], o[3]);
-      a.root.rotation.y = o[4];
-      const sliding = !!(o[7] & OTHER_SLIDE);
-      a.body.scale.y = sliding ? 0.55 : 1; a.body.position.y = sliding ? 0.5 : 0.85;
-      a.head.position.y = sliding ? 1.0 : 1.62;
-      a.gun.position.y = (sliding ? 0.9 : 1.25) + Math.sin(o[5]) * 0.2;
-      a.wing.visible = !!(o[7] & OTHER_GLIDE);
+      poseFigure(a, o[1], o[2], o[3], o[4], o[5], WEAPON_ORDER[o[8]] ?? 'rifle', !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt);
       // number tag over nearby heads
       const d = a.root.position.distanceTo(cam.position);
-      v.set(o[1], o[2] + 2.2, o[3]).project(cam);
-      if (d < 45 && v.z < 1) {
+      v.set(o[1], o[2] + 2.5, o[3]).project(cam);
+      if (d < 50 && v.z < 1) {
         a.tag.style.display = 'block';
         a.tag.style.transform = `translate(${((v.x + 1) / 2) * innerWidth}px, ${((1 - v.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
       } else a.tag.style.display = 'none';
@@ -324,13 +337,15 @@ export class Game3D {
     this.tracerGeo.setDrawRange(0, tn * 2);
 
     // first-person gun: sway, bob, recoil, reload dip, hidden while scoped with the sniper
-    for (const [id, g] of this.guns) g.visible = !!me?.alive && me.weapon === id && !(look.aim && id === 'sniper');
+    const gliding = !!this.pred?.gliding && !!me?.alive;
+    for (const [id, g] of this.guns) g.visible = !!me?.alive && me.weapon === id && !(look.aim && id === 'sniper') && !gliding;
+    if (this.viewChute) { this.viewChute.visible = gliding; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
     const g = me ? this.guns.get(me.weapon) : null;
     if (g && me) {
       this.gunKick = Math.max(0, this.gunKick - dt * 9);
       const reload = me.reloadT > 0 ? Math.sin(Math.min(1, me.reloadT / WEAPONS[me.weapon].reload) * Math.PI) : 0;
       const ads = look.aim ? 1 : 0;
-      g.position.set(0.24 * (1 - ads) + 0, -0.22 + ads * 0.08 - reload * 0.25 + Math.sin(this.bob) * 0.012, -0.45 + this.gunKick * 0.07);
+      g.position.set(0.2 * (1 - ads), -0.2 + ads * 0.1 - reload * 0.22 + Math.sin(this.bob) * 0.012, -0.5 + this.gunKick * 0.06 + ads * 0.08);
       g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, 0);
     }
 
@@ -340,6 +355,14 @@ export class Game3D {
 
   // where on screen a world point is (for damage direction indicators)
   bearingTo(x: number, z: number, yaw: number) { if (!this.pred) return 0; return Math.atan2(x - this.pred.x, z - this.pred.z) - yaw + Math.PI; }
+  // where a player's head or chest is on screen right now (for damage numbers)
+  screenOf(id: number, head: boolean): { x: number; y: number } | null {
+    const a = this.avatars.get(id);
+    if (!a || !a.root.visible) return null;
+    const v = a.root.position.clone().add(new THREE.Vector3(0, head ? 1.8 : 1.2, 0)).project(this.ink.camera);
+    if (v.z > 1) return null;
+    return { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight };
+  }
   positionOf(id: number) { const o = this.snaps.at(-1)?.s.others.find((p) => p[0] === id); return o ? { x: o[1], z: o[3] } : null; }
   get me() { return this.pred; }
 }

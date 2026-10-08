@@ -8,6 +8,7 @@ import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Game3D } from './game3d.ts';
 import { FpsInput } from './fpsinput.ts';
+import { sfx } from './audio.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
@@ -21,6 +22,7 @@ const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidde
 const DEMO = import.meta.env.MODE === 'demo';
 const net: Net | LocalNet = DEMO ? new LocalNet() : new Net();
 const jar = new PotJar($<HTMLCanvasElement>('jar'));
+const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false });
 const canvas = $<HTMLCanvasElement>('arena');
 const game = new Game3D(canvas, $<HTMLDivElement>('tags'));
 const input = new FpsInput(canvas);
@@ -91,11 +93,12 @@ $('leaveBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); $('queu
 const marks = (n: number) => '<i></i>'.repeat(Math.min(n, 15));
 function renderPot(p: PotView) {
   state.pot = p;
-  jar.setSol(sol(p.lamports));
+  jar.setSol(sol(p.lamports)); miniJar.setSol(sol(p.lamports));
+  $('pigPct').innerHTML = `the pig is <b>${jar.percent}%</b> full`;
   $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
   $('tickets').innerHTML = p.tickets.length
-    ? p.tickets.map((t) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''}"><span class="name"><span>${esc(t.name)}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
+    ? p.tickets.map((t, i) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''} ${i === 0 ? 'top' : ''}"><span class="name"><span>${i === 0 ? '<i class="crown">♛</i> ' : ''}${esc(t.name)}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
     : '<li class="nobody">Nobody has won a match yet. The first winner shows up here.</li>';
 }
 function toast(text: string) {
@@ -136,6 +139,24 @@ function hint(text: string, ms = 2500) {
   const el = $('hint'); el.textContent = text; el.classList.add('on');
   clearTimeout(hintTimer); hintTimer = window.setTimeout(() => el.classList.remove('on'), ms);
 }
+// Fortnite-style damage numbers: pellets that land together add up into one number
+const pendingHits = new Map<number, { dmg: number; head: boolean; t: number }>();
+function damageNumber(victim: number, dmg: number, head: boolean) {
+  const cur = pendingHits.get(victim);
+  if (cur) { cur.dmg += dmg; cur.head ||= head; return; }
+  const entry = { dmg, head, t: 0 };
+  pendingHits.set(victim, entry);
+  entry.t = window.setTimeout(() => {
+    pendingHits.delete(victim);
+    const at = game.screenOf(victim, entry.head) ?? { x: innerWidth / 2 + 40, y: innerHeight / 2 - 40 };
+    const el = document.createElement('div');
+    el.className = `dmgnum ${entry.head ? 'head' : ''} ${entry.dmg >= 60 ? 'big' : ''}`;
+    el.textContent = String(entry.dmg);
+    el.style.left = `${at.x + (Math.random() - 0.5) * 30}px`; el.style.top = `${at.y}px`;
+    $('tags').appendChild(el);
+    setTimeout(() => el.remove(), 900);
+  }, 40);
+}
 function hitmarker(head: boolean) {
   const el = $('hitmarker'); el.classList.toggle('head', head); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
@@ -155,7 +176,7 @@ const showSens = () => { $('sensVal').textContent = `${Math.round(input.sens * 1
 showSens();
 sens.oninput = () => { input.setSens(Number(sens.value)); showSens(); };
 invert.onchange = () => input.setInvert(invert.checked);
-$('resumeBtn').onclick = () => input.lock();
+$('resumeBtn').onclick = () => { sfx.unlock(); input.lock(); };
 $('quitBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); };
 input.onLockChange = (locked) => {
   if (state.screen !== 'game' || state.over) return;
@@ -207,7 +228,7 @@ net.on((m: ServerMsg) => {
       break;
     case 'error': err(m.msg); $('queueInfo').textContent = ''; break;
     case 'pot': renderPot(m.pot); break;
-    case 'inflow': { const v = sol(m.inflow.lamports); jar.inflow(v); toast(`+${v.toFixed(3)} SOL · ${m.inflow.source}`); break; }
+    case 'inflow': { const v = sol(m.inflow.lamports); jar.inflow(v); miniJar.inflow(v); toast(`+${v.toFixed(3)} SOL · ${m.inflow.source}`); break; }
     case 'settled': {
       const s = m.settled;
       $('lastDraw').className = 'draw-sum';
@@ -240,11 +261,11 @@ net.on((m: ServerMsg) => {
       break;
     case 'event': {
       if (m.kind === 'hit') {
-        if (m.by === state.you) hitmarker(m.head);
-        if (m.victim === state.you) damageFrom(m.by);
+        if (m.by === state.you) { hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head); sfx.hit(m.head); }
+        if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); }
         break;
       }
-      if (m.by === state.you) hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800);
+      if (m.by === state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); }
       const mine = m.victim === state.you || m.by === state.you;
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : label(m.by);
       feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : ''}${esc(how)}</span>`, mine);
@@ -315,11 +336,14 @@ function frame(now: number) {
       if (body?.gliding && me.alive) hint('gliding · steer with the mouse, land anywhere', 400);
     }
     $('aliveCount').textContent = String(game.alive);
+    const L = game.leader;
+    $('leader').innerHTML = L ? `<span class="crown">♛</span> kill leader <b>${L[0] === state.you ? 'you' : esc(label(L[0]))}</b> · ${L[1]}` : '';
     const g = game.ring, st = $('storm');
     st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
     if (state.pot) $('miniPot').textContent = fmtSol(sol(state.pot.lamports));
     if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); }
+    miniJar.frame(dt);
   }
   requestAnimationFrame(frame);
 }

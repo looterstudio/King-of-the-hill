@@ -130,6 +130,8 @@ button, input { font: inherit; color: inherit; }
 .ledger .marks i:nth-child(5n) { width: 22px; height: 2.5px; margin-left: -20px; transform: translateY(-7px) rotate(-28deg); }
 .ledger .marks em { font-style: normal; font-weight: 800; margin-left: 6px; font-variant-numeric: tabular-nums; }
 .ledger li.me-row .name { color: var(--teal); font-weight: 800; }
+.ledger li.top .name { font-weight: 800; }
+.ledger .crown { font-style: normal; color: #e8a317; }
 .ledger li.nobody { grid-template-columns: 1fr; color: var(--ink-soft); }
 .ledger li.nobody::before { content: none; }
 .receipt .empty { padding-top: 10px; line-height: 2; color: var(--ink-soft); font-size: 15.5px; }
@@ -161,7 +163,7 @@ button, input { font: inherit; color: inherit; }
 
 /* ---------- HUD (ink over the drawing) ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; color: var(--ink); }
-#hud > *:not(.tags) { mix-blend-mode: multiply; }
+#hud > *:not(.tags):not(.hitmarker) { mix-blend-mode: multiply; }
 .tags { position: absolute; inset: 0; overflow: hidden; }
 .tag { position: absolute; left: 0; top: 0; font-weight: 800; font-size: 13px; color: var(--red); background: rgba(246,242,228,.85); border: 1.5px solid var(--red); border-radius: var(--wobble-2); padding: 0 5px; display: none; white-space: nowrap; }
 .hud-tl { position: absolute; left: max(16px, 4vw); top: max(14px, 2.5vh); }
@@ -170,11 +172,21 @@ button, input { font: inherit; color: inherit; }
 .alive span { font-family: var(--f-note); font-size: 28px; }
 .kills { font-family: var(--f-note); font-size: 24px; color: var(--red); }
 .kills b { font-family: var(--f-hand); font-size: 20px; }
+.leader { font-size: 16px; font-weight: 600; color: var(--ink); margin-top: 2px; }
+.leader b { color: var(--red); }
+.crown { color: #e8a317; font-size: 20px; }
+.dmgnum { position: absolute; transform: translate(-50%, -50%); font-weight: 800; font-size: 26px; color: #fff; -webkit-text-stroke: 1.5px var(--graphite); paint-order: stroke; text-shadow: 2px 2px 0 var(--graphite); pointer-events: none; animation: dmgUp .9s ease-out forwards; }
+.dmgnum.head { color: #ffd23f; font-size: 32px; }
+.dmgnum.big { font-size: 40px; }
+@keyframes dmgUp { 0% { opacity: 0; transform: translate(-50%, -20%) scale(1.6); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -160%) scale(.9); } }
 .hud-tc { position: absolute; left: 0; right: 0; top: max(16px, 3vh); text-align: center; }
 .storm { display: inline-block; font-weight: 800; font-size: 17px; color: var(--red); padding: 4px 14px; border: 2.5px solid var(--red); border-radius: var(--wobble); background: rgba(246,242,228,.6); }
 .storm.calm { color: var(--ink); border-color: var(--ink); }
 .hud-tr { position: absolute; right: max(16px, 3vw); top: max(14px, 2.5vh); text-align: right; display: grid; justify-items: end; gap: 2px; }
 .mini-label { font-family: var(--f-note); font-size: 22px; color: var(--red); line-height: 1; }
+.mini-pig { width: 150px; height: 92px; }
+.pig-pct { font-family: var(--f-note); font-size: 22px; color: var(--ink-soft); }
+.pig-pct b { color: var(--red); font-family: var(--f-hand); font-size: 17px; }
 .mini-pot { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
 #minimap { width: 170px; height: 170px; margin-top: 6px; border: 2.5px solid var(--ink); border-radius: var(--wobble); background: rgba(246,242,228,.8); }
 .crosshair { position: absolute; left: 50%; top: 50%; width: 0; height: 0; --s: 9px; }
@@ -189,10 +201,10 @@ button, input { font: inherit; color: inherit; }
 .scope::before { left: 50%; top: 18vmin; bottom: 18vmin; width: 2px; margin-left: -1px; }
 .scope::after { top: 50%; left: calc(50% - 32vmin); right: calc(50% - 32vmin); height: 2px; margin-top: -1px; }
 .hitmarker { position: absolute; left: 50%; top: 50%; opacity: 0; }
-.hitmarker i { position: absolute; width: 3.5px; height: 30px; background: var(--ink); left: -1.75px; top: -15px; border-radius: 2px; }
+.hitmarker i { position: absolute; width: 4px; height: 34px; background: #fff; left: -2px; top: -17px; border-radius: 2px; box-shadow: 0 0 0 1.5px var(--graphite); }
 .hitmarker i:first-child { transform: rotate(45deg); } .hitmarker i:last-child { transform: rotate(-45deg); }
 .hitmarker.show { animation: hm .22s ease-out; }
-.hitmarker.head i { background: var(--red); height: 38px; top: -19px; }
+.hitmarker.head i { background: #ffd23f; height: 42px; top: -21px; }
 @keyframes hm { 0% { opacity: 1; transform: scale(1.5); } 100% { opacity: 0; transform: scale(1); } }
 .dmg { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 .dmg i { position: absolute; left: -40px; top: -150px; width: 80px; height: 18px; border-top: 5px solid var(--red); border-radius: 50%; transform-origin: 40px 150px; animation: fade 1s ease-out forwards; }

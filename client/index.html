@@ -34,6 +34,7 @@
           <div id="potAmount" class="amount">◎ 0.000</div>
           <svg class="scribble" viewBox="0 0 400 18" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 80 4, 160 16, 240 8 S 360 6, 396 11"/><path d="M30 15 C 120 9, 220 17, 380 12"/></svg>
           <div class="draw-row">next payout in <b id="countdown">--:--:--</b></div>
+          <div id="pigPct" class="pig-pct"></div>
           <div id="inflowToast" class="toast" aria-live="polite"></div>
         </div>
       </section>
@@ -97,10 +98,11 @@
   <div class="hud-tl">
     <div class="alive"><b id="aliveCount">0</b><span>alive</span></div>
     <div class="kills">kills <b id="killCount">0</b></div>
+    <div id="leader" class="leader"></div>
   </div>
   <div class="hud-tc"><div id="storm" class="storm">storm moves in --s</div></div>
   <div class="hud-tr">
-    <div class="mini-label">pot</div>
+    <canvas id="miniPig" class="mini-pig"></canvas>
     <div id="miniPot" class="mini-pot">◎ 0</div>
     <canvas id="minimap" width="170" height="170"></canvas>
   </div>
