@@ -22,8 +22,8 @@ const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidde
 // `vite build --mode demo` runs the whole game in the browser with bots; otherwise talk to the server
 const DEMO = import.meta.env.MODE === 'demo';
 const net: Net | LocalNet = DEMO ? new LocalNet() : new Net();
-const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: false });
-const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false });
+const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: false, crown: true, rays: true });
+const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false, crown: true });
 const canvas = $<HTMLCanvasElement>('arena');
 const game = new Game3D(canvas, $<HTMLDivElement>('tags'));
 const input = new FpsInput(canvas);
@@ -121,8 +121,29 @@ $('partyNew').onclick = () => {
 };
 renderMode();
 
+// ---------- pot odometer: each digit is a rolling column ----------
+function odometer(el: HTMLElement, text: string) {
+  if (el.dataset.v === text) return;
+  el.dataset.v = text;
+  const cells = el.querySelectorAll<HTMLElement>('.dg, .pt');
+  if (cells.length !== text.length || [...text].some((ch, i) => (ch >= '0' && ch <= '9') !== cells[i].classList.contains('dg'))) {
+    el.innerHTML = '<span class="sym">◎</span>' + [...text].map((ch) => ch >= '0' && ch <= '9'
+      ? `<span class="dg"><span class="col">${'0123456789'.split('').map((d) => `<span>${d}</span>`).join('')}</span></span>`
+      : `<span class="pt">${ch}</span>`).join('');
+  }
+  const cols = el.querySelectorAll<HTMLElement>('.dg .col');
+  let k = 0;
+  for (const ch of text) if (ch >= '0' && ch <= '9') cols[k++].style.transform = `translateY(-${Number(ch) * 10}%)`;
+}
+
 // ---------- live rooms ----------
 function renderRooms(rooms: LobbyRoom[]) {
+  // how busy each mode is, on its card
+  for (const mode of ['solo', 'duo', 'squad'] as Mode[]) {
+    const rs = rooms.filter((r) => r.mode === mode), n = rs.reduce((s, r) => s + r.n, 0);
+    const el = document.querySelector<HTMLElement>(`[data-live="${mode}"]`);
+    if (el) el.textContent = rs.length ? `● ${n} in ${rs.length} room${rs.length > 1 ? 's' : ''}` : 'open a room';
+  }
   const list = $('roomList');
   if (!rooms.length) { list.innerHTML = '<li class="nobody">No rooms yet. Hit drop in and you open the first one.</li>'; return; }
   list.innerHTML = rooms.slice(0, 7).map((r) => {
@@ -464,8 +485,12 @@ function frame(now: number) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
       if (Math.abs(target - state.potShown) < 0.0005) state.potShown = target;
-      $('potAmount').textContent = fmtSol(state.potShown);
-      $('countdown').textContent = hms(state.pot.epochEndMs - Date.now());
+      odometer($('potAmount'), target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }));
+      const [hh, mm, ss] = hms(state.pot.epochEndMs - Date.now()).split(':');
+      const cd = $('countdown').querySelectorAll('b');
+      if (cd[0].textContent !== hh) cd[0].textContent = hh;
+      if (cd[1].textContent !== mm) cd[1].textContent = mm;
+      if (cd[2].textContent !== ss) { cd[2].textContent = ss; cd[2].classList.remove('tick'); void cd[2].offsetWidth; cd[2].classList.add('tick'); }
     }
   } else if (state.screen === 'waiting') {
     const n = state.seats.length, counting = state.phase === 'countdown' && state.startsAt;

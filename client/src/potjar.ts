@@ -9,7 +9,10 @@ const INK = '#1d33b8', INK_SOFT = 'rgba(29,51,184,0.55)', RED = '#d32336', COIN 
 const MARKS = [1, 5, 10, 25, 50, 100, 250];
 
 interface Falling { x: number; y: number; vy: number; tx: number; spin: number }
-export interface JarOptions { string?: boolean; marks?: boolean }
+interface Sparkle { x: number; y: number; life: number; max: number; size: number }
+interface Floater { text: string; x: number; y: number; life: number; big: boolean }
+// crown: the King Pig wears one. rays: a slow sunburst behind it (the lobby's big pig)
+export interface JarOptions { string?: boolean; marks?: boolean; crown?: boolean; rays?: boolean }
 
 export class PotJar {
   private ctx: CanvasRenderingContext2D;
@@ -22,6 +25,9 @@ export class PotJar {
   private t = 0;
   private bump = 0;
   private blink = 0;
+  private sparkles: Sparkle[] = [];
+  private floaters: Floater[] = [];
+  private crownY = 0; private crownV = 0;
   scaleSol = 40;
   sol = 0;
 
@@ -55,6 +61,10 @@ export class PotJar {
     const n = Math.min(36, 3 + Math.round(Math.log10(1 + sol * 100) * 7));
     for (let i = 0; i < n; i++) this.falling.push({ x: g.cx + (Math.random() - 0.5) * 6, y: g.top - 50 - i * 22, vy: 0, tx: g.cx + (Math.random() - 0.5) * g.rx * 1.1, spin: Math.random() * 6 });
     this.bump = Math.min(1, 0.25 + sol * 0.4);
+    // the crown hops, sparkles burst out of the slot, and the amount floats up
+    this.crownV -= 120 + Math.min(400, sol * 500);
+    for (let i = 0; i < Math.min(14, 4 + sol * 20); i++) this.sparkles.push({ x: g.cx + (Math.random() - 0.5) * g.rx * 0.9, y: g.top - Math.random() * g.ry * 0.6, life: 0, max: 0.5 + Math.random() * 0.6, size: 4 + Math.random() * 6 });
+    if (this.opts.rays) this.floaters.push({ text: `+${sol < 0.1 ? sol.toFixed(3) : sol.toFixed(2)} ◎`, x: g.cx + g.rx * (0.3 + Math.random() * 0.4), y: g.top - 8, life: 0, big: sol >= 0.3 });
   }
 
   private geom() {
@@ -96,6 +106,22 @@ export class PotJar {
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.w, this.h);
+    if (this.opts.rays) {
+      // highlighter sunburst, slowly turning, fading out at the edges
+      ctx.save(); ctx.translate(g.cx, g.cy); ctx.rotate(this.t * 0.06);
+      const R = Math.max(this.w, this.h) * 0.75, n = 16;
+      const grad = ctx.createRadialGradient(0, 0, g.rx * 0.5, 0, 0, R);
+      grad.addColorStop(0, `rgba(255,222,70,${0.5 + this.bump * 0.3})`); grad.addColorStop(1, 'rgba(255,222,70,0)');
+      ctx.fillStyle = grad;
+      for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, R, a, a + Math.PI / n * 0.9); ctx.closePath(); ctx.fill(); }
+      ctx.restore();
+      // hatched shadow on the paper
+      const shY = g.cy + g.ry * 1.24;
+      ctx.save(); ctx.beginPath(); ctx.ellipse(g.cx, shY, g.rx * 0.95, g.ry * 0.12, 0, 0, Math.PI * 2); ctx.clip();
+      ctx.strokeStyle = 'rgba(29,51,184,0.28)'; ctx.lineWidth = 1.3;
+      for (let x = g.cx - g.rx; x < g.cx + g.rx; x += 6) { ctx.beginPath(); ctx.moveTo(x, shY + g.ry * 0.14); ctx.lineTo(x + 10, shY - g.ry * 0.14); ctx.stroke(); }
+      ctx.restore();
+    }
     ctx.save();
     if (this.opts.string) {
       ctx.translate(g.cx, 6); ctx.rotate(sway); ctx.translate(-g.cx, -6);
@@ -176,6 +202,17 @@ export class PotJar {
     // glare
     ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 5 * lw; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.ellipse(g.cx - g.rx * 0.25, g.cy - g.ry * 0.1, g.rx * 0.62, g.ry * 0.6, 0, Math.PI * 1.1, Math.PI * 1.36); ctx.stroke();
+    // a glint sweeping across the glass every few seconds
+    const sweep = (this.t * 0.35) % 1.6 - 0.3;
+    if (sweep > 0 && sweep < 1) {
+      ctx.save(); ctx.clip(body);
+      const gx = g.cx - g.rx * 1.2 + sweep * g.rx * 2.4;
+      const lg = ctx.createLinearGradient(gx - 30, 0, gx + 30, 0);
+      lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(0.5, 'rgba(255,255,255,0.55)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = lg; ctx.translate(gx, g.cy); ctx.rotate(0.35); ctx.fillRect(-30, -g.ry * 1.5, 60, g.ry * 3);
+      ctx.restore();
+    }
+    if (this.opts.crown) this.crown(g, lw, dt);
     ctx.restore();
 
     // falling coins with motion lines
@@ -190,6 +227,53 @@ export class PotJar {
       }
       return true;
     });
+
+    // twinkles around a full pig, plus the bursts from inflows
+    if (this.opts.rays && Math.random() < dt * (1.5 + this.shown * 6)) {
+      const a = Math.random() * Math.PI * 2, d = 1.05 + Math.random() * 0.45;
+      this.sparkles.push({ x: g.cx + Math.cos(a) * g.rx * d, y: g.cy + Math.sin(a) * g.ry * d, life: 0, max: 0.7 + Math.random() * 0.6, size: 3 + Math.random() * 5 });
+    }
+    this.sparkles = this.sparkles.filter((s) => {
+      s.life += dt; if (s.life >= s.max) return false;
+      const k = Math.sin((s.life / s.max) * Math.PI), r = s.size * k * (this.opts.string ? 1 : 0.6);
+      ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.life * 2);
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) { const rr = i % 2 ? r * 0.28 : r, a = (i / 8) * Math.PI * 2; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+      ctx.closePath(); ctx.fillStyle = COIN; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1; ctx.stroke();
+      ctx.restore();
+      return true;
+    });
+    this.floaters = this.floaters.filter((f) => {
+      f.life += dt; if (f.life > 1.6) return false;
+      const k = f.life / 1.6;
+      ctx.save(); ctx.globalAlpha = 1 - k * k;
+      ctx.font = `700 ${f.big ? 34 : 26}px Caveat, cursive`; ctx.textAlign = 'center';
+      ctx.lineWidth = 5; ctx.strokeStyle = PAPER; ctx.strokeText(f.text, f.x, f.y - k * 70);
+      ctx.fillStyle = f.big ? '#c98a00' : '#13897f'; ctx.fillText(f.text, f.x, f.y - k * 70);
+      ctx.restore();
+      return true;
+    });
+  }
+
+  // the King Pig's crown: gold, three points, red gems; hops on every inflow and settles on a spring
+  private crown(g: ReturnType<PotJar['geom']>, lw: number, dt: number) {
+    const { ctx } = this;
+    this.crownV += (-this.crownY * 260 - this.crownV * 14) * dt; this.crownY += this.crownV * dt;
+    const w = g.rx * 0.46, h = g.rx * 0.3, x = g.cx - g.rx * 0.36, y = g.cy - g.ry * 0.9 + Math.min(0, this.crownY);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-0.2 + Math.sin(this.t * 1.3) * 0.03 + this.crownY * 0.004);
+    const c = new Path2D();
+    c.moveTo(-w / 2, 0); c.lineTo(-w / 2 - w * 0.04, -h); c.lineTo(-w / 4, -h * 0.5); c.lineTo(0, -h * 1.18); c.lineTo(w / 4, -h * 0.5); c.lineTo(w / 2 + w * 0.04, -h); c.lineTo(w / 2, 0); c.closePath();
+    ctx.fillStyle = COIN; ctx.fill(c);
+    ctx.save(); ctx.clip(c); ctx.strokeStyle = 'rgba(242,181,28,0.9)'; ctx.lineWidth = 2;
+    for (let k = -w; k < w; k += 6) { ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k + h, -h * 1.2); ctx.stroke(); }
+    ctx.restore();
+    this.pen(c, 2.6 * lw);
+    const band = new Path2D(); band.moveTo(-w / 2, -h * 0.18); band.lineTo(w / 2, -h * 0.18); this.pen(band, 1.6 * lw);
+    for (const [gx, gy, r] of [[-w / 2 - w * 0.04, -h, 0.07], [0, -h * 1.18, 0.09], [w / 2 + w * 0.04, -h, 0.07]] as const) {
+      ctx.beginPath(); ctx.arc(gx, gy, w * r, 0, Math.PI * 2); ctx.fillStyle = RED; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.4 * lw; ctx.stroke();
+      ctx.beginPath(); ctx.arc(gx - w * r * 0.3, gy - w * r * 0.3, w * r * 0.3, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fill();
+    }
+    ctx.restore();
   }
 
   private coin(x: number, y: number, w: number, h: number, tilt: number, tone: number) {
@@ -198,6 +282,7 @@ export class PotJar {
     ctx.fillStyle = tone > 0.55 ? COIN : COIN_DEEP; ctx.strokeStyle = INK; ctx.lineWidth = 1.3;
     ctx.beginPath(); ctx.ellipse(0, 0, Math.max(0.5, w), Math.max(0.5, h), 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     if (w > 6) { ctx.strokeStyle = 'rgba(29,51,184,0.45)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(0, 0, w * 0.55, h * 0.5, 0, 0, Math.PI * 2); ctx.stroke(); }
+    if (w > 9 && h > 7) { ctx.fillStyle = 'rgba(29,51,184,0.55)'; ctx.font = `700 ${h * 0.9}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('◎', 0, 0.5); }
     ctx.restore();
   }
 }

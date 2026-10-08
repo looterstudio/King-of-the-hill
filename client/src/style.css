@@ -401,3 +401,64 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .spec-bar .who-watch small { font-family: var(--f-note); font-size: 22px; font-weight: 700; color: var(--red); margin-right: 6px; }
 .spec-bar .keys { font-size: 14px; color: var(--ink-soft); }
 .spec-bar kbd, .tips kbd, .how kbd { font-family: var(--f-hand); font-size: 12px; font-weight: 800; border: 1.5px solid var(--ink); border-radius: 4px; padding: 0 5px; margin: 0 2px; background: var(--card); }
+
+/* ---------- lobby, round 4: King Pig, odometer pot, illustrated mode cards ---------- */
+.tagline { margin: 6px 0 -8px; font-weight: 800; font-size: clamp(22px, 2.6vw, 34px); letter-spacing: -0.01em; line-height: 1.1; }
+.tagline span { color: var(--red); position: relative; white-space: nowrap; }
+.tagline span::after { content: ''; position: absolute; left: -4px; right: -6px; bottom: -6px; height: 10px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 C 50 2, 120 12, 198 5' fill='none' stroke='%23ffd23f' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%; z-index: -1; }
+.jar-wrap { height: clamp(260px, 40vh, 430px); }
+.stamp { position: absolute; right: 2%; bottom: 8%; width: clamp(92px, 9vw, 124px); fill: none; stroke: var(--red); stroke-width: 2.5; rotate: 12deg; opacity: .9; animation: stampSpin 26s linear infinite; }
+.stamp text { fill: var(--red); stroke: none; font-family: var(--f-hand); font-weight: 800; font-size: 10.4px; letter-spacing: .06em; }
+.stamp .stamp-mid { font-size: 26px; text-anchor: middle; letter-spacing: 0; }
+.stamp .stamp-sub { font-family: var(--f-note); font-size: 14px; text-anchor: middle; letter-spacing: 0; font-weight: 700; }
+@keyframes stampSpin { to { rotate: 372deg; } }
+
+.prize { margin-top: -18px; gap: 4px; }
+.ribbon { position: relative; width: 210px; height: 40px; display: grid; place-items: center; rotate: -2deg; filter: drop-shadow(2px 3px 0 rgba(29,51,184,.25)); }
+.ribbon svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ribbon path { fill: #b81c2d; stroke: var(--graphite); stroke-width: 2; stroke-linejoin: round; }
+.ribbon path.front { fill: var(--red); }
+.ribbon span { position: relative; color: #fff; font-family: var(--f-note); font-weight: 700; font-size: 27px; line-height: 1; margin-top: -4px; letter-spacing: .02em; }
+.amount { display: flex; align-items: center; justify-content: center; gap: 0; font-size: clamp(54px, 7.2vw, 104px); line-height: 1; height: 1.05em; text-shadow: none; filter: drop-shadow(4px 4px 0 var(--hl)); }
+.amount .sym { font-size: .62em; margin-right: .14em; color: var(--ink); }
+.amount .dg { display: inline-block; height: 1.05em; overflow: hidden; width: .64em; }
+.amount .col { display: flex; flex-direction: column; transition: transform .7s cubic-bezier(.2, 1.3, .4, 1); }
+.amount .col span { height: 1.05em; display: grid; place-items: center; }
+.amount .pt { display: inline-block; width: .28em; text-align: center; }
+.draw-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 8px; font-size: 16px; }
+.cd { display: inline-flex; align-items: baseline; gap: 3px; }
+.cd b { display: inline-grid; place-items: center; min-width: 46px; height: 44px; padding: 0 4px; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--card); background: var(--ink); border-radius: 8px 10px 7px 11px; box-shadow: 2px 3px 0 var(--red); }
+.cd b.tick { animation: tickDown .35s ease-out; }
+.cd i { font-style: normal; font-family: var(--f-note); font-size: 22px; color: var(--ink-soft); margin-right: 4px; }
+@keyframes tickDown { from { transform: translateY(-4px) scale(1.06); } }
+
+.card h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.h2-note { font-family: var(--f-note); font-size: 21px; font-weight: 700; color: var(--red); rotate: -2deg; }
+.modes { gap: 12px; margin-bottom: 14px; }
+.mode { position: relative; padding: 0 0 10px; overflow: visible; background: var(--card); border: 2.5px solid var(--ink-faint); border-radius: 6px 9px 7px 10px; box-shadow: 0 10px 18px -14px rgba(40,40,70,.5); color: var(--ink-soft); transition: transform .2s cubic-bezier(.2, 1.4, .4, 1), box-shadow .2s, border-color .2s, color .2s; }
+.mode:nth-child(1) { rotate: -1.4deg; } .mode:nth-child(2) { rotate: .8deg; } .mode:nth-child(3) { rotate: -.6deg; }
+.mode-art { display: block; width: 100%; aspect-ratio: 100 / 70; border-bottom: 2px dashed var(--ink-faint); background: repeating-linear-gradient(180deg, transparent 0 13px, var(--rule) 13px 14px); border-radius: 4px 7px 0 0; overflow: hidden; }
+.mode .mode-art svg { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mode .para { animation: bob 2.6s ease-in-out infinite; animation-delay: var(--d); transform-box: fill-box; }
+.mode .chute { stroke: currentColor; opacity: .55; transition: opacity .2s; }
+@keyframes bob { 0%, 100% { translate: 0 0; rotate: -3deg; } 50% { translate: 0 4px; rotate: 3deg; } }
+.mode b { display: block; margin-top: 6px; font-size: 19px; }
+.stub { display: grid; justify-items: center; margin: 6px 8px 0; padding: 4px 4px 3px; border: 2px dashed currentColor; border-radius: 5px; position: relative; background: transparent; }
+.stub::before, .stub::after { content: ''; position: absolute; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: var(--card); border: 2px dashed currentColor; }
+.stub::before { left: -7px; clip-path: inset(0 0 0 50%); } .stub::after { right: -7px; clip-path: inset(0 50% 0 0); }
+.stub em { font-style: normal; font-weight: 800; font-size: 20px; line-height: 1; }
+.stub small { font-family: var(--f-note); font-size: 15px; line-height: 1; }
+.mode-live { display: block; margin-top: 6px; font-size: 11.5px; font-weight: 600; color: var(--teal); min-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
+.mode:hover { transform: translateY(-5px) rotate(-1.5deg); color: var(--ink); box-shadow: 0 16px 24px -14px rgba(40,40,70,.55); }
+.mode.on { border-color: var(--ink); color: var(--ink); background: var(--card); transform: translateY(-6px) scale(1.04); box-shadow: 5px 6px 0 var(--ink); z-index: 1; }
+.mode.on .chute { opacity: 1; }
+.mode.on .stub { background: var(--hl); color: var(--ink); }
+.mode.on .stub::before, .mode.on .stub::after { background: var(--card); }
+.mode.on::before { content: ''; position: absolute; top: -11px; left: 50%; width: 54px; height: 18px; margin-left: -27px; background: var(--tape); rotate: -4deg; z-index: 2; }
+.mode.on::after { content: '✓'; position: absolute; top: -12px; right: -10px; width: 30px; height: 30px; display: grid; place-items: center; font-weight: 800; font-size: 17px; color: #fff; background: var(--red); border: 2px solid var(--graphite); border-radius: 50%; rotate: 10deg; animation: pop .3s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes pop { from { transform: scale(0); } }
+.mode.on small { color: inherit; }
+.btn.play { font-size: 24px; padding: 16px 18px; box-shadow: 4px 5px 0 var(--ink); }
+.btn.play:disabled { box-shadow: none; }
+@media (max-width: 560px) { .stamp { display: none; } .cd b { min-width: 38px; height: 38px; font-size: 21px; } }
+.amount .pt { height: 1.05em; display: inline-grid; align-items: end; padding-bottom: .1em; line-height: 1; }
