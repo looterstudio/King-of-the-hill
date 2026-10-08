@@ -11,8 +11,11 @@ export class Net {
   onClose: (() => void) | null = null;
 
   connect() {
+    // the game server: the same host by default, or VITE_SERVER_URL when the page is hosted
+    // somewhere else (a static host like Vercel can't run the WebSocket server itself)
+    const server = import.meta.env.VITE_SERVER_URL as string | undefined;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    const ws = new WebSocket(server ? `${server.replace(/^http/, 'ws').replace(/\/$/, '')}/ws` : `${proto}://${location.host}/ws`);
     this.ws = ws;
     ws.onopen = () => { this.backoff = 500; this.onOpen?.(); };
     ws.onmessage = (e) => { let m: ServerMsg; try { m = JSON.parse(e.data); } catch { return; } for (const h of this.handlers) h(m); };

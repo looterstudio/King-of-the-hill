@@ -6,3 +6,5 @@ target
 *.log
 dist-demo
 dist-server
+dist-vercel
+.vercel

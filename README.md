@@ -94,6 +94,20 @@ single-player version that runs entirely in the browser against bots.
 Production: `npm run build && npm run build:server && npm start` (plain-JS server bundle in
 `dist-server/`, serves `dist/`). Or `docker build -t pot-royale .`
 
+## Deploy
+
+The game has two parts, and they deploy to different places:
+
+- **The page** (static files) goes on **Vercel**: import the repo at vercel.com/new and deploy;
+  `vercel.json` already sets the build. With no environment variables it builds the playable
+  offline demo (bots, simulated pot). Set `VITE_SERVER_URL` (e.g. `https://koth-server.fly.dev`)
+  in the Vercel project and redeploy to build the live client that plays on your game server.
+- **The game server** (WebSockets, 30 Hz simulation, the pot) can't run on Vercel: its functions
+  don't keep sockets open. Run the `Dockerfile` on any host that does: Fly.io, Railway, Render or a
+  VPS (`docker build -t koth . && docker run -p 8787:8787 -v koth-data:/data koth`). Keep
+  `data/` on a persistent volume: it holds the points log and the epoch secret. The server also
+  serves the page itself, so it can run alone without Vercel.
+
 ## Checks
 
 ```bash
