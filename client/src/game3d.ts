@@ -35,6 +35,8 @@ export class Game3D {
   seats = new Map<number, RoomSeat>();
   self: SnapSelf | null = null;
   watch: number | null = null;     // who we spectate after dying
+  mates = new Set<number>();       // teammates (duos / squads)
+  free: THREE.Vector3 | null = null; // free spectator camera, once the whole team is out
   ring = { x: 0, y: 0, r: 999, nx: 0, ny: 0, nr: 0, closing: false, nextIn: 0, phase: 0 };
   alive = 0;
   leader: [number, number] | null = null;
@@ -90,7 +92,9 @@ export class Game3D {
   setRoom(seed: number, seats: RoomSeat[], you: number) {
     this.you = you;
     this.seats = new Map(seats.map((s) => [s.id, s]));
-    this.snaps = []; this.pending = []; this.self = null; this.pred = null; this.watch = null; this.tracers = []; this.nukes = [];
+    const team = this.seats.get(you)?.team ?? 0;
+    this.mates = new Set(seats.filter((s) => team > 0 && s.team === team && s.id !== you).map((s) => s.id));
+    this.snaps = []; this.pending = []; this.self = null; this.pred = null; this.watch = null; this.free = null; this.tracers = []; this.nukes = [];
     for (const a of this.avatars.values()) { this.ink.scene.remove(a.root); a.tag.remove(); }
     this.avatars.clear();
     for (const l of this.loot.values()) this.ink.scene.remove(l.g);
@@ -207,7 +211,7 @@ export class Game3D {
     const fig = buildFigure(this.ink, id);
     this.ink.scene.add(fig.root);
     const tag = document.createElement('div');
-    tag.className = 'tag';
+    tag.className = this.mates.has(id) ? 'tag mate' : 'tag';
     tag.textContent = this.seats.get(id)?.num ?? '';
     this.tagLayer.appendChild(tag);
     a = Object.assign(fig, { tag });
@@ -316,6 +320,7 @@ export class Game3D {
     }
     if (!s.self) return;
     this.self = s.self;
+    if (!s.self.alive && s.watch !== undefined && s.watch !== this.you) this.watch = s.watch;
     if (!this.world) return;
     if (!s.self.alive) { this.pred = null; return; }
     // reconcile: start from the server's state, replay what it hasn't seen yet
@@ -439,6 +444,10 @@ export class Game3D {
       const sprinting = this.pred.grounded && speed > 7.4 && this.pred.slideT <= 0;
       const fov = 78 / zoom + (this.pred.dashT > 0 || this.pred.hook ? 8 : sprinting || this.pred.slideT > 0 ? 7 : 0);
       if (Math.abs(cam.fov - fov) > 0.05) { cam.fov += (fov - cam.fov) * Math.min(1, dt * 14); cam.updateProjectionMatrix(); }
+    } else if (this.free) {
+      cam.position.copy(this.free);
+      cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
+      if (cam.fov !== 78) { cam.fov = 78; cam.updateProjectionMatrix(); }
     } else {
       const target = (this.watch !== null && others.get(this.watch)) || [...others.values()][0];
       if (target) {
@@ -460,7 +469,10 @@ export class Game3D {
       poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt);
       const d = a.root.position.distanceTo(cam.position);
       v.set(o[1], o[2] + 2.5, o[3]).project(cam);
-      if (d < 50 && v.z < 1) {
+      const mate = this.mates.has(o[0]);
+      // teammates are marked everywhere, through walls, with how far away they are
+      if (mate) a.tag.textContent = d > 25 ? `${this.seats.get(o[0])?.num ?? ''} · ${Math.round(d)}m` : this.seats.get(o[0])?.num ?? '';
+      if ((d < 50 || mate) && v.z < 1) {
         a.tag.style.display = 'block';
         a.tag.style.transform = `translate(${((v.x + 1) / 2) * innerWidth}px, ${((1 - v.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
       } else a.tag.style.display = 'none';
@@ -567,4 +579,16 @@ export class Game3D {
   }
   positionOf(id: number) { const o = this.snaps.at(-1)?.s.others.find((p) => p[0] === id); return o ? { x: o[1], z: o[3] } : null; }
   get me() { return this.pred; }
+  // latest known state of another player: [id, x, y, z, yaw, pitch, hp, flags, weapon]
+  infoOf(id: number) { return this.snaps.at(-1)?.s.others.find((p) => p[0] === id) ?? null; }
+  // free spectator camera: fly with the move keys, Space up, C down, Shift fast
+  startFree() { const c = this.ink.camera.position; this.free = new THREE.Vector3(c.x, Math.max(c.y, 20), c.z); }
+  fly(c: { fwd: number; strafe: number; sprint: boolean; jump: boolean; slide: boolean }, yaw: number, pitch: number, dt: number) {
+    if (!this.free) return;
+    const sp = (c.sprint ? 60 : 24) * dt, cp = Math.cos(pitch);
+    this.free.x += (-Math.sin(yaw) * cp * c.fwd + Math.cos(yaw) * c.strafe) * sp;
+    this.free.z += (-Math.cos(yaw) * cp * c.fwd - Math.sin(yaw) * c.strafe) * sp;
+    this.free.y += (Math.sin(pitch) * c.fwd + (c.jump ? 1 : 0) - (c.slide ? 1 : 0)) * sp;
+    this.free.x = Math.max(-260, Math.min(260, this.free.x)); this.free.z = Math.max(-260, Math.min(260, this.free.z)); this.free.y = Math.max(2, Math.min(160, this.free.y));
+  }
 }

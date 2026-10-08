@@ -1,4 +1,4 @@
-import type { ItemId, PerkId, WeaponId } from './constants.ts';
+import type { ItemId, Mode, PerkId, WeaponId } from './constants.ts';
 import type { Input } from './sim.ts';
 import type { Body, Box } from './world.ts';
 
@@ -48,7 +48,10 @@ export type SnapFx = [string, number, number, number, number, number];
 // ring center is (x, y) on the ground plane, i.e. world x and z
 export interface SnapRing { x: number; y: number; r: number; nx: number; ny: number; nr: number; closing: boolean; nextIn: number; phase: number }
 
-export interface RoomSeat { id: number; num: string; name: string; verified: boolean }
+// team: who you drop and win with (0 until the match starts; in solo everyone is their own team)
+export interface RoomSeat { id: number; num: string; name: string; verified: boolean; team: number }
+// rooms filling or playing right now, for the lobby's room list
+export interface LobbyRoom { id: string; mode: Mode; n: number; state: RoomPhase; startsIn: number | null }
 
 export type ServerMsg =
   | { t: 'hello'; nonce: string; requireWallet: boolean; allowGuests: boolean; holdMinUsd: number }
@@ -58,8 +61,9 @@ export type ServerMsg =
   | { t: 'inflow'; inflow: InflowView }
   | { t: 'settled'; settled: SettledView }
   | { t: 'queued'; position: number }
-  | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number }
-  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; fx: SnapFx[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
+  | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number; mode: Mode }
+  | { t: 'lobby'; rooms: LobbyRoom[] }
+  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; watch: number; fx: SnapFx[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom'; left: number; head: boolean }
   | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { t: 'event'; kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
@@ -67,14 +71,15 @@ export type ServerMsg =
   | { t: 'event'; kind: 'unbuild'; id: number }
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { t: 'event'; kind: 'open'; caseId: number; by: number; golden: boolean }
-  | { t: 'result'; winner: number | null; ticketAwarded: boolean; epoch: number };
+  | { t: 'result'; winner: number | null; winners: number[]; tickets: number; ticketAwarded: boolean; epoch: number };
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
 
 export type ClientMsg =
   | { t: 'auth'; wallet: string; sig: string }
   | { t: 'guest'; name: string }
-  | { t: 'queue' }
+  | { t: 'queue'; mode?: Mode; party?: string; room?: string }   // party: friends typing the same code drop on one team
+  | { t: 'spec'; dir?: 1 | -1; target?: number; at?: [number, number] | null } // dead: switch who you watch, or fly a free camera
   | { t: 'leave' }
   | ({ t: 'in' } & Input);
 

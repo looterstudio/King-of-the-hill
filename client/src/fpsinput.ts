@@ -70,6 +70,7 @@ export class FpsInput {
     } catch { return fallback(); }
     setTimeout(fallback, 500);
   }
+  isDown(code: string) { return this.keys.has(code); }
   private stop() { this.free = false; this.locked = false; this.keys.clear(); this.fire = false; this.aim = false; this.el.style.cursor = ''; this.onLockChange?.(false); }
   unlock() { if (this.free) this.stop(); else if (document.pointerLockElement) document.exitPointerLock(); }
   setSens(v: number) { this.sens = v; try { localStorage.setItem('pr_sens', String(v)); } catch { /* storage blocked */ } }

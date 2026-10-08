@@ -1,12 +1,15 @@
-// Rooms (up to 100 players) and the matchmaker that fills them. Waiting rooms and countdowns live
-// here on the main thread; once a match goes live it runs on a MatchHost (in-process or on a
-// worker thread) and whatever it wants sent comes back to be routed to the right sockets.
+// Rooms (up to 100 players, solo / duos / squads) and the matchmaker that fills them. Waiting
+// rooms and countdowns live here on the main thread; once a match goes live it runs on a
+// MatchHost (in-process or on a worker thread) and whatever it wants sent comes back to be
+// routed to the right sockets.
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { COUNTDOWN_MS, FILL_WAIT_MS, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ } from '../../shared/src/constants.ts';
-import type { RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
+import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
+import type { LobbyRoom, RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import type { MatchHost } from './host.ts';
-import type { Outbound } from './match.ts';
+import type { Outbound, SpecRequest } from './match.ts';
+import type { Flag } from './anticheat.ts';
+import { makeTeams } from '../../shared/src/teams.ts';
 
 const SOFT_BUFFER = 256 * 1024;      // skip snapshots to a client this far behind
 const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
@@ -19,6 +22,10 @@ export class Client {
   authed = false;
   tokens: number;
   lastRefill = Date.now();
+  mode: Mode = 'solo';
+  party = '';          // friends who type the same code land on the same team
+  wantRoom = '';       // a room picked from the lobby list
+  team = 0;
   constructor(public id: number, public ws: WebSocket, public num: string, public nonce: string, private rate: number) { this.tokens = rate; }
 
   send(msg: ServerMsg) { this.sendRaw(JSON.stringify(msg)); }
@@ -40,9 +47,12 @@ export class Client {
 }
 
 export interface RoomHooks {
-  onWin(room: Room, winner: Client): { awarded: boolean; epoch: number };
+  onWin(room: Room, winner: Client, tickets: number): { awarded: boolean; epoch: number };
+  onFlag?(room: Room, c: Client | null, f: Flag): void;
   minVerifiedForTicket: number;
 }
+
+export { makeTeams };
 
 export class Room {
   readonly id = randomBytes(4).toString('hex');
@@ -54,8 +64,9 @@ export class Room {
   private overAt = 0;
   verifiedAtStart = 0;
   closed = false;
+  flagged = new Map<number, string>();
 
-  constructor(private hooks: RoomHooks, private host: MatchHost) {}
+  constructor(private hooks: RoomHooks, private host: MatchHost, readonly mode: Mode = 'solo') {}
 
   get open() { return this.phase === 'waiting' && this.seats.length < ROOM_MAX && !this.closed; }
 
@@ -64,13 +75,18 @@ export class Room {
     for (const c of this.seats) if (c.room === this) c.sendRaw(s, droppable);
   }
 
-  private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet })); }
+  private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team })); }
   private announce() {
     const seats = this.seatList();
-    for (const c of this.seats) c.send({ t: 'room', roomId: this.id, you: c.id, seats, state: this.phase, startsAt: this.startsAt, seed: this.seed });
+    for (const c of this.seats) c.send({ t: 'room', roomId: this.id, you: c.id, seats, state: this.phase, startsAt: this.startsAt, seed: this.seed, mode: this.mode });
   }
+  view(now: number): LobbyRoom {
+    const at = this.startsAt ?? (this.fillDeadline !== null ? this.fillDeadline + COUNTDOWN_MS : null);
+    return { id: this.id, mode: this.mode, n: this.seats.length, state: this.phase, startsIn: at === null ? null : Math.max(0, Math.ceil((at - now) / 1000)) };
+  }
+  hasParty(p: string) { return !!p && this.seats.some((c) => c.party === p); }
 
-  add(c: Client) { this.seats.push(c); c.room = this; this.announce(); }
+  add(c: Client) { this.seats.push(c); c.room = this; c.team = 0; this.announce(); }
 
   remove(c: Client) {
     if (c.room !== this) return;
@@ -83,6 +99,7 @@ export class Room {
   }
 
   input(c: Client, i: Parameters<MatchHost['input']>[2]) { if (this.phase === 'live') this.host.input(this.id, c.id, i); }
+  spectate(c: Client, r: SpecRequest) { if (this.phase === 'live') this.host.spectate(this.id, c.id, r); }
 
   // what the match wants sent, routed to sockets
   deliver(o: Outbound, now: number) {
@@ -90,7 +107,8 @@ export class Room {
       if (s.to === 'all') { for (const c of this.seats) if (c.room === this) c.sendRaw(s.json, s.drop); }
       else for (const id of s.to) { const c = this.seats.find((x) => x.id === id); if (c && c.room === this) c.sendRaw(s.json, s.drop); }
     }
-    if (o.ended) this.finish(o.ended.winner, now);
+    if (o.flags) for (const f of o.flags) { this.flagged.set(f.id, f.reason); this.hooks.onFlag?.(this, this.seats.find((c) => c.id === f.id) ?? null, f); }
+    if (o.ended) this.finish(o.ended.winners, now);
   }
 
   update(now: number) {
@@ -105,7 +123,9 @@ export class Room {
       if (this.startsAt !== null && now >= this.startsAt) {
         this.phase = 'live';
         this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
-        this.host.start(this.id, this.seed, this.seats.map((c) => c.id));
+        const teams = makeTeams(this.seats.map((c) => ({ id: c.id, party: c.party })), MODES[this.mode].size);
+        for (const c of this.seats) c.team = teams.get(c.id) ?? c.id;
+        this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries(this.seats.map((c) => [c.id, c.team])));
         this.announce();
       }
     } else if (this.phase === 'over' && now >= this.overAt) {
@@ -114,15 +134,26 @@ export class Room {
     }
   }
 
-  private finish(winnerId: number | null, now: number) {
-    const winner = winnerId !== null ? this.seats.find((c) => c.id === winnerId && c.room === this) ?? null : null;
+  private finish(winnerIds: number[], now: number) {
+    const tickets = MODES[this.mode].tickets;
     let res = { awarded: false, epoch: -1 };
-    // a ticket needs enough distinct verified wallets at the start, so a few wallets cannot farm wins
-    if (winner && winner.wallet && this.verifiedAtStart >= this.hooks.minVerifiedForTicket) res = this.hooks.onWin(this, winner);
+    // a ticket needs enough distinct verified wallets at the start, so a few wallets cannot farm
+    // wins; anyone the cheat checks flagged during the match gets nothing
+    if (this.verifiedAtStart >= this.hooks.minVerifiedForTicket) {
+      for (const id of winnerIds) {
+        const c = this.seats.find((x) => x.id === id && x.room === this);
+        if (!c || !c.wallet || this.flagged.has(id)) continue;
+        const r = this.hooks.onWin(this, c, tickets);
+        if (r.awarded) res = r;
+      }
+    }
     this.phase = 'over'; this.overAt = now + RESULT_MS;
-    this.broadcast({ t: 'result', winner: winnerId, ticketAwarded: res.awarded, epoch: res.epoch });
+    this.broadcast({ t: 'result', winner: winnerIds[0] ?? null, winners: winnerIds, tickets, ticketAwarded: res.awarded, epoch: res.epoch });
   }
 }
+
+const cleanParty = (s: unknown) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+const MODE_SET = new Set(Object.keys(MODES));
 
 export class Matchmaker {
   rooms = new Map<string, Room>();
@@ -132,13 +163,19 @@ export class Matchmaker {
   lastTickMs = 0;
   host!: MatchHost;
 
-  constructor(private hooks: RoomHooks, private maxRooms: number) {}
+  // maxRooms: rooms alive at once on this server; openRooms: how many may be filling at once
+  constructor(private hooks: RoomHooks, private maxRooms: number, private openRooms = OPEN_ROOMS) {}
 
   // batches coming back from wherever matches run
   deliver = (batch: Outbound[]) => { const now = Date.now(); for (const o of batch) this.rooms.get(o.roomId)?.deliver(o, now); };
 
-  enqueue(c: Client) {
+  enqueue(c: Client, want: { mode?: unknown; party?: unknown; room?: unknown } = {}) {
     if (c.room || c.queued) return;
+    c.mode = MODE_SET.has(String(want.mode)) ? (want.mode as Mode) : 'solo';
+    c.wantRoom = typeof want.room === 'string' ? want.room.slice(0, 16) : '';
+    const picked = this.rooms.get(c.wantRoom);
+    if (picked) c.mode = picked.mode;
+    c.party = c.mode === 'solo' ? '' : cleanParty(want.party);
     c.queued = true; this.queue.push(c);
     c.send({ t: 'queued', position: this.queue.length });
   }
@@ -147,19 +184,29 @@ export class Matchmaker {
 
   private assign() {
     if (this.queue.length === 0) return;
-    // fill the fullest open room first: matches start sooner and fewer half-empty rooms linger
-    const open = [...this.rooms.values()].filter((r) => r.open).sort((a, b) => b.seats.length - a.seats.length);
-    while (this.queue.length) {
-      let room = open.find((r) => r.open);
+    const filling = () => [...this.rooms.values()].filter((r) => r.phase === 'waiting' && !r.closed);
+    const left: Client[] = [];
+    for (const c of this.queue) {
+      if (c.ws.readyState !== c.ws.OPEN) { c.queued = false; continue; }
+      const open = filling().filter((r) => r.open && r.mode === c.mode);
+      // the room you picked, then the one your party is in, then the fullest one filling
+      let room = open.find((r) => r.id === c.wantRoom) ?? open.find((r) => r.hasParty(c.party))
+        ?? open.sort((a, b) => b.seats.length - a.seats.length)[0];
       if (!room) {
-        if (this.rooms.size >= this.maxRooms) break; // queue waits for capacity
-        room = new Room(this.hooks, this.host); this.rooms.set(room.id, room); open.push(room);
+        if (this.rooms.size >= this.maxRooms || filling().length >= this.openRooms) { left.push(c); continue; } // waits for capacity
+        room = new Room(this.hooks, this.host, c.mode); this.rooms.set(room.id, room);
       }
-      const c = this.queue.shift()!;
       c.queued = false;
-      if (c.ws.readyState !== c.ws.OPEN) continue;
       room.add(c);
     }
+    this.queue = left;
+  }
+
+  // the lobby's room list: filling rooms first, then live ones
+  lobby(now: number): LobbyRoom[] {
+    const order = { waiting: 0, countdown: 1, live: 2, over: 3 } as const;
+    return [...this.rooms.values()].filter((r) => !r.closed).map((r) => r.view(now))
+      .sort((a, b) => order[a.state] - order[b.state] || b.n - a.n).slice(0, 12);
   }
 
   // lobby work only (filling rooms, countdowns); the 30 Hz simulation runs on the host

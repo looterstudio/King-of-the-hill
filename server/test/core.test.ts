@@ -430,7 +430,7 @@ test('a live match routes snapshots to each player and ends with its winner', as
   assert.ok(out.some((s) => s.json.includes('"left"')));
   m.sim.eliminate(3, 1, 'shot', []);
   const end = m.step(Date.now());
-  assert.deepEqual(end.ended, { winner: 1 });
+  assert.deepEqual(end.ended, { winners: [1] });
 });
 
 test('breaking a shield is reported once, on the hit that empties it', () => {
@@ -440,4 +440,71 @@ test('breaking a shield is reported once, on the hit that empties it', () => {
   const hits = [];
   for (let i = 0; i < 20 && b.shield > 0; i++) { a.fireCd = 0; hits.push(...sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.08, fire: true })]])).filter((e) => e.kind === 'hit')); }
   assert.equal(hits.filter((h) => h.kind === 'hit' && h.broke).length, 1);
+});
+
+test('teams: no friendly fire, grenades spare teammates, the last team standing wins together', async () => {
+  const { Match } = await import('../src/match.ts');
+  const m = new Match('r2', 9, [1, 2, 3, 4], Date.now(), { 1: 1, 2: 1, 3: 2, 4: 2 });
+  m.sim.world = World.custom([]);
+  const sim = m.sim, [a, b, c] = [1, 2, 3].map((id) => sim.players.get(id)!);
+  for (const p of sim.players.values()) { p.gliding = false; p.y = 0; p.grounded = true; }
+  a.x = 0; a.z = 0; b.x = 0; b.z = -6; c.x = 0; c.z = -12;
+  a.slots[0] = 'scar'; a.mags[0] = 30; a.fireCd = 0;
+  const ev = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.05, fire: true })]]));
+  assert.ok(!ev.some((e) => e.kind === 'hit' && e.victim === 2), 'teammate in the line of fire takes nothing');
+  assert.ok(ev.some((e) => e.kind === 'hit' && e.victim === 3), 'the bullet goes through to the enemy behind');
+  m.sim.eliminate(3, 1, 'shot', []); m.sim.eliminate(4, 1, 'shot', []); m.sim.eliminate(2, 4, 'shot', []);
+  const end = m.step(Date.now());
+  assert.deepEqual(end.ended, { winners: [1, 2] }, 'a fallen teammate still wins with the team');
+});
+
+test('parties stay together and solo players fill the gaps', async () => {
+  const { makeTeams } = await import('../src/room.ts');
+  const t = makeTeams([{ id: 1, party: 'AB' }, { id: 2, party: '' }, { id: 3, party: 'AB' }, { id: 4, party: '' }, { id: 5, party: '' }], 2);
+  assert.equal(t.get(1), t.get(3));
+  assert.notEqual(t.get(2), t.get(1));
+  assert.equal(new Set(t.values()).size, 3);
+  const squad = makeTeams(Array.from({ length: 9 }, (_, i) => ({ id: i + 1, party: '' })), 4);
+  assert.deepEqual([...squad.values()].sort(), [1, 1, 1, 1, 2, 2, 2, 2, 3]);
+});
+
+test('anti-wallhack: an enemy behind a wall is not sent, one in the open is', async () => {
+  const { Match } = await import('../src/match.ts');
+  const m = new Match('r3', 4, [1, 2, 3], Date.now());
+  m.sim.world = World.custom([{ x0: -10, y0: 0, z0: -62, x1: 10, y1: 6, z1: -60, ink: 1, kind: 'wall' }]);
+  const [a, b, c] = [1, 2, 3].map((id) => m.sim.players.get(id)!);
+  for (const p of m.sim.players.values()) { p.gliding = false; p.y = 0; p.grounded = true; }
+  a.x = 0; a.z = 0; b.x = 0; b.z = -80; c.x = 60; c.z = 0;
+  let snap: { others: number[][] } | null = null;
+  for (let i = 0; i < 4; i++) { const o = m.step(Date.now()); const s = o.sends.find((x) => x.drop && (x.to as number[])[0] === 1); if (s) snap = JSON.parse(s.json); }
+  const ids = snap!.others.map((o) => o[0]);
+  assert.ok(!ids.includes(2), 'behind the wall');
+  assert.ok(ids.includes(3), 'in the open');
+});
+
+test('anti-cheat: replayed inputs are dropped and a snap-aimbot gets flagged', async () => {
+  const { Watchdog } = await import('../src/anticheat.ts');
+  const w = new Watchdog();
+  assert.ok(w.input(1, 5, 0, 0, 1));
+  assert.ok(!w.input(1, 5, 0, 0, 2), 'same seq twice');
+  assert.ok(!w.input(1, 3, 0, 0, 3), 'older seq');
+  let seq = 10, tick = 10;
+  for (let i = 0; i < 40; i++) { w.input(1, seq++, i % 2 ? 1.2 : -1.2, 0, tick); w.hit(1, i % 3 === 0, tick + 1); tick += 20; }
+  assert.ok(w.isFlagged(1));
+  const honest = new Watchdog();
+  for (let i = 0; i < 60; i++) { honest.input(2, i + 1, i * 0.05, 0, i * 20); honest.hit(2, i % 4 === 0, i * 20 + 10); }
+  assert.ok(!honest.isFlagged(2));
+});
+
+test('spectating: with a teammate alive you watch them and cannot free-fly', async () => {
+  const { Match } = await import('../src/match.ts');
+  const m = new Match('r4', 6, [1, 2, 3, 4], Date.now(), { 1: 1, 2: 1, 3: 2, 4: 2 });
+  m.sim.eliminate(1, 3, 'shot', []);
+  const ev: import('../src/match.ts').Send[] = [];
+  m.leave(4, ev); // keeps the match going
+  m.spectate(1, { at: [50, 50] });
+  m.spectate(1, { dir: 1 });
+  m.step(Date.now()); const o = m.step(Date.now());
+  const s = JSON.parse(o.sends.find((x) => x.drop && (x.to as number[])[0] === 1)!.json);
+  assert.equal(s.watch, 2);
 });

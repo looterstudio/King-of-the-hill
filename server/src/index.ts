@@ -1,7 +1,7 @@
 // Game server entry: HTTP (static client + small JSON API) and one WebSocket endpoint.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import nacl from 'tweetnacl';
@@ -25,10 +25,19 @@ const clients = new Set<Client>();
 const byWallet = new Map<string, Client>();
 let nextId = 1;
 
+// anti-cheat flags: the player keeps playing but earns nothing; reviewers read data/flags.jsonl
+const flags: { at: number; room: string; mode: string; wallet: string | null; name: string; reason: string }[] = [];
+mkdirSync(config.dataDir, { recursive: true });
 const mm = new Matchmaker({
   minVerifiedForTicket: MIN_VERIFIED,
-  onWin: (_room, winner) => ({ awarded: true, epoch: epochs.recordWin(winner.wallet!, winner.name) }),
-}, config.maxRooms);
+  onWin: (_room, winner, tickets) => ({ awarded: true, epoch: epochs.recordWin(winner.wallet!, winner.name, tickets) }),
+  onFlag: (room, c, f) => {
+    const row = { at: Date.now(), room: room.id, mode: room.mode, wallet: c?.wallet ?? null, name: c?.name ?? `#${f.id}`, reason: f.reason };
+    flags.push(row); if (flags.length > 500) flags.shift();
+    appendFileSync(join(config.dataDir, 'flags.jsonl'), JSON.stringify(row) + '\n');
+    console.warn('[anticheat]', row.name, row.reason);
+  },
+}, config.maxRooms, config.openRooms);
 
 const everyone = (msg: ServerMsg) => { const s = JSON.stringify(msg); for (const c of clients) c.sendRaw(s, true); };
 
@@ -43,6 +52,8 @@ function potView(): PotView {
 pot.on('inflow', (f: { lamports: bigint; source: string }) => everyone({ t: 'inflow', inflow: { lamports: f.lamports.toString(), at: Date.now(), source: f.source } }));
 epochs.on('settled', (s) => everyone({ t: 'settled', settled: s }));
 setInterval(() => everyone({ t: 'pot', pot: potView() }), 2000);
+// the room list, for players in the lobby
+setInterval(() => { const s = JSON.stringify({ t: 'lobby', rooms: mm.lobby(Date.now()) } satisfies ServerMsg); for (const c of clients) if (!c.room) c.sendRaw(s, true); }, 1000);
 
 // ---------- http ----------
 const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
@@ -56,6 +67,11 @@ function handleHttp(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
   if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
   if (url.pathname === '/api/pot') return json(res, 200, potView());
+  if (url.pathname === '/api/rooms') return json(res, 200, mm.lobby(Date.now()));
+  if (url.pathname === '/api/admin/flags') {
+    if (!config.adminToken || req.headers.authorization !== `Bearer ${config.adminToken}`) return json(res, 401, { error: 'unauthorized' });
+    return json(res, 200, flags);
+  }
   const m = /^\/api\/epochs\/(\d+)$/.exec(url.pathname);
   if (m) {
     // public audit trail: anyone can recompute the root from the claims list
@@ -128,7 +144,12 @@ async function onMessage(c: Client, msg: ClientMsg) {
       if (clients.size > config.maxConnections) return c.send({ t: 'error', msg: 'server full' });
       // checked again on every queue, not just at login: selling after signing in must not keep you in
       if (c.wallet) { const holdErr = await checkHold(c.wallet); if (holdErr) return c.send({ t: 'error', msg: holdErr }); }
-      return mm.enqueue(c);
+      return mm.enqueue(c, { mode: msg.mode, party: msg.party, room: msg.room });
+    }
+    case 'spec': {
+      const r = { dir: msg.dir === -1 ? -1 as const : msg.dir === 1 ? 1 as const : undefined, target: Number.isInteger(msg.target) ? msg.target : undefined,
+        at: msg.at === null ? null : Array.isArray(msg.at) ? [Number(msg.at[0]), Number(msg.at[1])] as [number, number] : undefined };
+      return c.room?.spectate(c, r);
     }
     case 'leave': return mm.leave(c);
   }
@@ -141,6 +162,7 @@ wss.on('connection', (ws) => {
   clients.add(c);
   c.send({ t: 'hello', nonce: c.nonce, requireWallet: config.requireWallet, allowGuests: config.allowGuests, holdMinUsd: config.holdMinUsd });
   c.send({ t: 'pot', pot: potView() });
+  c.send({ t: 'lobby', rooms: mm.lobby(Date.now()) });
   if (epochs.lastSettled) c.send({ t: 'settled', settled: epochs.lastSettled });
 
   let strikes = 0;

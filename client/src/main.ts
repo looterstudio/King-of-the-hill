@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { ITEMS, MAP_HALF, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, WEAPONS } from '../../shared/src/constants.ts';
-import { loginMessage, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
+import { ITEMS, MAP_HALF, MODES, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
@@ -48,7 +48,13 @@ const state = {
   aimed: false, // camera takes the server's spawn heading once per match
   dropped: false,
   previewSeed: -1,
+  mode: 'solo' as Mode,       // what the play button queues for
+  party: '',
+  roomMode: 'solo' as Mode,   // the room we are in
+  dead: new Set<number>(),    // eliminated this match
+  specFire: false, specAim: false, freeSendT: 0,
 };
+try { const m = localStorage.getItem('pr_mode') as Mode | null; if (m && m in MODES) state.mode = m; state.party = localStorage.getItem('pr_party') ?? ''; } catch { /* storage blocked */ }
 
 function show(s: Screen) {
   state.screen = s;
@@ -86,10 +92,64 @@ $('connectBtn').onclick = async () => {
   } catch (e) { err((e as Error).message || 'Signature cancelled.'); }
 };
 
+const touchOnly = () => matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 $('playBtn').onclick = () => {
-  if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) return err('Pot Royale needs a mouse and keyboard. Open it on a computer.');
-  net.send({ t: 'queue' }); $('queueInfo').textContent = 'Finding a room…';
+  if (touchOnly()) return err('King of the Hill Royale needs a mouse and keyboard. Open it on a computer.');
+  net.send({ t: 'queue', mode: state.mode, party: state.mode === 'solo' ? undefined : state.party || undefined });
+  $('queueInfo').textContent = `Finding a ${MODES[state.mode].name.toLowerCase()} room…`;
 };
+
+// ---------- modes / party ----------
+function renderMode() {
+  document.querySelectorAll<HTMLButtonElement>('.mode').forEach((b) => { const on = b.dataset.mode === state.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  $('partyRow').classList.toggle('hidden', state.mode === 'solo');
+  $<HTMLInputElement>('party').value = state.party;
+  $('playBtn').textContent = `Drop in · ${MODES[state.mode].name}`;
+}
+document.querySelectorAll<HTMLButtonElement>('.mode').forEach((b) => b.onclick = () => {
+  state.mode = b.dataset.mode as Mode; renderMode();
+  try { localStorage.setItem('pr_mode', state.mode); } catch { /* storage blocked */ }
+});
+const saveParty = () => { try { localStorage.setItem('pr_party', state.party); } catch { /* storage blocked */ } };
+$<HTMLInputElement>('party').oninput = (e) => {
+  const el = e.target as HTMLInputElement; el.value = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); state.party = el.value; saveParty();
+};
+$('partyNew').onclick = () => {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  state.party = Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join(''); saveParty(); renderMode();
+  navigator.clipboard?.writeText(state.party).then(() => toast(`party code ${state.party} copied`), () => {});
+};
+renderMode();
+
+// ---------- live rooms ----------
+function renderRooms(rooms: LobbyRoom[]) {
+  const list = $('roomList');
+  if (!rooms.length) { list.innerHTML = '<li class="nobody">No rooms yet. Hit drop in and you open the first one.</li>'; return; }
+  list.innerHTML = rooms.slice(0, 7).map((r) => {
+    const live = r.state === 'live' || r.state === 'over';
+    const when = live ? 'in game' : r.state === 'countdown' ? `dropping in ${r.startsIn}s` : r.n < 2 ? 'waiting for players' : r.startsIn !== null ? `starts in ${r.startsIn}s` : 'filling';
+    return `<li class="${live ? 'live' : ''}"><span class="mode-tag ${r.mode}">${MODES[r.mode].name}</span>`
+      + `<div class="room-mid"><div class="top"><span>${when}</span><b>${r.n}/${ROOM_MAX}</b></div><div class="room-bar"><i style="width:${(r.n / ROOM_MAX) * 100}%"></i></div></div>`
+      + (live ? '<span class="live-pill">live</span>' : `<button class="btn ghost small" data-room="${esc(r.id)}">Join</button>`) + '</li>';
+  }).join('');
+}
+$('roomList').addEventListener('click', (e) => {
+  const id = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-room]')?.dataset.room;
+  if (!id) return;
+  if (!state.authed) return err('Connect a wallet or join as a guest first.');
+  if (touchOnly()) return err('King of the Hill Royale needs a mouse and keyboard. Open it on a computer.');
+  net.send({ t: 'queue', room: id, party: state.party || undefined }); $('queueInfo').textContent = 'Joining that room…';
+});
+
+// ---------- ticker: fees coming in, wins, rooms starting ----------
+const tickerItems: string[] = [];
+function ticker(html: string) {
+  tickerItems.unshift(html); if (tickerItems.length > 10) tickerItems.pop();
+  const row = tickerItems.join('');
+  $('ticker').innerHTML = row + row; // twice, so the loop is seamless
+}
+ticker('<span>the hill is open · <b>solo, duos & squads</b></span>');
+ticker('<span class="gold">golden pencil cases hold <b>the SCAR & the Heavy Sniper</b></span>');
 $('leaveBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); $('queueInfo').textContent = ''; };
 
 // ---------- lobby ----------
@@ -110,6 +170,7 @@ function toast(text: string) {
 }
 
 // ---------- room ----------
+let lobbyRooms: LobbyRoom[] = [];
 let shownSeats = new Set<number>();
 function renderSeats() {
   const fresh = new Set(state.seats.map((s) => s.id));
@@ -182,7 +243,7 @@ $('resumeBtn').onclick = () => { sfx.unlock(); input.lock(); };
 $('quitBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); };
 input.onLockChange = (locked) => {
   if (state.screen !== 'game' || state.over) return;
-  if (locked && !state.dropped) { state.dropped = true; banner('Drop!', `${state.seats.length} players · the hill is in the middle`, true, 2200); }
+  if (locked && !state.dropped) { state.dropped = true; banner('Drop!', `${MODES[state.roomMode].name} · ${state.seats.length} players${game.mates.size ? ` · ${game.mates.size} teammate${game.mates.size > 1 ? 's' : ''} with you` : ''} · the hill is in the middle`, true, 2400); }
   $('pause').classList.toggle('hidden', locked);
   if (locked && input.free) hint('mouse capture is blocked here: look with the mouse + arrow keys, Esc to pause', 4500);
   $('pauseTitle').textContent = game.self ? 'Paused' : 'Click to drop in';
@@ -233,6 +294,16 @@ function drawMinimap() {
   mini.strokeStyle = '#d32336'; mini.lineWidth = 2;
   mini.beginPath(); mini.arc(toX(g.x), toY(g.y), Math.max(0.5, g.r * k), 0, Math.PI * 2); mini.stroke();
   if (g.nr > 0) { mini.strokeStyle = '#1d33b8'; mini.setLineDash([4, 4]); mini.beginPath(); mini.arc(toX(g.nx), toY(g.ny), g.nr * k, 0, Math.PI * 2); mini.stroke(); mini.setLineDash([]); }
+  for (const id of game.mates) {
+    const o = game.infoOf(id);
+    if (!o || state.dead.has(id)) continue;
+    mini.fillStyle = '#13897f'; mini.strokeStyle = '#fffdf5'; mini.lineWidth = 1.5;
+    mini.beginPath(); mini.arc(toX(o[1]), toY(o[3]), 4, 0, Math.PI * 2); mini.fill(); mini.stroke();
+  }
+  if (game.self && !game.self.alive) {
+    const cam = game.ink.camera.position;
+    mini.strokeStyle = '#d32336'; mini.lineWidth = 2; mini.beginPath(); mini.arc(toX(cam.x), toY(cam.z), 5, 0, Math.PI * 2); mini.stroke();
+  }
   const me = game.me;
   if (me && game.self?.alive) {
     mini.save(); mini.translate(toX(me.x), toY(me.z)); mini.rotate(-input.yaw);
@@ -261,7 +332,17 @@ net.on((m: ServerMsg) => {
       break;
     case 'error': err(m.msg); $('queueInfo').textContent = ''; break;
     case 'pot': renderPot(m.pot); break;
-    case 'inflow': { const v = sol(m.inflow.lamports); jar.inflow(v); miniJar.inflow(v); toast(`+${v.toFixed(3)} SOL · ${m.inflow.source}`); break; }
+    case 'inflow': {
+      const v = sol(m.inflow.lamports); jar.inflow(v); miniJar.inflow(v); toast(`+${v.toFixed(3)} SOL · ${m.inflow.source}`);
+      if (v >= 0.3) ticker(`<span class="gold">🐷 <b>+${v.toFixed(2)} SOL</b> ${esc(m.inflow.source)}</span>`);
+      break;
+    }
+    case 'lobby': {
+      const before = new Map(lobbyRooms.map((r) => [r.id, r.state]));
+      for (const r of m.rooms) if (r.state === 'live' && before.get(r.id) && before.get(r.id) !== 'live') ticker(`<span class="red">a ${MODES[r.mode].name.toLowerCase()} room just dropped · <b>${r.n} players</b></span>`);
+      lobbyRooms = m.rooms; renderRooms(m.rooms);
+      break;
+    }
     case 'settled': {
       const s = m.settled;
       $('lastDraw').className = 'draw-sum';
@@ -275,9 +356,13 @@ net.on((m: ServerMsg) => {
       state.seats = m.seats; state.you = m.you; state.startsAt = m.startsAt; state.phase = m.state;
       $('roomId').textContent = m.roomId.toUpperCase();
       $('queueInfo').textContent = '';
+      state.roomMode = m.mode;
+      $('roomMode').textContent = MODES[m.mode].name; $('roomMode').className = `mode-tag ${m.mode}`;
+      $('roomFoot').textContent = m.mode === 'solo' ? 'Up to 100 drop in. 1 walks out with 4 tickets.'
+        : `Up to 100 drop in, in ${m.mode === 'duo' ? 'teams of 2' : 'squads of 4'}. The last team standing gets ${MODES[m.mode].tickets} ticket${MODES[m.mode].tickets > 1 ? 's' : ''} each.`;
       if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); drawPreview(m.seed); }
       if (m.state === 'live') {
-        state.over = false; state.aimed = false; state.dropped = false;
+        state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set();
         game.setRoom(m.seed, m.seats, m.you);
         $('feed').innerHTML = '';
         show('game');
@@ -313,18 +398,26 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'nuke') { sfx.siren(); feed(`<b style="color:var(--red)">☢ ${esc(label(m.by))} launched an atomic bomb</b>`, m.by === state.you); break; }
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
       if (m.by === state.you && m.victim !== state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); hitmarker(m.head, true); }
-      const mine = m.victim === state.you || m.by === state.you;
+      state.dead.add(m.victim);
+      const mine = m.victim === state.you || m.by === state.you || game.mates.has(m.victim) || (m.by !== null && game.mates.has(m.by));
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : label(m.by);
       feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : ''}${esc(how)}</span>`, mine);
-      if (m.victim === state.you) { game.watch = m.by; banner('Eliminated', `#${m.left + 1} of ${state.seats.length} · spectating`, false, 3000); }
+      if (m.victim === state.you) {
+        const mates = matesAlive();
+        game.watch = mates[0] ?? m.by;
+        banner('Eliminated', mates.length ? `your team is still in it · watching ${label(mates[0])}` : `#${m.left + 1} of ${state.seats.length} · spectating`, false, 3000);
+      } else if (game.mates.has(m.victim)) hint(`teammate ${label(m.victim)} is down`, 2200);
       break;
     }
     case 'result': {
       state.over = true;
       input.unlock(); $('pause').classList.add('hidden');
-      const won = m.winner === state.you;
-      const word = m.winner === null ? 'Draw' : won ? 'Victory!' : `${label(m.winner)} wins`;
-      const sub = m.ticketAwarded ? (won ? '+1 ticket for the next payout' : 'takes 1 ticket for the pot') : won ? 'no ticket: not enough verified wallets in this match' : '';
+      const winners = m.winners ?? (m.winner === null ? [] : [m.winner]);
+      const won = winners.includes(state.you), team = winners.length > 1, t = m.tickets ?? 1;
+      const word = !winners.length ? 'Draw' : won ? 'Victory!' : team ? `Team ${label(winners[0])} wins` : `${label(winners[0])} wins`;
+      const tix = `${t} ticket${t > 1 ? 's' : ''}`;
+      const sub = m.ticketAwarded ? (won ? `+${tix}${team ? ' each' : ''} for the next payout` : `take${team ? '' : 's'} ${tix}${team ? ' each' : ''} for the pot`) : won ? 'no ticket: not enough verified wallets in this match' : '';
+      if (winners.length) ticker(`<span class="gold">♛ <b>${esc(winners.map((w) => seatOf(w)?.name ?? label(w)).join(' + '))}</b> won a ${MODES[state.roomMode].name.toLowerCase()} match</span>`);
       banner(word, sub, won);
       setTimeout(() => { $('banner').classList.add('hidden'); show('lobby'); }, RESULT_MS);
       break;
@@ -335,9 +428,30 @@ net.on((m: ServerMsg) => {
 // ---------- input upload, 30 Hz ----------
 setInterval(() => {
   if (state.screen !== 'game' || !input.locked) return;
-  const inp = game.tick(input.sample());
+  const s = input.sample();
+  if (game.self && !game.self.alive && !state.over) { spectatorTick(s); return; }
+  const inp = game.tick(s);
   if (inp) net.send({ t: 'in', ...inp });
 }, 1000 / TICK_HZ);
+
+// ---------- spectating ----------
+function matesAlive() { return [...game.mates].filter((id) => !state.dead.has(id)); }
+function spectatorTick(s: ReturnType<FpsInput['sample']>) {
+  // click = next player, right click = previous (teammates only while one is alive)
+  if (s.fire && !state.specFire) { game.free = null; net.send({ t: 'spec', dir: 1 }); }
+  if (s.aim && !state.specAim) { game.free = null; net.send({ t: 'spec', dir: -1 }); }
+  state.specFire = s.fire; state.specAim = s.aim;
+  if (game.free) {
+    game.fly({ ...s, jump: input.isDown('Space'), slide: input.isDown('KeyC') || input.isDown('ControlLeft') }, input.yaw, input.pitch, 1 / TICK_HZ);
+    if ((state.freeSendT += 1) >= 8) { state.freeSendT = 0; net.send({ t: 'spec', at: [Math.round(game.free.x), Math.round(game.free.z)] }); }
+  }
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyF' || state.screen !== 'game' || state.over || !game.self || game.self.alive) return;
+  if (game.free) { game.free = null; net.send({ t: 'spec', at: null }); return; }
+  if (matesAlive().length) return hint('free camera unlocks when your whole team is out', 2200);
+  game.startFree(); state.freeSendT = 8;
+});
 
 // ---------- frame loop ----------
 let last = performance.now();
@@ -393,6 +507,22 @@ function frame(now: number) {
       $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
       $('scope').classList.toggle('hidden', !scoped);
       if (body?.gliding && me.alive) hint('gliding · look down to dive, look up to float', 400);
+    }
+    // teammates: name + health, struck out when they go down
+    const sq = $('squad');
+    if (game.mates.size) {
+      sq.innerHTML = [...game.mates].map((id) => {
+        const down = state.dead.has(id), o = game.infoOf(id), hp = down ? 0 : o ? o[6] : 100;
+        return `<div class="mate ${down ? 'down' : ''}"><span>${esc(seatOf(id)?.name ?? label(id))}</span><div class="bar"><i style="width:${hp}%"></i></div></div>`;
+      }).join('');
+    } else if (sq.innerHTML) sq.innerHTML = '';
+    const spec = !!me && !me.alive && !state.over;
+    $('specBar').classList.toggle('hidden', !spec);
+    if (spec) {
+      const solo = !matesAlive().length;
+      const who = game.free ? 'free camera' : game.watch !== null ? `${esc(label(game.watch))}${seatOf(game.watch)?.name ? ` <span style="font-weight:600">${esc(seatOf(game.watch)!.name)}</span>` : ''}` : '…';
+      $('specBar').innerHTML = `<div class="who-watch"><small>${game.free ? 'flying' : 'spectating'}</small>${who}</div>`
+        + `<div class="keys"><kbd>LMB</kbd> next · <kbd>RMB</kbd> previous${solo ? ` · <kbd>F</kbd> ${game.free ? 'back to players' : 'free camera'}${game.free ? ' · <kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up/down' : ''}` : ' · teammates only while one is alive'}</div>`;
     }
     const nk = game.nukes[0];
     $('nukeWarn').classList.toggle('hidden', !nk);

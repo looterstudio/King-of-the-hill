@@ -4,6 +4,16 @@
 export const TICK_HZ = 30;            // simulation steps per second
 export const SNAP_EVERY = 2;          // send a snapshot every N ticks (15 Hz)
 export const ROOM_MAX = 100;
+// solo, duos and squads. Every mode pays the same per player on average: a solo win is worth 4
+// tickets, each duo winner gets 2, each squad winner 1 (a squad wins 4x as often per player).
+export type Mode = 'solo' | 'duo' | 'squad';
+export const MODE_IDS: Mode[] = ['solo', 'duo', 'squad'];
+export const MODES: Record<Mode, { name: string; size: number; tickets: number }> = {
+  solo: { name: 'Solo', size: 1, tickets: 4 },
+  duo: { name: 'Duos', size: 2, tickets: 2 },
+  squad: { name: 'Squads', size: 4, tickets: 1 },
+};
+export const OPEN_ROOMS = 5;          // rooms filling at the same time, across modes
 export const ROOM_MIN = 2;            // a room starts with fewer than 10 once the fill timer runs out
 export const FILL_WAIT_MS = 45_000;   // how long a room waits for more players after the 2nd joins
 export const COUNTDOWN_MS = 5_000;

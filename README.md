@@ -5,8 +5,22 @@ Glide in, loot guns, shields and perks off the floor and out of pencil cases, an
 the King's Tower in the middle of the island: the final circle always closes on it. Ten guns from
 common to legendary (the SCAR and a one-shot Heavy Sniper are the prizes), shields and medkits, and
 five perks: grenades, smoke, launch pads, instant forts and, for the luckiest, an atomic bomb you
-can drop anywhere on the map. The last player standing wins the match and a ticket; the token's
-trading fees fill one shared pot that pays out to the winners every 6 hours (00/06/12/18 UTC).
+can drop anywhere on the map. Play **solo, duos or squads**; the last player (or team) standing
+wins tickets, and the token's trading fees fill one shared pot that pays out to the winners every
+6 hours (00/06/12/18 UTC).
+
+- **Modes.** Solo win = 4 tickets, duo win = 2 each, squad win = 1 each, so every mode is worth the
+  same per player on average. Friends type the same **party code** to drop on one team; empty spots
+  are filled. No friendly fire; teammates are marked through walls and always on the minimap.
+- **Rooms.** The lobby lists every room filling or live, with a join button. Up to 5 rooms fill at
+  once (`OPEN_ROOMS`), 10 full matches run per process (`MAX_ROOMS`), spread over worker threads.
+- **Spectating.** Out? Click / right-click to switch players. While a teammate lives you can only
+  watch your team (no ghosting); once your team is out, `F` gives you a free flying camera.
+- **Anti-cheat.** The server is the authority for movement, fire rate, damage and loot. On top:
+  replayed inputs are dropped, aimbot patterns (snap-to-target hits, absurd headshot rates) flag the
+  player, and enemies you have no line of sight to beyond 40 m are never sent to your client, so a
+  wallhack has nothing to draw. Flagged players earn no tickets and land in `data/flags.jsonl`
+  (`GET /api/admin/flags` with `ADMIN_TOKEN`).
 
 The look and feel follow the ballpoint-shooter and classic battle-royale genres; all code here is
 original, and every place name and item is our own.
@@ -19,7 +33,7 @@ npm run dev:server      # game server on :8787 (mock pot, guests allowed)
 npm run dev:client      # vite on :5173, proxies /ws and /api to the server
 ```
 
-Open two tabs at http://localhost:5173, join as guests, and click **Find a room** in both.
+Open two tabs at http://localhost:5173, join as guests, pick a mode and click **Drop in** in both.
 A match starts at 100 players, or 45 s after the second player joins. `npm run build:demo` builds a
 single-player version that runs entirely in the browser against bots.
 
@@ -34,8 +48,9 @@ cargo test -p pot_vault             # on-chain merkle matches the server tree by
 npm run loadtest -- --bots 2000     # bot swarm against a running server
 ```
 
-Measured on one Node process (4 vCPU container): **400 bots in four full 100-player matches,
-2.5–10 ms per tick against a 33 ms budget, 0 errors.**
+Measured on one process with 3 match workers (4 vCPU container), line-of-sight culling on:
+**1000 bots in ten full 100-player matches (solo, duos and squads), 7–15 ms per tick (peak 23 ms)
+against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
 
 ## How a round of money moves
 
@@ -46,7 +61,7 @@ Measured on one Node process (4 vCPU container): **400 bots in four full 100-pla
    price, so pumping the price for a block does not let a small wallet in. The check runs at login
    **and on every room join**, so selling after signing in doesn't keep you playing. If the price
    feed is down, new joins are refused (fail closed). Guests can't play when a hold is required.
-3. Winning a match is worth 1 ticket. A ticket only counts if the match started with at least
+3. Winning a match is worth tickets (solo 4, duo 2 each, squad 1 each). A ticket only counts if the match started with at least
    `MIN_VERIFIED_FOR_TICKET` distinct wallets, so a handful of your own wallets can't farm a near-empty match.
 4. At the 6h boundary the server takes a snapshot of the free vault balance, keeps `ROLLOVER_BPS` (10%) to start
    the next pot, splits the rest (`PAYOUT_MODE=prorata` by tickets, or `draw` with weighted 60/25/15
@@ -69,6 +84,8 @@ Measured on one Node process (4 vCPU container): **400 bots in four full 100-pla
 | `MIN_VERIFIED_FOR_TICKET` | 4 with wallets, 1 in dev | anti-farm floor |
 | `PAYOUT_MODE` | `prorata` | or `draw` |
 | `ROLLOVER_BPS` | `1000` | share of each pot carried into the next |
-| `MAX_ROOMS`, `MAX_CONNECTIONS` | 600 / 5000 | per-process caps |
+| `MAX_ROOMS`, `OPEN_ROOMS`, `MAX_CONNECTIONS` | 10 / 5 / 5000 | per-process caps |
+| `WORKERS` | cores − 1 | threads that run live matches |
+| `ADMIN_TOKEN` | | bearer token for `/api/admin/flags` |
 
 See `docs/ARCHITECTURE.md` for the design and what is still missing before mainnet.

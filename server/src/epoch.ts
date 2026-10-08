@@ -38,22 +38,23 @@ export class Epochs extends EventEmitter {
     if (!existsSync(this.winsFile)) return;
     for (const line of readFileSync(this.winsFile, 'utf8').split('\n')) {
       if (!line) continue;
-      try { const w = JSON.parse(line) as { epoch: number; wallet: string; name: string }; this.bump(w.epoch, w.wallet, w.name); } catch { /* torn last line */ }
+      try { const w = JSON.parse(line) as { epoch: number; wallet: string; name: string; tickets?: number }; this.bump(w.epoch, w.wallet, w.name, w.tickets ?? 1); } catch { /* torn last line */ }
     }
   }
   private settledFile(epoch: number) { return join(this.cfg.dataDir, 'epochs', `${epoch}.json`); }
-  private bump(epoch: number, wallet: string, name: string) {
+  private bump(epoch: number, wallet: string, name: string, n = 1) {
     if (epoch < this.current && existsSync(this.settledFile(epoch))) return; // already paid out
     let m = this.tallies.get(epoch);
     if (!m) { m = new Map(); this.tallies.set(epoch, m); }
     const t = m.get(wallet) ?? { name, wins: 0 };
-    t.wins++; t.name = name; m.set(wallet, t);
+    t.wins += n; t.name = name; m.set(wallet, t);
   }
 
-  recordWin(wallet: string, name: string): number {
+  // tickets: a solo win is worth 4, a duo win 2 each, a squad win 1 each (see MODES)
+  recordWin(wallet: string, name: string, tickets = 1): number {
     const epoch = this.current;
-    appendFileSync(this.winsFile, JSON.stringify({ epoch, wallet, name, at: this.now() }) + '\n');
-    this.bump(epoch, wallet, name);
+    appendFileSync(this.winsFile, JSON.stringify({ epoch, wallet, name, tickets, at: this.now() }) + '\n');
+    this.bump(epoch, wallet, name, tickets);
     return epoch;
   }
 

@@ -57,16 +57,26 @@ function selfOf(p: PlayerState): SnapSelf {
 // per-recipient bookkeeping so loot is only resent when it changed (and not too often)
 export interface Viewer { lootVer: number; lootAt: number }
 
+// what a recipient may see beyond the defaults: a free spectator camera position, and enemies the
+// server decided they cannot see (anti-wallhack) which are left out entirely
+// keep: teammates, always sent wherever they are
+export interface SnapOpts { at?: { x: number; z: number } | null; hide?: Set<number>; keep?: Set<number> }
+
+function centerOf(f: Frame, recipient: number, watch: number, opts?: SnapOpts) {
+  if (opts?.at) return { cx: opts.at.x, cz: opts.at.z, far: false };
+  const c = f.sim.players.get(watch) ?? f.sim.players.get(recipient);
+  return { cx: c?.x ?? 0, cz: c?.z ?? 0, far: !c };
+}
+
 // `watch` is where the recipient is looking from: themselves, or the player they spectate
-export function snapFor(f: Frame, recipient: number, watch: number, viewer: Viewer): Snap {
+export function snapFor(f: Frame, recipient: number, watch: number, viewer: Viewer, opts?: SnapOpts): Snap {
   const me = f.sim.players.get(recipient);
-  const center = f.sim.players.get(watch) ?? me;
-  const cx = center?.x ?? 0, cz = center?.z ?? 0, far = !center;
+  const { cx, cz, far } = centerOf(f, recipient, watch, opts);
   const near = (x: number, z: number, r: number) => far || (Math.abs(x - cx) < r && Math.abs(z - cz) < r);
   const others: SnapOther[] = [];
-  for (const [id, o] of f.others) if (id !== recipient && near(o[1], o[3], VIEW_RANGE)) others.push(o);
+  for (const [id, o] of f.others) if (id !== recipient && !opts?.hide?.has(id) && (opts?.keep?.has(id) || near(o[1], o[3], VIEW_RANGE))) others.push(o);
   const msg: Snap = {
-    t: 'snap', tick: f.tick, time: f.time, alive: f.alive, ring: f.ring, self: me ? selfOf(me) : null, others, leader: f.leader,
+    t: 'snap', tick: f.tick, time: f.time, alive: f.alive, ring: f.ring, self: me ? selfOf(me) : null, others, leader: f.leader, watch,
     shots: f.shots.filter((s) => near(s[0], s[2], VIEW_RANGE)),
     fx: f.fx.filter((e) => e[0] === 'nuke' || near(e[2], e[4], VIEW_RANGE)),
   };
@@ -98,18 +108,17 @@ export function frameJson(f: Frame): FrameJson {
   };
 }
 
-export function snapJsonFor(f: Frame, j: FrameJson, recipient: number, watch: number, viewer: Viewer): string {
+export function snapJsonFor(f: Frame, j: FrameJson, recipient: number, watch: number, viewer: Viewer, opts?: SnapOpts): string {
   const me = f.sim.players.get(recipient);
-  const center = f.sim.players.get(watch) ?? me;
-  const cx = center?.x ?? 0, cz = center?.z ?? 0, far = !center;
+  const { cx, cz, far } = centerOf(f, recipient, watch, opts);
   const near = (x: number, z: number, r: number) => far || (Math.abs(x - cx) < r && Math.abs(z - cz) < r);
   const others: string[] = [];
-  for (const [id, o] of f.others) if (id !== recipient && near(o[1], o[3], VIEW_RANGE)) others.push(j.others.get(id)!);
+  for (const [id, o] of f.others) if (id !== recipient && !opts?.hide?.has(id) && (opts?.keep?.has(id) || near(o[1], o[3], VIEW_RANGE))) others.push(j.others.get(id)!);
   const shots: string[] = [];
   f.shots.forEach((s, i) => { if (near(s[0], s[2], VIEW_RANGE)) shots.push(j.shots[i]); });
   const fx: string[] = [];
   f.fx.forEach((e, i) => { if (e[0] === 'nuke' || near(e[2], e[4], VIEW_RANGE)) fx.push(j.fx[i]); });
-  let out = `${j.head},"self":${me ? JSON.stringify(selfOf(me)) : 'null'},"others":[${others.join(',')}],"shots":[${shots.join(',')}],"fx":[${fx.join(',')}]`;
+  let out = `${j.head},"watch":${watch},"self":${me ? JSON.stringify(selfOf(me)) : 'null'},"others":[${others.join(',')}],"shots":[${shots.join(',')}],"fx":[${fx.join(',')}]`;
   const moved = f.time - viewer.lootAt;
   if ((viewer.lootVer !== f.lootVer && moved > 0.3) || moved > 1) {
     const loot: string[] = [], cases: string[] = [];

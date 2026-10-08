@@ -12,7 +12,9 @@ export const config = {
 
   // capacity guards for one process; scale out by running more processes behind a router
   maxConnections: int(env.MAX_CONNECTIONS, 5000),
-  maxRooms: int(env.MAX_ROOMS, 600),
+  maxRooms: int(env.MAX_ROOMS, 10),       // 10 x 100 players per process, tested
+  openRooms: int(env.OPEN_ROOMS, 5),      // rooms filling at the same time
+  adminToken: env.ADMIN_TOKEN ?? '',      // reads /api/admin/flags
   // live matches run on this many worker threads (0 = in the main thread); default: all cores but one
   workers: int(env.WORKERS, Math.max(0, cpus().length - 1)),
   msgsPerSecond: int(env.MSGS_PER_SECOND, 60),

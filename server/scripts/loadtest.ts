@@ -7,8 +7,10 @@ const arg = (k: string, d: string) => { const i = process.argv.indexOf(`--${k}`)
 const BOTS = Number(arg('bots', '200'));
 const URL_ = arg('url', 'ws://localhost:8787/ws');
 const SECONDS = Number(arg('seconds', '45'));
+const MODE = arg('mode', 'mix'); // solo | duo | squad | mix
 const health = URL_.replace(/^ws/, 'http').replace(/\/ws$/, '/health');
 
+const modeOf = (i: number) => (MODE === 'mix' ? ['solo', 'duo', 'squad'][i % 3] : MODE);
 let snaps = 0, results = 0, open = 0, errors = 0;
 
 function bot(i: number) {
@@ -21,10 +23,10 @@ function bot(i: number) {
   ws.on('message', (raw) => {
     const m = JSON.parse(raw.toString()) as ServerMsg;
     if (m.t === 'hello') send({ t: 'guest', name: `bot${i}` });
-    else if (m.t === 'authed') send({ t: 'queue' });
+    else if (m.t === 'authed') send({ t: 'queue', mode: modeOf(i) });
     else if (m.t === 'room') { me = m.you; live = m.state === 'live'; }
     else if (m.t === 'snap') { snaps++; self = m.self; others = m.others; }
-    else if (m.t === 'result') { results++; live = false; setTimeout(() => send({ t: 'queue' }), 6500 + Math.random() * 1500); }
+    else if (m.t === 'result') { results++; live = false; setTimeout(() => send({ t: 'queue', mode: modeOf(i) }), 6500 + Math.random() * 1500); }
   });
   let yaw = Math.random() * 6, seq = 0;
   const timer = setInterval(() => {

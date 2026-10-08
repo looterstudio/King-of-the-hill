@@ -24,7 +24,7 @@ export interface PlayerState extends Body {
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; fireCd: number; spin: number; burstLeft: number; burstT: number;
-  kills: number; ack: number;
+  kills: number; ack: number; team: number;
 }
 export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
@@ -165,21 +165,28 @@ export class Sim {
   }
 
   // everyone drops in from the sky over the island and glides down wherever they like
-  spawn(ids: number[]) {
+  // teammates (same team number) jump from the same spot, a few meters apart
+  spawn(ids: number[], teamOf?: Map<number, number>) {
+    const drop = new Map<number, { x: number; z: number; n: number }>();
     ids.forEach((id) => {
-      const a = this.rand() * Math.PI * 2, d = 40 + Math.sqrt(this.rand()) * 140;
-      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      const team = teamOf?.get(id) ?? id;
+      let at = drop.get(team);
+      if (!at) { const a = this.rand() * Math.PI * 2, d = 40 + Math.sqrt(this.rand()) * 140; at = { x: Math.cos(a) * d, z: Math.sin(a) * d, n: 0 }; drop.set(team, at); }
+      const k = at.n++, x = at.x + (k % 2) * 3 - 1.5 * Math.min(1, k), z = at.z + Math.floor(k / 2) * 3;
       this.players.set(id, {
         ...newBody(x, 95 + this.rand() * 15, z), gliding: true, id,
         yaw: Math.atan2(x, z), pitch: -0.5, hp: PLAYER_HP, shield: 0, alive: true,
         slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0,
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
-        reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0,
+        reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team,
       });
     });
   }
 
   get alive() { let n = 0; for (const p of this.players.values()) if (p.alive) n++; return n; }
+  // teams with someone still standing (in solo every player is their own team)
+  get teamsAlive() { const s = new Set<number>(); for (const p of this.players.values()) if (p.alive) s.add(p.team); return s; }
+  friends(a: PlayerState, b: PlayerState) { return a.team === b.team; }
   weaponOf(p: PlayerState): WeaponId | null { return p.slots[p.cur]; }
 
   eliminate(id: number, by: number | null, cause: ElimCause, ev: SimEvent[], head = false) {
@@ -245,7 +252,7 @@ export class Sim {
       const tWorld = this.world.raycast(ox, oy, oz, dx, dy, dz, def.range);
       let hit: { t: number; head: boolean; q: PlayerState } | null = null;
       for (const q of this.players.values()) {
-        if (!q.alive || q.id === p.id) continue;
+        if (!q.alive || q.id === p.id || q.team === p.team) continue; // no friendly fire
         const at = past?.get(q.id) ?? q;
         if (Math.abs(at.x - ox) > def.range || Math.abs(at.z - oz) > def.range) continue;
         const h = rayPlayer(ox, oy, oz, dx, dy, dz, at.x, at.y, at.z);
@@ -266,8 +273,9 @@ export class Sim {
 
   private explode(x: number, y: number, z: number, radius: number, dmg: number, owner: number, ev: SimEvent[], nuke: boolean) {
     ev.push({ kind: 'boom', x, y, z, r: radius, nuke });
+    const team = this.players.get(owner)?.team;
     for (const q of this.players.values()) {
-      if (!q.alive) continue;
+      if (!q.alive || (q.id !== owner && q.team === team)) continue;
       const dx = q.x - x, dy = q.y + 1 - y, dz = q.z - z, d = Math.hypot(dx, dy, dz);
       if (d > radius) continue;
       if (!nuke) { // walls stop grenade blasts

@@ -1,11 +1,12 @@
 // Offline demo transport: plays the server's role inside the browser with bots and a simulated
 // fee stream. Same Sim, same snapshots, same input queue semantics, so the UI under test is real.
 import {
-  COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type WeaponId,
+  COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, MAP_HALF, MODES, MODE_IDS, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type Mode, type WeaponId,
 } from '../../shared/src/constants.ts';
-import type { ClientMsg, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
+import type { ClientMsg, LobbyRoom, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, emptyInput, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
+import { makeTeams } from '../../shared/src/teams.ts';
 
 type Handler = (m: ServerMsg) => void;
 const NAMES = ['degen.sol', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl'];
@@ -24,12 +25,35 @@ export class LocalNet {
   private myWallet = fakeWallet();
   private queue: Input[] = [];
   private last: Input = emptyInput();
-  room: { id: string; seed: number; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
+  room: { id: string; seed: number; mode: Mode; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
+  private free: { x: number; z: number } | null = null;
+  // the other rooms on the 'server', for the lobby list (simulated: this demo only runs yours)
+  private fake: LobbyRoom[] = [];
   private loop = 0;
   private killer: number | null = null;
   private viewer: Viewer = { lootVer: -1, lootAt: -9 };
 
-  constructor() { for (let i = 0; i < 6; i++) this.tickets.set(fakeWallet(), { name: NAMES[i], wins: 6 - i + Math.floor(Math.random() * 3) }); }
+  constructor() {
+    for (let i = 0; i < 6; i++) this.tickets.set(fakeWallet(), { name: NAMES[i], wins: (6 - i + Math.floor(Math.random() * 3)) * 2 });
+    for (let i = 0; i < 5; i++) this.fake.push(this.fakeRoom(i < 3));
+  }
+  private fakeRoom(live: boolean): LobbyRoom {
+    const mode = MODE_IDS[Math.floor(Math.random() * 3)];
+    return live ? { id: Math.random().toString(16).slice(2, 10), mode, n: 70 + Math.floor(Math.random() * 31), state: 'live', startsIn: null }
+      : { id: Math.random().toString(16).slice(2, 10), mode, n: 3 + Math.floor(Math.random() * 50), state: 'waiting', startsIn: 20 + Math.floor(Math.random() * 25) };
+  }
+  private emitLobby() {
+    // filling rooms gain players, start, and eventually finish and make way for new ones
+    this.fake = this.fake.map((r) => {
+      if (r.state === 'live') return Math.random() < 0.02 ? this.fakeRoom(false) : r;
+      const n = Math.min(ROOM_MAX, r.n + Math.floor(Math.random() * 4));
+      const startsIn = Math.max(0, (r.startsIn ?? 30) - 1);
+      return startsIn === 0 || n >= ROOM_MAX ? { ...r, n, state: 'live', startsIn: null } : { ...r, n, startsIn };
+    });
+    const mine = this.room ? [{ id: this.room.id, mode: this.room.mode, n: this.room.seats.length, state: this.room.sim ? 'live' : 'waiting', startsIn: null } as LobbyRoom] : [];
+    const order = { waiting: 0, countdown: 1, live: 2, over: 3 } as const;
+    this.emit({ t: 'lobby', rooms: [...mine, ...this.fake].sort((a, b) => order[a.state] - order[b.state] || b.n - a.n) });
+  }
 
   on(h: Handler) { this.handlers.push(h); }
   private emit(m: ServerMsg) { for (const h of this.handlers) h(m); }
@@ -37,6 +61,8 @@ export class LocalNet {
   connect() {
     setTimeout(() => { this.onOpen?.(); this.emit({ t: 'hello', nonce: 'demo', requireWallet: false, allowGuests: true, holdMinUsd: 50 }); this.emitPot(); }, 50);
     setInterval(() => this.emitPot(), 2000);
+    setTimeout(() => this.emitLobby(), 60);
+    setInterval(() => this.emitLobby(), 1000);
     const fee = () => {
       const whale = Math.random() < 0.08, sol = whale ? 0.4 + Math.random() * 2.2 : 0.004 + Math.random() * 0.07, add = BigInt(Math.round(sol * 1e9));
       this.lamports += add;
@@ -56,11 +82,18 @@ export class LocalNet {
     switch (m.t) {
       case 'guest': {
         const name = (m.name || 'guest').slice(0, 14);
-        this.me = { id: 1, num: playerNumber(Math.floor(Math.random() * 456)), name, verified: true };
+        this.me = { id: 1, num: playerNumber(Math.floor(Math.random() * 456)), name, verified: true, team: 0 };
         this.emit({ t: 'authed', name, wallet: this.myWallet, num: this.me.num });
         break;
       }
-      case 'queue': if (this.me && !this.room) this.openRoom(); break;
+      case 'queue': {
+        if (!this.me || this.room) break;
+        const picked = this.fake.find((r) => r.id === m.room && r.state === 'waiting');
+        this.openRoom(picked ? picked.mode : MODE_IDS.includes(m.mode as Mode) ? m.mode! : 'solo', picked?.id);
+        if (picked) this.fake = this.fake.filter((r) => r !== picked);
+        break;
+      }
+      case 'spec': this.spectate(m); break;
       case 'leave': this.closeRoom(); break;
       case 'in': this.queue.push(sanitizeInput(m)); if (this.queue.length > 10) this.queue.shift(); break;
     }
@@ -68,11 +101,12 @@ export class LocalNet {
 
   private announce(state: 'waiting' | 'countdown' | 'live' | 'over', startsAt: number | null) {
     const r = this.room!;
-    this.emit({ t: 'room', roomId: r.id, you: 1, seats: r.seats, state, startsAt, seed: r.seed });
+    this.emit({ t: 'room', roomId: r.id, you: 1, seats: r.seats, state, startsAt, seed: r.seed, mode: r.mode });
   }
 
-  private openRoom() {
-    const room = { id: Math.random().toString(16).slice(2, 10), seed: Math.floor(Math.random() * 2 ** 31), seats: [this.me!], bots: [] as Bot[], sim: null as Sim | null, timers: [] as number[] };
+  private openRoom(mode: Mode, id?: string) {
+    this.me!.team = 0;
+    const room = { id: id ?? Math.random().toString(16).slice(2, 10), seed: Math.floor(Math.random() * 2 ** 31), mode, seats: [this.me!], bots: [] as Bot[], sim: null as Sim | null, timers: [] as number[] };
     this.room = room;
     this.emit({ t: 'queued', position: 1 });
     this.announce('waiting', null);
@@ -82,7 +116,7 @@ export class LocalNet {
       delay += 40 + Math.random() * 90;
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
-        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true });
+        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0 });
         room.bots.push({ id, skill: 0.3 + Math.random() * 0.55, strafe: Math.random() < 0.5 ? 1 : -1, aimErr: 0, reaction: 0, target: null, los: false, losT: 0, wp: { x: 0, z: 0 }, stuck: 0, seq: 0, dropX: (Math.random() - 0.5) * 300, dropZ: (Math.random() - 0.5) * 300 });
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }
@@ -93,8 +127,13 @@ export class LocalNet {
   private startRound() {
     const r = this.room!;
     r.sim = new Sim(r.seed);
-    r.sim.spawn(r.seats.map((s) => s.id));
-    this.queue = []; this.last = emptyInput(); this.killer = null; this.viewer = { lootVer: -1, lootAt: -9 };
+    const teams = makeTeams(r.seats.map((s) => ({ id: s.id, party: '' })), MODES[r.mode].size);
+    r.seats = r.seats.map((s) => ({ ...s, team: teams.get(s.id)! }));
+    r.sim.spawn(r.seats.map((s) => s.id), teams);
+    // a team glides to the same spot
+    const spot = new Map<number, { x: number; z: number }>();
+    for (const b of r.bots) { const t = teams.get(b.id)!; const at = spot.get(t) ?? { x: b.dropX, z: b.dropZ }; spot.set(t, at); b.dropX = at.x + (Math.random() - 0.5) * 8; b.dropZ = at.z + (Math.random() - 0.5) * 8; }
+    this.queue = []; this.last = emptyInput(); this.killer = null; this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
@@ -112,7 +151,7 @@ export class LocalNet {
       b.losT = 0.4 + Math.random() * 0.3;
       let best: PlayerState | null = null, bd = 130;
       // gliders can't shoot back, so bots leave them alone
-      for (const q of sim.players.values()) { if (!q.alive || q.id === b.id || q.gliding) continue; const d = Math.hypot(q.x - self.x, q.z - self.z); if (d < bd) { bd = d; best = q; } }
+      for (const q of sim.players.values()) { if (!q.alive || q.id === b.id || q.gliding || q.team === self.team) continue; const d = Math.hypot(q.x - self.x, q.z - self.z); if (d < bd) { bd = d; best = q; } }
       b.target = best ? best.id : null;
       b.los = false;
       if (best) {
@@ -205,26 +244,51 @@ export class LocalNet {
     }
     if (sim.tick % SNAP_EVERY === 0) {
       let watch = 1;
-      if (!sim.players.get(1)?.alive) {
-        if (this.killer === null || !sim.players.get(this.killer)?.alive) this.killer = [...sim.players.values()].find((p) => p.alive)?.id ?? 1;
+      const me = sim.players.get(1)!;
+      if (!me.alive) {
+        if (this.killer === null || !sim.players.get(this.killer)?.alive) this.killer = this.mate(sim) ?? [...sim.players.values()].find((p) => p.alive)?.id ?? 1;
         watch = this.killer;
+        if (this.free && this.mate(sim) !== undefined) this.free = null;
       }
-      this.emit(snapFor(frame(sim), 1, watch, this.viewer));
+      const keep = new Set([...sim.players.values()].filter((p) => p.alive && p.team === me.team && p.id !== 1).map((p) => p.id));
+      this.emit(snapFor(frame(sim), 1, watch, this.viewer, { at: this.free, keep }));
     }
-    if (sim.alive <= 1) this.finish();
+    if (sim.teamsAlive.size <= 1) this.finish();
+  }
+
+  private mate(sim: Sim) { const me = sim.players.get(1)!; return [...sim.players.values()].find((p) => p.alive && p.team === me.team && p.id !== 1)?.id; }
+
+  // same rules as the server: teammates first, free camera only once your team is out
+  private spectate(m: Extract<ClientMsg, { t: 'spec' }>) {
+    const sim = this.room?.sim, me = sim?.players.get(1);
+    if (!sim || !me || me.alive) return;
+    const mate = this.mate(sim);
+    if (m.at !== undefined) {
+      if (m.at === null || mate !== undefined) { this.free = null; return; }
+      this.free = { x: Math.max(-MAP_HALF, Math.min(MAP_HALF, m.at[0])), z: Math.max(-MAP_HALF, Math.min(MAP_HALF, m.at[1])) };
+      return;
+    }
+    this.free = null;
+    const pool = [...sim.players.values()].filter((p) => p.alive && (mate === undefined || p.team === me.team)).map((p) => p.id).sort((a, b) => a - b);
+    if (!pool.length) return;
+    if (m.target !== undefined && pool.includes(m.target)) { this.killer = m.target; return; }
+    const cur = pool.indexOf(this.killer ?? -1);
+    this.killer = pool[cur < 0 ? 0 : (cur + (m.dir === -1 ? -1 : 1) + pool.length) % pool.length];
   }
 
   private finish() {
     const r = this.room!, sim = r.sim!;
     clearInterval(this.loop);
-    const w = [...sim.players.values()].find((p) => p.alive) ?? null;
-    if (w) {
-      const seat = r.seats.find((s) => s.id === w.id)!;
-      const key = w.id === 1 ? this.myWallet : `bot-${seat.name}`;
+    const team = [...sim.teamsAlive][0];
+    const winners = team === undefined ? [] : [...sim.players.values()].filter((p) => p.team === team).map((p) => p.id);
+    const tickets = MODES[r.mode].tickets;
+    for (const id of winners) {
+      const seat = r.seats.find((s) => s.id === id)!;
+      const key = id === 1 ? this.myWallet : `bot-${seat.name}`;
       const t = this.tickets.get(key) ?? { name: seat.name, wins: 0 };
-      t.wins++; this.tickets.set(key, t);
+      t.wins += tickets; this.tickets.set(key, t);
     }
-    this.emit({ t: 'result', winner: w ? w.id : null, ticketAwarded: !!w, epoch: epochOf(Date.now()) });
+    this.emit({ t: 'result', winner: winners[0] ?? null, winners, tickets, ticketAwarded: winners.length > 0, epoch: epochOf(Date.now()) });
     this.emitPot();
     r.timers.push(window.setTimeout(() => this.closeRoom(), RESULT_MS - 300)); // free the seat before the client shows the lobby
   }
