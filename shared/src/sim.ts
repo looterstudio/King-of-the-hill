@@ -160,6 +160,8 @@ export class Sim {
 
   drop(x: number, y: number, z: number, kind: LootKind, what: string, n = 1, mag?: number) {
     const def = kind === 'weapon' ? WEAPONS[what as WeaponId] : null;
+    const at = this.world.settle(x, y, z) ?? { x, y: this.world.groundAt(x, z, y + 0.6), z };
+    x = at.x; y = at.y; z = at.z;
     this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : n, mag: def ? (mag ?? def.mag) : undefined });
     this.lootVer++;
   }
@@ -353,11 +355,28 @@ export class Sim {
     this.loot.splice(this.loot.indexOf(gun), 1); this.lootVer++;
   }
 
+  // loot bucketed in 4 m cells, rebuilt whenever loot changes, so pickup checks only nearby items
+  private lootGrid = new Map<number, Loot[]>();
+  private lootGridVer = -1;
+  private nearLoot(x: number, z: number): Loot[] {
+    if (this.lootGridVer !== this.lootVer) {
+      this.lootGrid.clear();
+      for (const l of this.loot) { const k = Math.floor(l.x / 4) * 4096 + Math.floor(l.z / 4); const b = this.lootGrid.get(k); if (b) b.push(l); else this.lootGrid.set(k, [l]); }
+      this.lootGridVer = this.lootVer;
+    }
+    const out: Loot[] = [], cx = Math.floor(x / 4), cz = Math.floor(z / 4);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const b = this.lootGrid.get((cx + i) * 4096 + cz + j); if (b) out.push(...b); }
+    return out;
+  }
+
   // walking over shields, heals, perks and (with a free slot) guns picks them up
   private autoPickup(p: PlayerState) {
-    for (let i = this.loot.length - 1; i >= 0; i--) {
-      const l = this.loot[i];
+    const near = this.nearLoot(p.x, p.z);
+    for (let n = near.length - 1; n >= 0; n--) {
+      const l = near[n];
       if (Math.abs(l.y - p.y) > 1.4 || Math.hypot(l.x - p.x, l.z - p.z) > 1.5) continue;
+      const i = this.loot.indexOf(l);
+      if (i < 0) continue;
       if (l.kind === 'item') {
         const it = l.what as ItemId, room = ITEMS[it].max - p.items[it];
         if (room <= 0) continue;

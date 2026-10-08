@@ -30,6 +30,49 @@ export class World {
   constructor(public seed: number, boxes?: Box[]) {
     if (boxes) this.boxes = boxes; else generate(this, seed);
     this.index();
+    // every pencil case and loot spot rests on a real surface with room around it
+    const cases: Spot[] = [];
+    for (const c of this.caseSpots) {
+      const s = this.settle(c.x, c.y, c.z, 0.55, 1.0);
+      if (s && !cases.some((o) => Math.abs(o.y - s.y) < 1 && Math.hypot(o.x - s.x, o.z - s.z) < 1.6)) cases.push({ ...s, golden: c.golden });
+    }
+    this.caseSpots = cases;
+    const loot: Spot[] = [];
+    for (const l of this.lootSpots) {
+      const s = this.settle(l.x, l.y, l.z);
+      if (s && !cases.some((o) => Math.abs(o.y - s.y) < 1 && Math.hypot(o.x - s.x, o.z - s.z) < 1.1)) loot.push(s);
+    }
+    this.lootSpots = loot;
+  }
+
+  // anything solid in a small cylinder standing at (x, y, z)?
+  blocked(x: number, y: number, z: number, r: number, h: number): boolean {
+    for (const i of this.near(x - r, z - r, x + r, z + r)) {
+      const b = this.boxes[i];
+      if (!b.dead && x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1 && y + h > b.y0 && y + 0.02 < b.y1) return true;
+    }
+    return false;
+  }
+  // where a dropped item really comes to rest: on the floor under it, out of any wall, and on the
+  // same level when possible (an item spilled off a roof edge slides back onto the roof instead of
+  // floating in the air or falling to the street). null = nowhere sensible nearby.
+  settle(x: number, y: number, z: number, r = 0.3, h = 0.6): Spot | null {
+    let fallback: Spot | null = null;
+    const lim = MAP_HALF - 2;
+    for (let ring = 0; ring <= 6; ring++) {
+      const d = ring * 0.45, n = ring === 0 ? 1 : 8 + ring * 2;
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + ring;
+        const cx = Math.max(-lim, Math.min(lim, x + Math.cos(a) * d)), cz = Math.max(-lim, Math.min(lim, z + Math.sin(a) * d));
+        const gy = this.groundAt(cx, cz, y + 0.6);
+        if (this.blocked(cx, gy, cz, r, h)) continue;
+        // the floor must be under the whole item, not just its centre (no hanging off a ledge)
+        if (Math.min(...[[-r, 0], [r, 0], [0, -r], [0, r]].map(([ox, oz]) => this.groundAt(cx + ox, cz + oz, gy + 0.05))) < gy - 0.05) continue;
+        if (gy >= y - 0.6) return { x: cx, y: gy, z: cz };
+        fallback ??= { x: cx, y: gy, z: cz };
+      }
+    }
+    return fallback;
   }
   // a hand-built world, for tests
   static custom(boxes: Box[]) { return new World(0, boxes); }
@@ -51,6 +94,8 @@ export class World {
   // boxes whose cells touch the given xz rectangle
   private stamp = new Uint32Array(0);
   private visit = 0;
+  private rayStamp = new Uint32Array(0);
+  private rayVisit = 0;
   near(x0: number, z0: number, x1: number, z1: number, out: number[] = []): number[] {
     out.length = 0;
     if (this.stamp.length < this.boxes.length) this.stamp = new Uint32Array(this.boxes.length * 2);
@@ -79,11 +124,13 @@ export class World {
     let tMaxX = dx !== 0 ? (edge(cx, stepX) - ox) / dx : Infinity, tMaxZ = dz !== 0 ? (edge(cz, stepZ) - oz) / dz : Infinity;
     const tdX = dx !== 0 ? CELL / Math.abs(dx) : Infinity, tdZ = dz !== 0 ? CELL / Math.abs(dz) : Infinity;
     let t = 0;
-    const seen = new Set<number>();
+    // boxes spanning several cells are tested once per ray (visit stamps, no allocation)
+    if (this.rayStamp.length < this.boxes.length) this.rayStamp = new Uint32Array(this.boxes.length * 2);
+    const v = ++this.rayVisit;
     while (t <= best) {
       for (const i of this.grid[cz * GRID + cx]) {
-        if (seen.has(i)) continue;
-        seen.add(i);
+        if (this.rayStamp[i] === v) continue;
+        this.rayStamp[i] = v;
         if (this.boxes[i].dead) continue;
         const h = rayBox(ox, oy, oz, dx, dy, dz, this.boxes[i]);
         if (h >= 0 && h < best) best = h;

@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN npm run build && npm run build:server
 
 FROM node:22-alpine
 WORKDIR /app
@@ -11,8 +11,7 @@ ENV NODE_ENV=production DATA_DIR=/data STATIC_DIR=/app/dist
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
-COPY shared ./shared
-COPY server ./server
+COPY --from=build /app/dist-server ./dist-server
 VOLUME /data
 EXPOSE 8787
-CMD ["npx", "tsx", "server/src/index.ts"]
+CMD ["node", "dist-server/index.js"]

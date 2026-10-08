@@ -9,6 +9,15 @@ can drop anywhere on the map. Play **solo, duos or squads**; the last player (or
 wins tickets, and the token's trading fees fill one shared pot that pays out to the winners every
 6 hours (00/06/12/18 UTC).
 
+- **The island.** Thirteen named places around downtown Crown City and the King's Tower, joined
+  by a ring road: Scribble Suburbs (house grid, mansion, sports park), Castle Crayon (walls, corner
+  towers and a keep on a two-step hill), Margin Mart (shops, a supermarket with aisles, a water
+  tower), Paper Port (piers, a cargo ship you can board, gantry cranes, a lighthouse), Staple Depot
+  (warehouses with catwalks, a factory with chimneys and tanks), Crumple Junk (car-stack alleys,
+  crusher, crane), Eraser Lake (island house, piers, boathouse), Inkwood (forest lookout lodge),
+  Tally Farms (barns with haylofts, twin silos), Doodle Drive-In (giant screen with a walkway),
+  Pit Stop (gas station, diner, motel) and Graphite Mine (tunnels through a hill). Every roof,
+  tower and golden case is reachable on foot.
 - **Modes.** Solo win = 4 tickets, duo win = 2 each, squad win = 1 each, so every mode is worth the
   same per player on average. Friends type the same **party code** to drop on one team; empty spots
   are filled. No friendly fire; teammates are marked through walls and always on the minimap.
@@ -37,7 +46,8 @@ Open two tabs at http://localhost:5173, join as guests, pick a mode and click **
 A match starts at 100 players, or 45 s after the second player joins. `npm run build:demo` builds a
 single-player version that runs entirely in the browser against bots.
 
-Production: `npm run build && npm start` (the server serves `dist/`). Or `docker build -t pot-royale .`
+Production: `npm run build && npm run build:server && npm start` (plain-JS server bundle in
+`dist-server/`, serves `dist/`). Or `docker build -t pot-royale .`
 
 ## Checks
 
@@ -48,9 +58,9 @@ cargo test -p pot_vault             # on-chain merkle matches the server tree by
 npm run loadtest -- --bots 2000     # bot swarm against a running server
 ```
 
-Measured on one process with 3 match workers (4 vCPU container), line-of-sight culling on:
-**1000 bots in ten full 100-player matches (solo, duos and squads), 7–15 ms per tick (peak 23 ms)
-against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
+Measured on the production bundle, one process with 3 match workers (4 vCPU container),
+line-of-sight culling on: **1000 bots in ten full 100-player matches (solo, duos and squads),
+4–6 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
 
 ## How a round of money moves
 

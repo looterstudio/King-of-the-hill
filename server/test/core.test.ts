@@ -508,3 +508,16 @@ test('spectating: with a teammate alive you watch them and cannot free-fly', asy
   const s = JSON.parse(o.sends.find((x) => x.drop && (x.to as number[])[0] === 1)!.json);
   assert.equal(s.watch, 2);
 });
+
+test('no loot floats or sits inside walls: map spots and everything spilled from every pencil case', () => {
+  const sim = new Sim(4321), w = sim.world;
+  const bad = (x: number, y: number, z: number) => Math.abs(w.groundAt(x, z, y + 0.05) - y) > 0.06 || w.blocked(x, y, z, 0.25, 0.5);
+  for (const l of sim.loot) assert.ok(!bad(l.x, l.y, l.z), `floor loot at ${l.x.toFixed(1)},${l.y},${l.z.toFixed(1)}`);
+  for (const c of sim.cases) assert.ok(!bad(c.x, c.y, c.z), `case at ${c.x.toFixed(1)},${c.y},${c.z.toFixed(1)}`);
+  const before = new Set(sim.loot.map((l) => l.id));
+  const opener = sim.players.get(1) ?? (sim.spawn([1]), sim.players.get(1)!);
+  for (const c of sim.cases) { Object.assign(opener, { x: c.x, y: c.y, z: c.z + 1.2, gliding: false }); (sim as unknown as { interact(p: unknown, ev: unknown[]): void }).interact(opener, []); }
+  const spilled = sim.loot.filter((l) => !before.has(l.id));
+  assert.ok(spilled.length > 100);
+  for (const l of spilled) assert.ok(!bad(l.x, l.y, l.z), `spilled ${l.what} at ${l.x.toFixed(1)},${l.y},${l.z.toFixed(1)}`);
+});
