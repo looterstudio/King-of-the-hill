@@ -7,6 +7,7 @@ import {
 } from '../../shared/src/constants.ts';
 import type { RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, type Input } from '../../shared/src/sim.ts';
+import { encodeSnap } from '../../shared/src/snap.ts';
 
 const SOFT_BUFFER = 256 * 1024;      // skip snapshots to a client this far behind
 const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
@@ -94,7 +95,10 @@ export class Room {
 
   private emitElims(ev: ReturnType<Sim['step']>) {
     if (!this.sim) return;
-    for (const e of ev) if (e.kind === 'elim') this.broadcast({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive });
+    for (const e of ev) {
+      if (e.kind === 'elim') this.broadcast({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive });
+      else if (e.kind === 'pickup') this.broadcast({ t: 'event', kind: 'pickup', player: e.player, loot: e.loot });
+    }
   }
 
   update(now: number) {
@@ -137,14 +141,13 @@ export class Room {
     }
   }
 
+  private sentLootVer = -1;
   private snapshot() {
     const sim = this.sim!;
-    const r = (v: number) => Math.round(v * 10) / 10;
-    this.broadcast({
-      t: 'snap', tick: this.tick, time: r(sim.t), ringR: r(sim.ringR),
-      players: [...sim.players.values()].map((p) => ({ id: p.id, x: r(p.x), y: r(p.y), aim: Math.round(p.aim * 100) / 100, hp: Math.max(0, Math.ceil(p.hp)), alive: p.alive, dash: p.dashT > 0 })),
-      bullets: sim.bullets.map((b) => ({ id: b.id, x: r(b.x), y: r(b.y), vx: r(b.vx), vy: r(b.vy) })),
-    }, true);
+    // loot goes out when it changes, and once a second anyway for clients that skipped a snapshot
+    const withLoot = sim.lootVer !== this.sentLootVer || this.tick % TICK_HZ === 0;
+    this.sentLootVer = sim.lootVer;
+    this.broadcast(encodeSnap(sim, this.tick, withLoot), true);
   }
 
   private finish(now: number) {

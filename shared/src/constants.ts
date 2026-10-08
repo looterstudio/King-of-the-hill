@@ -10,24 +10,40 @@ export const COUNTDOWN_MS = 5_000;
 export const RESULT_MS = 6_000;       // results screen before the room closes
 export const ROUND_MAX_MS = 150_000;  // hard cap: ring has fully closed well before this
 
-export const ARENA_R = 900;
-export const RING_START_S = 10;       // ring starts closing this many seconds into the round
-export const RING_CLOSE_S = 80;       // and reaches RING_MIN_R after this many more
-export const RING_MIN_R = 90;
-export const RING_DPS = 18;
+export const ARENA_R = 1000;
 
 export const PLAYER_R = 18;
 export const PLAYER_SPEED = 270;
 export const PLAYER_HP = 100;
+export const ARMOR_MAX = 50;
 export const DASH_SPEED = 820;
 export const DASH_TIME = 0.14;
 export const DASH_CD = 2.2;
+export const PILLARS = 13;
+export const PICKUP_R = 30;
 
-export const BULLET_SPEED = 950;
-export const BULLET_LIFE = 0.85;
-export const BULLET_DMG = 25;
-export const FIRE_CD = 0.3;
-export const PILLARS = 11;
+// battle royale storm: each phase waits, then shrinks toward a new circle inside the current one
+export interface RingPhase { wait: number; shrink: number; radius: number; dps: number }
+export const RING_PHASES: RingPhase[] = [
+  { wait: 14, shrink: 18, radius: 640, dps: 6 },
+  { wait: 10, shrink: 14, radius: 380, dps: 10 },
+  { wait: 8, shrink: 12, radius: 190, dps: 16 },
+  { wait: 6, shrink: 10, radius: 60, dps: 26 },
+  { wait: 4, shrink: 8, radius: 0, dps: 40 },
+];
+export const RING_DPS_START = 4;
+
+export type WeaponId = 'pistol' | 'shotgun' | 'rifle' | 'sniper';
+export interface WeaponDef { name: string; dmg: number; cd: number; speed: number; life: number; pellets: number; spread: number; ammo: number }
+export const WEAPONS: Record<WeaponId, WeaponDef> = {
+  pistol: { name: 'pistola', dmg: 18, cd: 0.34, speed: 950, life: 0.75, pellets: 1, spread: 0.03, ammo: Infinity },
+  shotgun: { name: 'escopeta', dmg: 11, cd: 0.85, speed: 900, life: 0.32, pellets: 6, spread: 0.32, ammo: 8 },
+  rifle: { name: 'rifle', dmg: 13, cd: 0.11, speed: 1100, life: 0.8, pellets: 1, spread: 0.06, ammo: 45 },
+  sniper: { name: 'francotirador', dmg: 75, cd: 1.3, speed: 2000, life: 1.0, pellets: 1, spread: 0, ammo: 5 },
+};
+export type LootKind = 'shotgun' | 'rifle' | 'sniper' | 'medkit' | 'armor';
+export const LOOT_COUNT = 26;
+export const MEDKIT_HP = 45;
 
 // economy
 export const EPOCH_MS = 6 * 60 * 60 * 1000; // pot draws every 6h, aligned to 00/06/12/18 UTC

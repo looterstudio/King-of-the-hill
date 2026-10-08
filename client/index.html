@@ -2,72 +2,119 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Pot Royale</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Oswald:wght@500;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Shantell+Sans:ital,wght@0,400;0,600;0,800;1,400&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="./src/style.css" />
 </head>
 <body>
 <canvas id="arena"></canvas>
 
-<section id="lobby" class="screen">
-  <header class="top">
-    <div class="brand"><span class="sym">○</span><span class="sym">△</span><span class="sym">□</span> POT ROYALE</div>
-    <div class="stats"><span id="online">0</span> online · <span id="rooms">0</span> rooms</div>
-  </header>
-  <div class="hall">
-    <canvas id="jar"></canvas>
-    <div class="prize">
-      <div class="label">PREMIO ACUMULADO</div>
-      <div id="potAmount" class="amount">◎ 0.000</div>
-      <div class="draw">SORTEO EN <span id="countdown">--:--:--</span></div>
-      <div id="inflowToast" class="toast"></div>
-    </div>
-  </div>
-  <div class="panel">
-    <div class="who">
-      <span id="me">no conectado</span>
-      <button id="connectBtn" class="btn ghost">Conectar Phantom</button>
-      <input id="guestName" maxlength="14" placeholder="nombre invitado" />
-      <button id="guestBtn" class="btn ghost">Invitado</button>
-    </div>
-    <button id="playBtn" class="btn big" disabled>ENTRAR A UNA SALA</button>
-    <div id="holdReq" class="muted small"></div>
-    <div id="queueInfo" class="muted"></div>
-    <div id="error" class="error"></div>
-  </div>
-  <div class="boards">
-    <div class="board">
-      <h3>Tickets de esta ronda</h3>
-      <ol id="tickets"></ol>
-      <div class="muted small">Cada sala ganada = 1 ticket. El pote se reparte cada 6 horas.</div>
-    </div>
-    <div class="board">
-      <h3>Último sorteo</h3>
-      <div id="lastDraw" class="muted">todavía no hubo sorteo</div>
-    </div>
+<!-- ============ LOBBY ============ -->
+<section id="lobby" class="screen paper">
+  <div class="wrap">
+    <header class="topbar">
+      <div class="logo">
+        <svg class="syms" viewBox="0 0 96 30" aria-hidden="true"><circle cx="14" cy="15" r="10.5"/><path d="M38 25 L48 5 L58 25 Z"/><rect x="72" y="5" width="20" height="20" rx="1"/></svg>
+        <span class="word">Pot Royale</span>
+      </div>
+      <div class="live"><span class="dot"></span><b id="online">0</b> jugando <span class="sep">·</span> <b id="rooms">0</b> salas</div>
+    </header>
+
+    <main class="spread">
+      <section class="hero">
+        <div class="jar-wrap">
+          <canvas id="jar"></canvas>
+          <div class="note note-fees">fees del token<br />caen acá</div>
+          <div class="note note-draw">se reparte<br />cada 6 horas</div>
+        </div>
+        <div class="prize">
+          <div class="eyebrow">premio acumulado</div>
+          <div id="potAmount" class="amount">◎ 0.000</div>
+          <svg class="scribble" viewBox="0 0 400 18" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 80 4, 160 16, 240 8 S 360 6, 396 11"/><path d="M30 15 C 120 9, 220 17, 380 12"/></svg>
+          <div class="draw-row">próximo sorteo en <b id="countdown">--:--:--</b></div>
+          <div id="inflowToast" class="toast" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <aside class="card join">
+        <span class="tape tape-l"></span><span class="tape tape-r"></span>
+        <h2>Entrá a jugar</h2>
+        <ol class="steps">
+          <li><b>Conectá tu wallet</b> con <span id="holdReq" class="hl">$50 del token</span>.</li>
+          <li><b>Caés en una sala de 10.</b> Juntá armas, escapá de la tormenta.</li>
+          <li><b>El último en pie</b> se lleva 1 ticket.</li>
+          <li><b>Cada 6 horas</b> el pote se reparte por tickets.</li>
+        </ol>
+
+        <div class="who">
+          <div id="me" class="me">sin conectar</div>
+          <button id="connectBtn" class="btn ink">Conectar Phantom</button>
+          <div class="or"><span>o probá como invitado</span></div>
+          <div class="guest">
+            <input id="guestName" maxlength="14" placeholder="tu apodo" autocomplete="off" aria-label="apodo de invitado" />
+            <button id="guestBtn" class="btn ghost">Entrar</button>
+          </div>
+        </div>
+
+        <button id="playBtn" class="btn play" disabled>Buscar sala</button>
+        <div id="queueInfo" class="queue"></div>
+        <div id="error" class="error" role="alert"></div>
+      </aside>
+    </main>
+
+    <section class="sheets">
+      <div class="sheet">
+        <div class="sheet-head"><h3>Tickets de esta ronda</h3><span class="aside">1 sala ganada = 1 ticket</span></div>
+        <ol id="tickets" class="ledger"></ol>
+      </div>
+      <div class="sheet receipt">
+        <div class="sheet-head"><h3>Último sorteo</h3><span class="aside">verificable on-chain</span></div>
+        <div id="lastDraw" class="empty">Todavía no hubo sorteo. El primero cierra cuando el contador llega a cero.</div>
+      </div>
+    </section>
   </div>
 </section>
 
-<section id="waiting" class="screen hidden">
-  <div class="wait-title">SALA <span id="roomId"></span></div>
-  <div id="waitStatus" class="wait-status">esperando jugadores…</div>
-  <div id="seats" class="seats"></div>
-  <div class="muted">10 entran. 1 sale con el ticket.</div>
-  <button id="leaveBtn" class="btn ghost">Salir</button>
+<!-- ============ ROOM ============ -->
+<section id="waiting" class="screen paper hidden">
+  <div class="wrap room">
+    <div class="room-head">
+      <div class="eyebrow">sala <span id="roomId"></span></div>
+      <div id="waitStatus" class="wait-status">esperando jugadores</div>
+      <div class="fillbar" aria-hidden="true"><div id="fillBar"></div></div>
+    </div>
+    <div id="seats" class="seats"></div>
+    <p class="room-foot">Entran 10. Sale uno con el ticket.</p>
+    <button id="leaveBtn" class="btn ghost">Salir de la sala</button>
+  </div>
 </section>
 
+<!-- ============ HUD ============ -->
 <section id="hud" class="hidden">
-  <div class="hud-top">
-    <div id="aliveCount" class="alive">10 / 10</div>
+  <div class="hud-tl">
+    <div class="alive"><b id="aliveCount">10</b><span>vivos</span></div>
+    <div id="tally" class="tally" aria-hidden="true"></div>
+  </div>
+  <div class="hud-tc"><div id="storm" class="storm">la tormenta cierra en 14s</div></div>
+  <div class="hud-tr">
+    <div class="mini-label">pote</div>
     <div id="miniPot" class="mini-pot">◎ 0</div>
   </div>
   <div id="feed" class="feed"></div>
-  <div class="hud-bottom">
-    <div class="hp"><div id="hpFill"></div></div>
-    <div class="muted small">WASD mover · click disparar · espacio dash</div>
+  <div class="hud-bl">
+    <div class="bars">
+      <div class="bar-row"><span>vida</span><div class="bar hp"><div id="hpFill"></div></div><b id="hpNum">100</b></div>
+      <div class="bar-row"><span>escudo</span><div class="bar armor"><div id="armorFill"></div></div><b id="armorNum">0</b></div>
+    </div>
+    <div class="keys"><kbd>WASD</kbd> mover <kbd>click</kbd> disparar <kbd>espacio</kbd> dash</div>
   </div>
+  <div class="hud-br">
+    <div id="weapon" class="weapon">pistola</div>
+    <div id="ammo" class="ammo">∞</div>
+  </div>
+  <div id="pickup" class="pickup"></div>
   <div id="banner" class="banner hidden"></div>
 </section>
 

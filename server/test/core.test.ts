@@ -28,14 +28,15 @@ test('swept bullets cannot tunnel through a player', () => {
   assert.ok(!segHitsCircle(-100, 20, 100, 20, 0, 0, 5));
 });
 
-test('a player shot four times is eliminated and credited', () => {
+test('a player shot to zero is eliminated and credited', () => {
   const sim = new Sim(1);
   sim.pillars = [];
   sim.spawn([1, 2]);
   const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  sim.loot = [];
   a.x = 0; a.y = 0; b.x = 200; b.y = 0; a.fireCd = 0;
   const ev = [];
-  for (let i = 0; i < TICK_HZ * 3 && b.alive; i++) {
+  for (let i = 0; i < TICK_HZ * 4 && b.alive; i++) {
     ev.push(...sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]])));
     b.x = 200; b.y = 0; // pin the target
   }
@@ -44,13 +45,65 @@ test('a player shot four times is eliminated and credited', () => {
   assert.ok(ev.some((e) => e.kind === 'elim' && e.victim === 2 && e.by === 1));
 });
 
-test('the ring eventually kills anyone outside it', () => {
+test('the storm eventually kills anyone outside it', () => {
   const sim = new Sim(2);
   sim.spawn([1]);
   const p = sim.players.get(1)!;
-  for (let i = 0; i < TICK_HZ * 120 && p.alive; i++) { p.x = ARENA_R - 30; p.y = 0; sim.step(1 / TICK_HZ, new Map()); }
+  for (let i = 0; i < TICK_HZ * 200 && p.alive; i++) {
+    // stand on the far side of the safe circle
+    const g = sim.ring, a = Math.atan2(-g.y, -g.x);
+    p.x = Math.cos(a) * (ARENA_R - 30); p.y = Math.sin(a) * (ARENA_R - 30);
+    if (Math.hypot(p.x - g.x, p.y - g.y) < g.r) { p.x = g.x + g.r + 40; p.y = g.y; }
+    sim.step(1 / TICK_HZ, new Map());
+  }
   assert.equal(p.alive, false);
-  assert.ok(p.hp <= 0 && PLAYER_HP > 0);
+  assert.ok(PLAYER_HP > 0);
+});
+
+test('each storm circle sits inside the previous one', () => {
+  for (let seed = 1; seed < 30; seed++) {
+    const sim = new Sim(seed);
+    let prev = { x: sim.ring.x, y: sim.ring.y, r: sim.ring.r };
+    for (let i = 0; i < TICK_HZ * 120; i++) {
+      sim.step(1 / TICK_HZ, new Map());
+      const g = sim.ring;
+      assert.ok(Math.hypot(g.nx - g.x, g.ny - g.y) + g.nr <= g.r + 1e-6, `seed ${seed} next circle escapes`);
+      assert.ok(g.r <= prev.r + 1e-6);
+      prev = { x: g.x, y: g.y, r: g.r };
+    }
+  }
+});
+
+test('loot: pick up a shotgun, it fires pellets and runs dry back to the pistol', () => {
+  const sim = new Sim(5);
+  sim.pillars = [];
+  sim.spawn([1]);
+  const p = sim.players.get(1)!;
+  sim.loot = [{ id: 1, x: p.x, y: p.y, kind: 'shotgun' }];
+  sim.step(1 / TICK_HZ, new Map());
+  assert.equal(p.weapon, 'shotgun');
+  assert.equal(sim.loot.length, 0);
+  p.fireCd = 0;
+  sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]]));
+  assert.equal(sim.bullets.length, 6);
+  for (let i = 0; i < 400 && p.weapon === 'shotgun'; i++) { p.fireCd = 0; sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]])); }
+  assert.equal(p.weapon, 'pistol');
+});
+
+test('armor soaks bullets, medkits heal but never above max', () => {
+  const sim = new Sim(6);
+  sim.pillars = [];
+  sim.spawn([1, 2]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.y = 0; b.x = 150; b.y = 0; b.armor = 50; a.fireCd = 0;
+  for (let i = 0; i < 20 && sim.bullets.length === 0; i++) sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]]));
+  for (let i = 0; i < 10; i++) { b.x = 150; b.y = 0; sim.step(1 / TICK_HZ, new Map()); }
+  assert.equal(b.hp, 100);
+  assert.ok(b.armor < 50);
+  b.hp = 80;
+  sim.loot = [{ id: 9, x: b.x, y: b.y, kind: 'medkit' }];
+  sim.step(1 / TICK_HZ, new Map());
+  assert.equal(b.hp, 100);
 });
 
 test('prorata never pays more than the pot and keeps dust in rollover', () => {

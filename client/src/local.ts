@@ -5,6 +5,7 @@ import {
 } from '../../shared/src/constants.ts';
 import type { ClientMsg, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, sanitizeInput, type Input } from '../../shared/src/sim.ts';
+import { encodeSnap } from '../../shared/src/snap.ts';
 
 type Handler = (m: ServerMsg) => void;
 const BOT_NAMES = ['degen.sol', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo'];
@@ -104,6 +105,7 @@ export class LocalNet {
 
   private startRound() {
     const r = this.room!;
+    this.lootVer = -1;
     r.sim = new Sim(r.seed);
     r.sim.spawn(r.seats.map((s) => s.id));
     this.myInput = { mx: 0, my: 0, aim: 0, fire: false, dash: false };
@@ -111,23 +113,40 @@ export class LocalNet {
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
 
+  // bots play like people do in a BR: grab loot early, rotate ahead of the storm, fight what's close
   private botInput(b: Bot, sim: Sim, dt: number): Input {
     const self = sim.players.get(b.id)!;
+    const g = sim.ring;
     let target = null, best = Infinity;
     for (const p of sim.players.values()) if (p.alive && p.id !== b.id) { const d = Math.hypot(p.x - self.x, p.y - self.y); if (d < best) { best = d; target = p; } }
     b.wander += (Math.random() - 0.5) * 0.5;
     b.reaction -= dt;
     if (Math.random() < 0.01) b.strafe *= -1;
-    let mv = b.wander;
-    const ring = sim.ringR, dist = Math.hypot(self.x, self.y);
-    if (dist > ring * 0.8) mv = Math.atan2(-self.y, -self.x) + (Math.random() - 0.5) * 0.6;
-    else if (target && best < 700) {
-      const to = Math.atan2(target.y - self.y, target.x - self.x);
-      mv = best > 330 ? to + b.strafe * 0.5 : to + b.strafe * Math.PI / 2;
+
+    const wantsGun = self.weapon === 'pistol', wantsHeal = self.hp < 70, wantsArmor = self.armor < 25;
+    let goal: { x: number; y: number } | null = null, goalD = Infinity;
+    for (const l of sim.loot) {
+      const useful = l.kind === 'medkit' ? wantsHeal : l.kind === 'armor' ? wantsArmor : wantsGun || l.kind === 'sniper';
+      if (!useful || Math.hypot(l.x - g.nx, l.y - g.ny) > g.nr + 40) continue; // don't loot into the storm
+      const d = Math.hypot(l.x - self.x, l.y - self.y);
+      if (d < goalD && d < 520) { goalD = d; goal = l; }
     }
+
+    let mv = b.wander;
+    const inNext = Math.hypot(self.x - g.nx, self.y - g.ny) < g.nr * 0.85;
+    const inRing = Math.hypot(self.x - g.x, self.y - g.y) < g.r * 0.9;
+    if (!inRing || ((g.closing || g.nextAt - sim.t < 8) && !inNext)) mv = Math.atan2(g.ny - self.y, g.nx - self.x) + (Math.random() - 0.5) * 0.4;
+    else if (target && best < 420) {
+      const to = Math.atan2(target.y - self.y, target.x - self.x);
+      const ideal = self.weapon === 'shotgun' ? 120 : self.weapon === 'sniper' ? 550 : 300;
+      mv = best > ideal ? to + b.strafe * 0.4 : to + b.strafe * Math.PI / 2;
+    } else if (goal) mv = Math.atan2(goal.y - self.y, goal.x - self.x);
+    else if (target && best < 800) mv = Math.atan2(target.y - self.y, target.x - self.x) + b.strafe * 0.6;
+
     let aim = self.aim, fire = false;
-    if (target && best < 650) {
-      if (b.reaction <= 0) { b.aimErr = (Math.random() - 0.5) * (1 - b.skill) * 0.7; b.reaction = 0.25 + Math.random() * 0.35; }
+    const range = self.weapon === 'sniper' ? 1200 : self.weapon === 'shotgun' ? 260 : 650;
+    if (target && best < range) {
+      if (b.reaction <= 0) { b.aimErr = (Math.random() - 0.5) * (1 - b.skill) * 0.6; b.reaction = 0.25 + Math.random() * 0.35; }
       aim = Math.atan2(target.y - self.y, target.x - self.x) + b.aimErr;
       fire = Math.random() < 0.35 + b.skill * 0.5;
     }
@@ -140,18 +159,20 @@ export class LocalNet {
     const sim = r.sim, dt = 1 / TICK_HZ;
     const inputs = new Map<number, Input>([[1, this.myInput]]);
     for (const b of r.bots) if (sim.players.get(b.id)?.alive) inputs.set(b.id, this.botInput(b, sim, dt));
-    for (const e of sim.step(dt, inputs)) if (e.kind === 'elim') this.emit({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: sim.alive });
+    for (const e of sim.step(dt, inputs)) {
+      if (e.kind === 'elim') this.emit({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: sim.alive });
+      else if (e.kind === 'pickup') this.emit({ t: 'event', kind: 'pickup', player: e.player, loot: e.loot });
+    }
     if (++r.tick % SNAP_EVERY === 0) this.snap();
     if (sim.alive <= 1) this.finish();
   }
 
+  private lootVer = -1;
   private snap() {
-    const sim = this.room!.sim!;
-    this.emit({
-      t: 'snap', tick: this.room!.tick, time: sim.t, ringR: sim.ringR,
-      players: [...sim.players.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, aim: p.aim, hp: Math.max(0, Math.ceil(p.hp)), alive: p.alive, dash: p.dashT > 0 })),
-      bullets: sim.bullets.map((b) => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
-    });
+    const r = this.room!, sim = r.sim!;
+    const withLoot = sim.lootVer !== this.lootVer || r.tick % TICK_HZ === 0;
+    this.lootVer = sim.lootVer;
+    this.emit(encodeSnap(sim, r.tick, withLoot));
   }
 
   private finish() {
