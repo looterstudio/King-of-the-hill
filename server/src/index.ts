@@ -14,6 +14,7 @@ import { fromRaw, makePot } from './pot.ts';
 import { PriceFeed, rawNeeded } from './price.ts';
 import { Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
+import { InProcessHost, WorkerHost } from './host.ts';
 
 const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requireWallet ? 4 : 1));
 
@@ -53,7 +54,7 @@ const json = (res: ServerResponse, code: number, body: unknown) => {
 
 function handleHttp(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
-  if (url.pathname === '/health') return json(res, 200, { ok: true, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +mm.lastTickMs.toFixed(2) });
+  if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
   if (url.pathname === '/api/pot') return json(res, 200, potView());
   const m = /^\/api\/epochs\/(\d+)$/.exec(url.pathname);
   if (m) {
@@ -92,7 +93,7 @@ async function checkHold(wallet: string): Promise<string | null> {
 async function onMessage(c: Client, msg: ClientMsg) {
   switch (msg.t) {
     case 'in': {
-      if (c.room?.phase === 'live') c.pushInput(sanitizeInput(msg));
+      c.room?.input(c, sanitizeInput(msg));
       return;
     }
     case 'auth': {
@@ -166,9 +167,10 @@ setInterval(() => { for (const ws of wss.clients) { if (!alive.has(ws)) { ws.ter
 pot.start();
 price.start();
 epochs.start();
+mm.host = config.workers > 0 ? new WorkerHost(config.workers, mm.deliver) : new InProcessHost(mm.deliver);
 mm.start();
 http.listen({ port: config.port, backlog: 4096 }, () => {
-  console.log(`[pot-royale] :${config.port} pot=${config.potSource} payout=${config.payoutMode} hold=$${config.holdMinUsd} wallet=${config.requireWallet} guests=${config.allowGuests} minVerified=${MIN_VERIFIED}`);
+  console.log(`[pot-royale] :${config.port} pot=${config.potSource} payout=${config.payoutMode} hold=$${config.holdMinUsd} workers=${config.workers} wallet=${config.requireWallet} guests=${config.allowGuests} minVerified=${MIN_VERIFIED}`);
 });
 
 const shutdown = () => { price.stop(); mm.stop(); epochs.stop(); pot.stop(); wss.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); };

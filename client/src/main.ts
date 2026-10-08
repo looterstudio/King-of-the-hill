@@ -7,6 +7,7 @@ import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Game3D, RARITY_CSS } from './game3d.ts';
+import { World } from '../../shared/src/world.ts';
 import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
 
@@ -45,6 +46,8 @@ const state = {
   phase: '',
   over: false,
   aimed: false, // camera takes the server's spawn heading once per match
+  dropped: false,
+  previewSeed: -1,
 };
 
 function show(s: Screen) {
@@ -156,8 +159,8 @@ function damageNumber(victim: number, dmg: number, head: boolean, shield = false
     setTimeout(() => el.remove(), 900);
   }, 40);
 }
-function hitmarker(head: boolean) {
-  const el = $('hitmarker'); el.classList.toggle('head', head); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+function hitmarker(head: boolean, kill = false) {
+  const el = $('hitmarker'); el.classList.toggle('head', head); el.classList.toggle('kill', kill); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
 function damageFrom(by: number | null) {
   const pos = by !== null ? game.positionOf(by) : null;
@@ -179,22 +182,53 @@ $('resumeBtn').onclick = () => { sfx.unlock(); input.lock(); };
 $('quitBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); };
 input.onLockChange = (locked) => {
   if (state.screen !== 'game' || state.over) return;
+  if (locked && !state.dropped) { state.dropped = true; banner('Drop!', `${state.seats.length} players · the hill is in the middle`, true, 2200); }
   $('pause').classList.toggle('hidden', locked);
   if (locked && input.free) hint('mouse capture is blocked here: look with the mouse + arrow keys, Esc to pause', 4500);
   $('pauseTitle').textContent = game.self ? 'Paused' : 'Click to drop in';
 };
+
+// ---------- maps ----------
+// the island drawn as a notebook sketch: roads, buildings, place names, golden cases
+function drawIsland(ctx: CanvasRenderingContext2D, w: World, S: number, labels: boolean) {
+  const k = S / (MAP_HALF * 2), X = (x: number) => (x + MAP_HALF) * k, Y = (z: number) => (z + MAP_HALF) * k;
+  ctx.strokeStyle = 'rgba(29,51,184,0.12)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= S; i += S / 10) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, S); ctx.moveTo(0, i); ctx.lineTo(S, i); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(29,51,184,0.18)';
+  for (const l of w.lakes) { ctx.beginPath(); ctx.arc(X(l.x), Y(l.z), l.r * k, 0, Math.PI * 2); ctx.fill(); }
+  ctx.strokeStyle = 'rgba(43,47,58,0.45)'; ctx.lineWidth = Math.max(1.5, 6 * k);
+  for (const r of w.roads) { ctx.beginPath(); ctx.moveTo(X(r.x0), Y(r.z0)); ctx.lineTo(X(r.x1), Y(r.z1)); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(29,51,184,0.45)';
+  for (const r of w.roofs) ctx.fillRect(X(r.x0), Y(r.z0), Math.max(1, (r.x1 - r.x0) * k), Math.max(1, (r.z1 - r.z0) * k));
+  ctx.fillStyle = 'rgba(19,137,127,0.45)';
+  for (const t of w.trees) ctx.fillRect(X(t.x) - 1, Y(t.z) - 1, 2, 2);
+  ctx.fillStyle = '#e8a317';
+  ctx.font = `${Math.max(8, S * 0.04)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const c of w.caseSpots) if (c.golden) ctx.fillText('★', X(c.x), Y(c.z));
+  if (!labels) return;
+  ctx.font = `700 ${Math.max(12, S * 0.05)}px Caveat, cursive`;
+  for (const p of w.pois) {
+    const isTower = p.x === 0 && p.z === 0;
+    ctx.fillStyle = isTower ? '#d32336' : '#1d33b8';
+    ctx.strokeStyle = 'rgba(255,253,245,0.9)'; ctx.lineWidth = 4;
+    const label = isTower ? `♛ ${p.name}` : p.name;
+    ctx.strokeText(label, X(p.x), Y(p.z) - (isTower ? 0 : 10)); ctx.fillText(label, X(p.x), Y(p.z) - (isTower ? 0 : 10));
+  }
+}
+function drawPreview(seed: number) {
+  if (state.previewSeed === seed) return;
+  state.previewSeed = seed;
+  const c = $<HTMLCanvasElement>('mapPreview'), ctx = c.getContext('2d')!;
+  ctx.clearRect(0, 0, c.width, c.height);
+  drawIsland(ctx, new World(seed), c.width, true);
+}
 
 // ---------- minimap ----------
 const mini = $<HTMLCanvasElement>('minimap').getContext('2d')!;
 function drawMinimap() {
   const S = 170, k = S / (MAP_HALF * 2), toX = (x: number) => (x + MAP_HALF) * k, toY = (z: number) => (z + MAP_HALF) * k;
   mini.clearRect(0, 0, S, S);
-  mini.strokeStyle = 'rgba(29,51,184,0.15)'; mini.lineWidth = 1;
-  for (let i = 0; i <= S; i += S / 10) { mini.beginPath(); mini.moveTo(i, 0); mini.lineTo(i, S); mini.moveTo(0, i); mini.lineTo(S, i); mini.stroke(); }
-  if (game.world) {
-    mini.fillStyle = 'rgba(29,51,184,0.35)';
-    for (const r of game.world.roofs) mini.fillRect(toX(r.x0), toY(r.z0), (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
-  }
+  if (game.world) drawIsland(mini, game.world, S, false);
   const g = game.ring;
   mini.strokeStyle = '#d32336'; mini.lineWidth = 2;
   mini.beginPath(); mini.arc(toX(g.x), toY(g.y), Math.max(0.5, g.r * k), 0, Math.PI * 2); mini.stroke();
@@ -241,9 +275,9 @@ net.on((m: ServerMsg) => {
       state.seats = m.seats; state.you = m.you; state.startsAt = m.startsAt; state.phase = m.state;
       $('roomId').textContent = m.roomId.toUpperCase();
       $('queueInfo').textContent = '';
-      if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); }
+      if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); drawPreview(m.seed); }
       if (m.state === 'live') {
-        state.over = false; state.aimed = false;
+        state.over = false; state.aimed = false; state.dropped = false;
         game.setRoom(m.seed, m.seats, m.you);
         $('feed').innerHTML = '';
         show('game');
@@ -260,7 +294,10 @@ net.on((m: ServerMsg) => {
       break;
     case 'event': {
       if (m.kind === 'hit') {
-        if (m.by === state.you) { hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head); }
+        if (m.by === state.you) {
+          hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head);
+          if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); }
+        }
         if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); }
         break;
       }
@@ -275,7 +312,7 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'unbuild') { game.onUnbuild(m.id); break; }
       if (m.kind === 'nuke') { sfx.siren(); feed(`<b style="color:var(--red)">☢ ${esc(label(m.by))} launched an atomic bomb</b>`, m.by === state.you); break; }
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
-      if (m.by === state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); }
+      if (m.by === state.you && m.victim !== state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); hitmarker(m.head, true); }
       const mine = m.victim === state.you || m.by === state.you;
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : label(m.by);
       feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : ''}${esc(how)}</span>`, mine);

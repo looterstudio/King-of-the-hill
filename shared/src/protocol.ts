@@ -61,7 +61,7 @@ export type ServerMsg =
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number }
   | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; fx: SnapFx[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom'; left: number; head: boolean }
-  | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean }
+  | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { t: 'event'; kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
   | { t: 'event'; kind: 'build'; id: number; boxes: Box[] }
   | { t: 'event'; kind: 'unbuild'; id: number }

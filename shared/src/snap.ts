@@ -78,3 +78,45 @@ export function snapFor(f: Frame, recipient: number, watch: number, viewer: View
   }
   return msg;
 }
+
+// ---------------- server fast path ----------------
+// The same snapshot as snapFor, written straight to JSON. Every piece shared between recipients
+// (each player, shot, effect, loot row) is stringified once per frame; a recipient's message is
+// then mostly string concatenation. This is what lets one process carry ten full matches.
+export interface FrameJson { others: Map<number, string>; shots: string[]; fx: string[]; loot: string[]; cases: string[]; head: string }
+
+export function frameJson(f: Frame): FrameJson {
+  const others = new Map<number, string>();
+  for (const [id, o] of f.others) others.set(id, JSON.stringify(o));
+  return {
+    others,
+    shots: f.shots.map((s) => JSON.stringify(s)),
+    fx: f.fx.map((e) => JSON.stringify(e)),
+    loot: f.loot.map((l) => JSON.stringify(l)),
+    cases: f.cases.map((c) => JSON.stringify(c)),
+    head: `{"t":"snap","tick":${f.tick},"time":${f.time},"alive":${f.alive},"ring":${JSON.stringify(f.ring)},"leader":${JSON.stringify(f.leader)}`,
+  };
+}
+
+export function snapJsonFor(f: Frame, j: FrameJson, recipient: number, watch: number, viewer: Viewer): string {
+  const me = f.sim.players.get(recipient);
+  const center = f.sim.players.get(watch) ?? me;
+  const cx = center?.x ?? 0, cz = center?.z ?? 0, far = !center;
+  const near = (x: number, z: number, r: number) => far || (Math.abs(x - cx) < r && Math.abs(z - cz) < r);
+  const others: string[] = [];
+  for (const [id, o] of f.others) if (id !== recipient && near(o[1], o[3], VIEW_RANGE)) others.push(j.others.get(id)!);
+  const shots: string[] = [];
+  f.shots.forEach((s, i) => { if (near(s[0], s[2], VIEW_RANGE)) shots.push(j.shots[i]); });
+  const fx: string[] = [];
+  f.fx.forEach((e, i) => { if (e[0] === 'nuke' || near(e[2], e[4], VIEW_RANGE)) fx.push(j.fx[i]); });
+  let out = `${j.head},"self":${me ? JSON.stringify(selfOf(me)) : 'null'},"others":[${others.join(',')}],"shots":[${shots.join(',')}],"fx":[${fx.join(',')}]`;
+  const moved = f.time - viewer.lootAt;
+  if ((viewer.lootVer !== f.lootVer && moved > 0.3) || moved > 1) {
+    const loot: string[] = [], cases: string[] = [];
+    f.loot.forEach((l, i) => { if (near(l[1], l[3], LOOT_R)) loot.push(j.loot[i]); });
+    f.cases.forEach((c, i) => { if (near(c[1], c[3], CASE_R)) cases.push(j.cases[i]); });
+    out += `,"loot":[${loot.join(',')}],"cases":[${cases.join(',')}]`;
+    viewer.lootVer = f.lootVer; viewer.lootAt = f.time;
+  }
+  return out + '}';
+}

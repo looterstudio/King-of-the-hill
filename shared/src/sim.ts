@@ -36,7 +36,7 @@ export interface Ring { x: number; y: number; r: number; nx: number; ny: number;
 export interface Shot { ox: number; oy: number; oz: number; ex: number; ey: number; ez: number; by: number; hit: boolean }
 export type ElimCause = 'shot' | 'ring' | 'left' | 'boom';
 export type SimEvent =
-  | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean }
+  | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { kind: 'elim'; victim: number; by: number | null; cause: ElimCause; head: boolean }
   | { kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
   | { kind: 'build'; id: number; boxes: Box[] }
@@ -221,12 +221,13 @@ export class Sim {
   }
 
   // shields soak first (except storm damage, which goes straight to health)
-  private hurt(p: PlayerState, amount: number, ignoreShield = false): boolean {
-    let hadShield = false;
-    if (!ignoreShield && p.shield > 0) { const s = Math.min(p.shield, amount); p.shield -= s; amount -= s; hadShield = true; }
+  // returns whether the hit landed on shield, and whether it just broke it
+  private hurt(p: PlayerState, amount: number, ignoreShield = false): { shield: boolean; broke: boolean } {
+    let shield = false, broke = false;
+    if (!ignoreShield && p.shield > 0) { const s = Math.min(p.shield, amount); p.shield -= s; amount -= s; shield = true; broke = p.shield <= 0; }
     p.hp -= amount;
     if (p.use) p.use = null; // taking damage interrupts healing
-    return hadShield;
+    return { shield, broke };
   }
 
   private positionsAt(tick: number) { return this.history.find((e) => e.tick === tick)?.pos ?? null; }
@@ -256,8 +257,8 @@ export class Sim {
         // pellets and long range fall off a little; headshots multiply
         const falloff = def.pellets > 1 ? clamp(1.2 - hit.t / def.range, 0.35, 1) : 1;
         const dmg = Math.round(def.dmg * falloff * (hit.head ? (def.headMult ?? HEADSHOT_MULT) : 1));
-        const shield = this.hurt(hit.q, dmg);
-        ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg, head: hit.head, shield });
+        const h = this.hurt(hit.q, dmg);
+        ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg, head: hit.head, ...h });
         if (hit.q.hp <= 0) this.eliminate(hit.q.id, p.id, 'shot', ev, hit.head);
       }
     }
@@ -274,8 +275,8 @@ export class Sim {
         if (this.world.raycast(x, y + 0.3, z, tx, ty, tz, d) < d - 0.4) continue;
       }
       const amount = Math.round(dmg * (nuke ? 1 : 1 - (d / radius) * 0.7));
-      const shield = this.hurt(q, amount);
-      if (owner !== q.id) ev.push({ kind: 'hit', victim: q.id, by: owner, dmg: amount, head: false, shield });
+      const h = this.hurt(q, amount);
+      if (owner !== q.id) ev.push({ kind: 'hit', victim: q.id, by: owner, dmg: amount, head: false, ...h });
       if (q.hp <= 0) this.eliminate(q.id, owner, 'boom', ev);
     }
   }

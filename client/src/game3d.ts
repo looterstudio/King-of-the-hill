@@ -65,6 +65,7 @@ export class Game3D {
   private localCd = 0;
   private time = 0;
   private tagLayer: HTMLDivElement;
+  private poiTags: HTMLDivElement[] = [];
 
   constructor(canvas: HTMLCanvasElement, tagLayer: HTMLDivElement) {
     this.ink = new InkRenderer(canvas);
@@ -131,6 +132,31 @@ export class Game3D {
       peaks.push({ m: m4(Math.cos(a) * d, h / 2 - 1, Math.sin(a) * d, rad, h, rad), ink: i % 3 === 0 ? 6 : 4 });
     }
     instanced(new THREE.ConeGeometry(1, 1, 7, 1), peaks);
+    // gable roofs on houses (scenery: a ridge you can see from far away)
+    const prism = new THREE.BufferGeometry();
+    {
+      const v = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 1, 0, -0.5, 1, 0, -0.5, 0, 0.5, 0.5, 0, 0.5];
+      const idx = [0, 1, 2, 0, 2, 3, 4, 3, 2, 4, 2, 5, 0, 3, 4, 1, 5, 2, 0, 4, 5, 0, 5, 1];
+      prism.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); prism.setIndex(idx); prism.computeVertexNormals();
+      const flat = prism.toNonIndexed(); flat.computeVertexNormals(); prism.copy(flat);
+    }
+    instanced(prism, w.gables.map((g) => {
+      const m = new THREE.Matrix4().compose(new THREE.Vector3((g.x0 + g.x1) / 2, g.y, (g.z0 + g.z1) / 2), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), g.alongX ? 0 : Math.PI / 2), new THREE.Vector3(g.alongX ? g.x1 - g.x0 : g.z1 - g.z0, g.h, g.alongX ? g.z1 - g.z0 : g.x1 - g.x0));
+      return { m, ink: INK_IDS.RED };
+    }));
+    // roads to the tower, with a dashed centre line
+    const roads: { m: THREE.Matrix4; ink: number }[] = [], dashes: { m: THREE.Matrix4; ink: number }[] = [];
+    for (const r of w.roads) {
+      const dx = r.x1 - r.x0, dz = r.z1 - r.z0, len = Math.hypot(dx, dz) - 22, ux = dx / Math.hypot(dx, dz), uz = dz / Math.hypot(dx, dz);
+      if (len <= 0) continue;
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dx, dz));
+      roads.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(r.x0 + ux * len / 2, 0.06, r.z0 + uz * len / 2), q, new THREE.Vector3(6, 0.12, len)), ink: INK_IDS.GRAPHITE });
+      for (let s = 4; s < len - 4; s += 9) dashes.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(r.x0 + ux * s, 0.13, r.z0 + uz * s), q, new THREE.Vector3(0.3, 0.04, 3.5)), ink: INK_IDS.PAPER });
+    }
+    instanced(boxGeo, roads); instanced(boxGeo, dashes);
+    // place names float over the map while you're up high
+    for (const el of this.poiTags) el.remove();
+    this.poiTags = w.pois.map((p) => { const el = document.createElement('div'); el.className = 'poi'; el.textContent = p.name; this.tagLayer.appendChild(el); return el; });
     // lakes: a flat disc with ripple rings
     for (const l of w.lakes) {
       const disc = new THREE.Mesh(new THREE.CylinderGeometry(l.r, l.r, 0.2, 40), ink.material(INK_IDS.BLUE));
@@ -404,12 +430,14 @@ export class Game3D {
       const pos = this.prevPos.clone().lerp(new THREE.Vector3(this.pred.x, this.pred.y, this.pred.z), k).add(this.offset);
       const crouch = this.pred.slideT > 0 ? -0.6 : 0;
       const speed = Math.hypot(this.pred.vx, this.pred.vz);
-      if (this.pred.grounded && speed > 1) this.bob += dt * speed * 1.6;
-      cam.position.copy(pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * 0.04, 0)));
+      if (this.pred.grounded && speed > 1) this.bob += dt * speed * (speed > 7.4 ? 2.1 : 1.6);
+      cam.position.copy(pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
       cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : 0, 'YXZ');
       const w = this.weapon;
       const zoom = look.aim && w ? WEAPONS[w].zoom : 1;
-      const fov = 78 / zoom + (this.pred.dashT > 0 || this.pred.hook ? 6 : 0);
+      // speed reads as a wider view: sprinting, sliding, dashing and swinging all open the lens
+      const sprinting = this.pred.grounded && speed > 7.4 && this.pred.slideT <= 0;
+      const fov = 78 / zoom + (this.pred.dashT > 0 || this.pred.hook ? 8 : sprinting || this.pred.slideT > 0 ? 7 : 0);
       if (Math.abs(cam.fov - fov) > 0.05) { cam.fov += (fov - cam.fov) * Math.min(1, dt * 14); cam.updateProjectionMatrix(); }
     } else {
       const target = (this.watch !== null && others.get(this.watch)) || [...others.values()][0];
@@ -508,6 +536,18 @@ export class Game3D {
       g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, w === 'minigun' ? 0 : 0);
     }
 
+    // place names: visible from up high (the drop, rooftops, the tower)
+    const high = cam.position.y > 22;
+    this.world.pois.forEach((p, i) => {
+      const el = this.poiTags[i];
+      if (!el) return;
+      v.set(p.x, 14, p.z).project(cam);
+      const d = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
+      if (high && v.z < 1 && d > 25 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1) {
+        el.style.display = 'block';
+        el.style.transform = `translate(${((v.x + 1) / 2) * innerWidth}px, ${((1 - v.y) / 2) * innerHeight}px) translate(-50%, -50%)`;
+      } else el.style.display = 'none';
+    });
     this.updatePrompt();
     // the nearest incoming nuke paints its target on the ground
     const n = this.nukes.sort((a, b) => a.t - b.t)[0];
@@ -516,7 +556,8 @@ export class Game3D {
     this.ink.render(this.time);
   }
 
-  bearingTo(x: number, z: number, yaw: number) { if (!this.pred) return 0; return Math.atan2(x - this.pred.x, z - this.pred.z) - yaw + Math.PI; }
+  // screen rotation (0 = straight ahead, clockwise) of a world point, for damage indicators
+  bearingTo(x: number, z: number, yaw: number) { if (!this.pred) return 0; return yaw + Math.PI - Math.atan2(x - this.pred.x, z - this.pred.z); }
   screenOf(id: number, head: boolean): { x: number; y: number } | null {
     const a = this.avatars.get(id);
     if (!a || !a.root.visible) return null;

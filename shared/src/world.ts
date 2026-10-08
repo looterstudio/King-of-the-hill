@@ -23,6 +23,8 @@ export class World {
   lakes: Lake[] = [];
   caseSpots: Spot[] = [];
   lootSpots: Spot[] = [];
+  gables: { x0: number; z0: number; x1: number; z1: number; y: number; h: number; alongX: boolean }[] = []; // visual roofs
+  roads: { x0: number; z0: number; x1: number; z1: number }[] = [];
   private grid: number[][] = Array.from({ length: GRID * GRID }, () => []);
 
   constructor(public seed: number, boxes?: Box[]) {

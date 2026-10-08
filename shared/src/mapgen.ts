@@ -89,8 +89,9 @@ export function generate(w: World, seed: number) {
   };
 
   const house = (cx: number, cz: number, door: Side) => {
-    const wd = 9 + r() * 3, dp = 9 + r() * 3, floors = r() < 0.6 ? 2 : 1;
-    shell(cx - wd / 2, cz - dp / 2, wd, dp, floors, { doors: [door], ink: INK.BLUE, roofAccess: r() < 0.3 });
+    const wd = 9 + r() * 3, dp = 9 + r() * 3, floors = r() < 0.6 ? 2 : 1, flat = r() < 0.3;
+    const top = shell(cx - wd / 2, cz - dp / 2, wd, dp, floors, { doors: [door], ink: INK.BLUE, roofAccess: flat });
+    if (!flat) w.gables.push({ x0: cx - wd / 2 - 0.3, z0: cz - dp / 2 - 0.3, x1: cx + wd / 2 + 0.3, z1: cz + dp / 2 + 0.3, y: top, h: 2.2, alongX: wd > dp });
   };
   const crate = (x: number, z: number, y = 0, s = 1.2) => box(x, y, z, x + s, y + s, z + s, INK.ORANGE, 'crate');
   const tree = (x: number, z: number) => w.trees.push({ x, z, h: 4 + r() * 4, r: 1.6 + r() * 1.4 });
@@ -116,10 +117,18 @@ export function generate(w: World, seed: number) {
   // ---------- Doodle Heights: tall towers packed together ----------
   {
     const cx = -115, cz = -112;
+    const tops: { i: number; j: number; x: number; z: number; y: number }[] = [];
     for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
       if (r() < 0.12) continue;
       const x = cx - 30 + i * 18 + (r() - 0.5) * 2, z = cz - 30 + j * 18 + (r() - 0.5) * 2, floors = 2 + Math.floor(r() * 4);
+      tops.push({ i, j, x, z, y: floors * 3.5 });
       shell(x - 5, z - 5, 10, 10, floors, { fh: 3.5, ink: [INK.BLUE, INK.PINK, INK.GRAPHITE][Math.floor(r() * 3)], doors: [(['n', 's', 'e', 'w'] as Side[])[Math.floor(r() * 4)]], roofAccess: floors < 5, golden: floors >= 5 && r() < 0.5 });
+    }
+    // plank bridges between neighbouring rooftops of the same height: run the roofs
+    for (const a of tops) for (const b of tops) {
+      if (a.y !== b.y || !((b.i === a.i + 1 && b.j === a.j) || (b.j === a.j + 1 && b.i === a.i)) || r() < 0.3) continue;
+      if (b.i === a.i + 1) box(a.x + 5, a.y - 0.25, (a.z + b.z) / 2 - 0.9, b.x - 5, a.y, (a.z + b.z) / 2 + 0.9, INK.BROWN, 'floor');
+      else box((a.x + b.x) / 2 - 0.9, a.y - 0.25, a.z + 5, (a.x + b.x) / 2 + 0.9, a.y, b.z - 5, INK.BROWN, 'floor');
     }
     // clock tower in the middle
     box(cx - 2, 0, cz - 2, cx + 2, 20, cz + 2, INK.BROWN, 'building'); box(cx - 2.6, 20, cz - 2.6, cx + 2.6, 21, cz + 2.6, INK.BROWN, 'building');
@@ -142,6 +151,12 @@ export function generate(w: World, seed: number) {
     for (const [dx, dz] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) box(cx + dx - 0.2, 0, cz + dz - 0.2, cx + dx + 0.2, 3, cz + dz + 0.2, INK.BROWN, 'wall');
     box(cx - 3.6, 3, cz - 3.6, cx + 3.6, 3.4, cz + 3.6, INK.BROWN, 'floor');
     w.caseSpots.push({ x: cx, y: 0, z: cz });
+    // water tower on the edge of the park: legs, a tank to stand on, a golden case for whoever climbs (grapple it)
+    const tx = cx + 14, tz = cz - 14;
+    for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) box(tx + dx - 0.25, 0, tz + dz - 0.25, tx + dx + 0.25, 14, tz + dz + 0.25, INK.GRAPHITE, 'wall');
+    box(tx - 3, 14, tz - 3, tx + 3, 18, tz + 3, INK.PINK, 'building');
+    w.roofs.push({ x0: tx - 3, z0: tz - 3, x1: tx + 3, z1: tz + 3, y: 18 });
+    w.caseSpots.push({ x: tx, y: 18, z: tz, golden: true });
     w.pois.push({ name: 'Pencil Park', x: cx, z: cz });
   }
 
@@ -211,6 +226,31 @@ export function generate(w: World, seed: number) {
     for (const [dx, dz] of [[-s + 1, -s + 1], [s - 3, -s + 1]]) { box(cx + dx, h, cz + dz, cx + dx + 2, h + 6, cz + dz + 2, INK.BROWN, 'building'); }
     w.caseSpots.push({ x: cx, y: h, z: cz }, { x: cx - 8, y: h, z: cz - 8 }, { x: cx + 8, y: h, z: cz + 4, golden: true });
     w.pois.push({ name: 'Notebook Fort', x: cx, z: cz });
+  }
+
+  // ---------- Pit Stop: a gas station at the crossroads ----------
+  {
+    const cx = 62, cz = 62;
+    for (const [dx, dz] of [[-6, -4], [6, -4], [-6, 4], [6, 4]]) box(cx + dx - 0.25, 0, cz + dz - 0.25, cx + dx + 0.25, 4.5, cz + dz + 0.25, INK.GRAPHITE, 'wall');
+    box(cx - 8, 4.5, cz - 6, cx + 8, 5, cz + 6, INK.RED, 'floor');            // canopy you can stand on
+    w.roofs.push({ x0: cx - 8, z0: cz - 6, x1: cx + 8, z1: cz + 6, y: 5 });
+    for (const dx of [-3, 3]) box(cx + dx - 0.5, 0, cz - 0.4, cx + dx + 0.5, 1.6, cz + 0.4, INK.ORANGE, 'crate'); // pumps
+    shell(cx - 5, cz + 10, 10, 8, 1, { doors: ['n'], ink: INK.GREEN, cases: 2 });
+    w.caseSpots.push({ x: cx, y: 5, z: cz });
+    w.pois.push({ name: 'Pit Stop', x: cx, z: cz });
+  }
+
+  // roads from every named place to the tower (drawn on the ground; billboards along them)
+  for (const p of w.pois) {
+    if (p.x === 0 && p.z === 0) continue;
+    w.roads.push({ x0: p.x, z0: p.z, x1: 0, z1: 0 });
+    const t = 0.55, bx = p.x * t, bz = p.z * t, len = Math.hypot(p.x, p.z), nx = -p.z / len, nz = p.x / len;
+    const sx = bx + nx * 9, sz = bz + nz * 9;
+    if (free(sx - 3, sz - 3, sx + 3, sz + 3, 2)) {
+      for (const k of [-2, 2]) box(sx + nx * k - 0.2, 0, sz + nz * k - 0.2, sx + nx * k + 0.2, 4, sz + nz * k + 0.2, INK.BROWN, 'wall');
+      const [ax, az] = Math.abs(nx) > Math.abs(nz) ? [3, 0.2] : [0.2, 3];
+      box(sx - ax, 4, sz - az, sx + ax, 6.5, sz + az, INK.ORANGE, 'wall');
+    }
   }
 
   // ---------- in between: farmhouses, cover, trees ----------

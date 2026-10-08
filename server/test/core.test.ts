@@ -404,3 +404,40 @@ test('hold gate: $50 at a given price, rounded up', async () => {
   assert.equal(fromRaw(7n, 6), '0.000007');
   assert.equal(fromRaw(500_000_000_000n, 6), '500000');
 });
+
+test('the server fast-path snapshot is byte-for-byte the same data as the plain one', async () => {
+  const { frame, frameJson, snapFor, snapJsonFor } = await import('../../shared/src/snap.ts');
+  const sim = new Sim(77);
+  sim.spawn([1, 2, 3, 4, 5]);
+  for (let i = 0; i < 60; i++) sim.step(DT, new Map([[1, inp({ fire: true, fwd: 1 })], [2, inp({ fwd: 1, yaw: 1 })]]));
+  const f = frame(sim), j = frameJson(f);
+  for (const id of [1, 3]) {
+    const a = snapFor(f, id, id, { lootVer: -1, lootAt: -9 });
+    const b = JSON.parse(snapJsonFor(f, j, id, id, { lootVer: -1, lootAt: -9 }));
+    assert.deepEqual(b, JSON.parse(JSON.stringify(a)));
+  }
+});
+
+test('a live match routes snapshots to each player and ends with its winner', async () => {
+  const { Match } = await import('../src/match.ts');
+  const m = new Match('r1', 5, [1, 2, 3], Date.now());
+  let o = m.step(Date.now());
+  o = m.step(Date.now()); // tick 2: snapshot
+  const snaps = o.sends.filter((s) => s.drop);
+  assert.deepEqual(snaps.map((s) => s.to).sort(), [[1], [2], [3]]);
+  const out: import('../src/match.ts').Send[] = [];
+  m.leave(2, out);
+  assert.ok(out.some((s) => s.json.includes('"left"')));
+  m.sim.eliminate(3, 1, 'shot', []);
+  const end = m.step(Date.now());
+  assert.deepEqual(end.ended, { winner: 1 });
+});
+
+test('breaking a shield is reported once, on the hit that empties it', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -10; b.shield = 20;
+  const hits = [];
+  for (let i = 0; i < 20 && b.shield > 0; i++) { a.fireCd = 0; hits.push(...sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.08, fire: true })]])).filter((e) => e.kind === 'hit')); }
+  assert.equal(hits.filter((h) => h.kind === 'hit' && h.broke).length, 1);
+});

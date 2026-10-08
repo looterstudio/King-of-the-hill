@@ -166,6 +166,7 @@ button, input { font: inherit; color: inherit; }
 #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; color: var(--ink); }
 #hud > *:not(.tags):not(.hitmarker):not(.flash) { mix-blend-mode: multiply; }
 .tags { position: absolute; inset: 0; overflow: hidden; }
+.poi { position: absolute; left: 0; top: 0; display: none; font-family: var(--f-note); font-weight: 700; font-size: 26px; color: var(--ink); white-space: nowrap; text-shadow: 0 0 4px var(--paper), 0 0 8px var(--paper); pointer-events: none; }
 .tag { position: absolute; left: 0; top: 0; font-weight: 800; font-size: 13px; color: var(--red); background: rgba(246,242,228,.85); border: 1.5px solid var(--red); border-radius: var(--wobble-2); padding: 0 5px; display: none; white-space: nowrap; }
 .hud-tl { position: absolute; left: max(16px, 4vw); top: max(14px, 2.5vh); }
 .alive { display: flex; align-items: baseline; gap: 8px; transform: rotate(-1.5deg); }
@@ -207,6 +208,11 @@ button, input { font: inherit; color: inherit; }
 .hitmarker i:first-child { transform: rotate(45deg); } .hitmarker i:last-child { transform: rotate(-45deg); }
 .hitmarker.show { animation: hm .22s ease-out; }
 .hitmarker.head i { background: #ffd23f; height: 42px; top: -21px; }
+.hitmarker.kill i { background: var(--red); height: 52px; top: -26px; width: 5px; left: -2.5px; }
+.shieldbreak { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border: 3px solid #2f7fd6; border-radius: 50%; opacity: 0; pointer-events: none; }
+.shieldbreak::before, .shieldbreak::after { content: ''; position: absolute; left: 50%; top: -6px; width: 3px; height: 58px; background: #2f7fd6; transform: rotate(35deg); }
+.shieldbreak::after { transform: rotate(-60deg); }
+.shieldbreak.show { animation: hm .5s ease-out; }
 @keyframes hm { 0% { opacity: 1; transform: scale(1.5); } 100% { opacity: 0; transform: scale(1); } }
 .dmg { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 .dmg i { position: absolute; left: -40px; top: -150px; width: 80px; height: 18px; border-top: 5px solid var(--red); border-radius: 50%; transform-origin: 40px 150px; animation: fade 1s ease-out forwards; }
@@ -282,8 +288,14 @@ button, input { font: inherit; color: inherit; }
 .setting b { color: var(--red); min-width: 48px; text-align: left; }
 kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink-soft); border-radius: var(--wobble-2); padding: 0 5px; }
 
+.room-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 24px; width: min(1120px, 100%); align-items: start; }
+.intro { display: grid; gap: 10px; justify-items: center; }
+#mapPreview { width: 100%; max-width: 340px; aspect-ratio: 1; border: 2.5px solid var(--ink); border-radius: var(--wobble); background: var(--card); }
+.tips { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; text-align: left; font-size: 14.5px; }
+.tips b { font-weight: 800; }
+@media (max-width: 900px) { .room-body { grid-template-columns: minmax(0, 1fr); } }
 /* 100-seat room: compact number chips */
-.seats.many { grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; width: min(720px, 100%); }
+.seats.many { grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; width: 100%; }
 .seats.many .seat { aspect-ratio: 1; font-size: 13px; }
 .seats.many .seat.full::before { display: none; }
 .seats.many .seat .suit { width: 86%; font-size: clamp(10px, 1.6vw, 15px); border-width: 2px; }

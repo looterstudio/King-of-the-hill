@@ -84,7 +84,18 @@
       <div id="waitStatus" class="wait-status">waiting for players</div>
       <div class="fillbar" aria-hidden="true"><div id="fillBar"></div></div>
     </div>
-    <div id="seats" class="seats"></div>
+    <div class="room-body">
+      <div id="seats" class="seats"></div>
+      <div class="intro">
+        <canvas id="mapPreview" width="340" height="340" aria-label="map of the island"></canvas>
+        <ul class="tips">
+          <li><b>Glide in.</b> Look down to dive, look up to float.</li>
+          <li><b>Golden pencil cases</b> (★ on the map) hold the legendaries.</li>
+          <li><b>The last circle</b> always closes on the King's Tower.</li>
+          <li><kbd>E</kbd> open / pick up · <kbd>5</kbd> shield · <kbd>6</kbd> medkit · <kbd>G</kbd> perk · <kbd>Shift</kbd> sprint</li>
+        </ul>
+      </div>
+    </div>
     <p class="room-foot">Up to 100 drop in. 1 walks out with the ticket.</p>
     <button id="leaveBtn" class="btn ghost">Leave room</button>
   </div>
@@ -107,6 +118,7 @@
   <div id="crosshair" class="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="dot"></i></div>
   <div id="scope" class="scope hidden"></div>
   <div id="hitmarker" class="hitmarker"><i></i><i></i></div>
+  <div id="shieldbreak" class="shieldbreak"></div>
   <div id="dmg" class="dmg"></div>
   <div id="feed" class="feed"></div>
   <div class="hud-bl">

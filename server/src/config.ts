@@ -1,3 +1,4 @@
+import { cpus } from 'node:os';
 // Every knob comes from the environment so the same build runs locally (mock pot, guests on)
 // and in production (real vault, wallets required, guests off).
 const env = process.env;
@@ -12,6 +13,8 @@ export const config = {
   // capacity guards for one process; scale out by running more processes behind a router
   maxConnections: int(env.MAX_CONNECTIONS, 5000),
   maxRooms: int(env.MAX_ROOMS, 600),
+  // live matches run on this many worker threads (0 = in the main thread); default: all cores but one
+  workers: int(env.WORKERS, Math.max(0, cpus().length - 1)),
   msgsPerSecond: int(env.MSGS_PER_SECOND, 60),
 
   requireWallet: bool(env.REQUIRE_WALLET, false),

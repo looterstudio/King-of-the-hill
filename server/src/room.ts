@@ -1,13 +1,12 @@
-// Rooms (max 10 players) and the matchmaker that fills them. One process-wide tick drives every
-// room, so a node with 300 live rooms still runs one timer, not 300.
+// Rooms (up to 100 players) and the matchmaker that fills them. Waiting rooms and countdowns live
+// here on the main thread; once a match goes live it runs on a MatchHost (in-process or on a
+// worker thread) and whatever it wants sent comes back to be routed to the right sockets.
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import {
-  COUNTDOWN_MS, FILL_WAIT_MS, RESULT_MS, ROOM_MAX, ROOM_MIN, ROUND_MAX_MS, SNAP_EVERY, TICK_HZ,
-} from '../../shared/src/constants.ts';
+import { COUNTDOWN_MS, FILL_WAIT_MS, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ } from '../../shared/src/constants.ts';
 import type { RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
-import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
-import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
+import type { MatchHost } from './host.ts';
+import type { Outbound } from './match.ts';
 
 const SOFT_BUFFER = 256 * 1024;      // skip snapshots to a client this far behind
 const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
@@ -15,16 +14,6 @@ const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
 export class Client {
   room: Room | null = null;
   queued = false;
-  // one input per tick, in order: the client predicts with the same inputs, so none may be skipped
-  // or doubled. A client sending faster than 30 Hz only fills the queue; it never moves faster.
-  queue: Input[] = [];
-  last: Input = emptyInput();
-  pushInput(i: Input) { this.queue.push(i); if (this.queue.length > 10) this.queue.shift(); }
-  nextInput(): Input {
-    const i = this.queue.shift();
-    if (i) { this.last = i; return i; }
-    return { ...this.last, jump: false, slot: 0 }; // late packet: keep walking, don't re-trigger one-shots
-  }
   name = '';
   wallet: string | null = null;
   authed = false;
@@ -60,21 +49,19 @@ export class Room {
   readonly seed = randomBytes(4).readUInt32LE();
   phase: RoomPhase = 'waiting';
   seats: Client[] = [];
-  sim: Sim | null = null;
   private fillDeadline: number | null = null;
   startsAt: number | null = null;
   private overAt = 0;
-  private liveSince = 0;
   verifiedAtStart = 0;
   closed = false;
 
-  constructor(private hooks: RoomHooks) {}
+  constructor(private hooks: RoomHooks, private host: MatchHost) {}
 
   get open() { return this.phase === 'waiting' && this.seats.length < ROOM_MAX && !this.closed; }
 
   broadcast(msg: ServerMsg, droppable = false) {
     const s = JSON.stringify(msg);
-    for (const c of this.seats) c.sendRaw(s, droppable);
+    for (const c of this.seats) if (c.room === this) c.sendRaw(s, droppable);
   }
 
   private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet })); }
@@ -88,108 +75,52 @@ export class Room {
   remove(c: Client) {
     if (c.room !== this) return;
     c.room = null;
-    if (this.phase === 'live' && this.sim) {
-      const ev: Parameters<Sim['eliminate']>[3] = [];
-      this.sim.eliminate(c.id, null, 'left', ev);
-      this.emitElims(ev);
-      // keep the seat in the list during a live round so the winner check stays honest
-      return;
-    }
+    if (this.phase === 'live') { this.host.leave(this.id, c.id); return; } // the seat stays so the winner check stays honest
     this.seats = this.seats.filter((s) => s !== c);
     if (this.phase === 'countdown' && this.seats.length < ROOM_MIN) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; }
     if (this.seats.length === 0) this.closed = true;
-    else this.announce();
+    else if (this.phase !== 'over') this.announce();
   }
 
-  private emitElims(ev: ReturnType<Sim['step']>) {
-    if (!this.sim) return;
-    for (const e of ev) {
-      if (e.kind === 'elim') {
-        if (e.by !== null) for (const [k, v] of this.watching) if (v === e.victim) this.watching.set(k, e.by);
-        this.watching.set(e.victim, e.by ?? e.victim);
-        this.broadcast({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive, head: e.head });
-      } else if (e.kind === 'hit') {
-        // hit feedback only matters to the two people involved
-        const s = JSON.stringify({ t: 'event', ...e });
-        for (const c of this.seats) if (c.id === e.victim || c.id === e.by) c.sendRaw(s);
-      } else this.broadcast({ t: 'event', ...e } as ServerMsg); // booms, forts, nukes, opened cases: everyone needs them
+  input(c: Client, i: Parameters<MatchHost['input']>[2]) { if (this.phase === 'live') this.host.input(this.id, c.id, i); }
+
+  // what the match wants sent, routed to sockets
+  deliver(o: Outbound, now: number) {
+    for (const s of o.sends) {
+      if (s.to === 'all') { for (const c of this.seats) if (c.room === this) c.sendRaw(s.json, s.drop); }
+      else for (const id of s.to) { const c = this.seats.find((x) => x.id === id); if (c && c.room === this) c.sendRaw(s.json, s.drop); }
     }
+    if (o.ended) this.finish(o.ended.winner, now);
   }
 
   update(now: number) {
     if (this.closed) return;
-    switch (this.phase) {
-      case 'waiting': {
-        if (this.seats.length >= ROOM_MIN && this.fillDeadline === null) { this.fillDeadline = now + FILL_WAIT_MS; this.announce(); }
-        if (this.seats.length < ROOM_MIN) this.fillDeadline = null;
-        if (this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) {
-          this.phase = 'countdown'; this.startsAt = now + COUNTDOWN_MS; this.announce();
-        }
-        break;
+    if (this.phase === 'waiting') {
+      if (this.seats.length >= ROOM_MIN && this.fillDeadline === null) { this.fillDeadline = now + FILL_WAIT_MS; this.announce(); }
+      if (this.seats.length < ROOM_MIN) this.fillDeadline = null;
+      if (this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) {
+        this.phase = 'countdown'; this.startsAt = now + COUNTDOWN_MS; this.announce();
       }
-      case 'countdown': {
-        if (this.startsAt !== null && now >= this.startsAt) {
-          this.phase = 'live'; this.liveSince = now;
-          this.sim = new Sim(this.seed);
-          for (const c of this.seats) { c.queue = []; c.last = emptyInput(); }
-          this.sim.spawn(this.seats.map((c) => c.id));
-          this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
-          this.announce();
-        }
-        break;
+    } else if (this.phase === 'countdown') {
+      if (this.startsAt !== null && now >= this.startsAt) {
+        this.phase = 'live';
+        this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
+        this.host.start(this.id, this.seed, this.seats.map((c) => c.id));
+        this.announce();
       }
-      case 'live': {
-        const sim = this.sim!;
-        const inputs = new Map<number, Input>();
-        for (const c of this.seats) if (c.room === this) inputs.set(c.id, c.nextInput());
-        this.emitElims(sim.step(1 / TICK_HZ, inputs));
-        if (sim.tick % SNAP_EVERY === 0) this.snapshot();
-        if (sim.alive <= 1 || now - this.liveSince > ROUND_MAX_MS) this.finish(now);
-        break;
-      }
-      case 'over': {
-        if (now >= this.overAt) {
-          for (const c of this.seats) if (c.room === this) c.room = null;
-          this.closed = true;
-        }
-        break;
-      }
+    } else if (this.phase === 'over' && now >= this.overAt) {
+      for (const c of this.seats) if (c.room === this) c.room = null;
+      this.closed = true;
     }
   }
 
-  // dead players keep watching whoever eliminated them (or anyone still standing)
-  private watching = new Map<number, number>();
-  private viewers = new Map<number, Viewer>();
-  private snapshot() {
-    const f = frame(this.sim!);
-    for (const c of this.seats) {
-      if (c.room !== this) continue;
-      let watch = c.id;
-      const me = this.sim!.players.get(c.id);
-      if (me && !me.alive) {
-        let w = this.watching.get(c.id);
-        if (w === undefined || !this.sim!.players.get(w)?.alive) { w = [...this.sim!.players.values()].find((p) => p.alive)?.id ?? c.id; this.watching.set(c.id, w); }
-        watch = w;
-      }
-      let v = this.viewers.get(c.id);
-      if (!v) { v = { lootVer: -1, lootAt: -9 }; this.viewers.set(c.id, v); }
-      c.sendRaw(JSON.stringify(snapFor(f, c.id, watch, v)), true);
-    }
-  }
-
-  private finish(now: number) {
-    const sim = this.sim!;
-    const alive = [...sim.players.values()].filter((p) => p.alive);
-    // time cap with several alive: most hp wins, a tie means nobody does
-    alive.sort((a, b) => b.hp - a.hp);
-    const top = alive.length === 1 || (alive.length > 1 && alive[0].hp > alive[1].hp) ? alive[0] : null;
-    const winner = top ? this.seats.find((c) => c.id === top.id && c.room === this) ?? null : null;
+  private finish(winnerId: number | null, now: number) {
+    const winner = winnerId !== null ? this.seats.find((c) => c.id === winnerId && c.room === this) ?? null : null;
     let res = { awarded: false, epoch: -1 };
-    // a ticket needs enough distinct verified wallets at the start, so a 2-wallet room cannot farm wins
+    // a ticket needs enough distinct verified wallets at the start, so a few wallets cannot farm wins
     if (winner && winner.wallet && this.verifiedAtStart >= this.hooks.minVerifiedForTicket) res = this.hooks.onWin(this, winner);
     this.phase = 'over'; this.overAt = now + RESULT_MS;
-    this.snapshot();
-    this.broadcast({ t: 'result', winner: top ? top.id : null, ticketAwarded: res.awarded, epoch: res.epoch });
+    this.broadcast({ t: 'result', winner: winnerId, ticketAwarded: res.awarded, epoch: res.epoch });
   }
 }
 
@@ -199,8 +130,12 @@ export class Matchmaker {
   private timer: NodeJS.Timeout | null = null;
   private next = 0;
   lastTickMs = 0;
+  host!: MatchHost;
 
   constructor(private hooks: RoomHooks, private maxRooms: number) {}
+
+  // batches coming back from wherever matches run
+  deliver = (batch: Outbound[]) => { const now = Date.now(); for (const o of batch) this.rooms.get(o.roomId)?.deliver(o, now); };
 
   enqueue(c: Client) {
     if (c.room || c.queued) return;
@@ -212,13 +147,13 @@ export class Matchmaker {
 
   private assign() {
     if (this.queue.length === 0) return;
-    // fill the fullest open room first: rooms start sooner and fewer half-empty rooms linger
+    // fill the fullest open room first: matches start sooner and fewer half-empty rooms linger
     const open = [...this.rooms.values()].filter((r) => r.open).sort((a, b) => b.seats.length - a.seats.length);
     while (this.queue.length) {
       let room = open.find((r) => r.open);
       if (!room) {
         if (this.rooms.size >= this.maxRooms) break; // queue waits for capacity
-        room = new Room(this.hooks); this.rooms.set(room.id, room); open.push(room);
+        room = new Room(this.hooks, this.host); this.rooms.set(room.id, room); open.push(room);
       }
       const c = this.queue.shift()!;
       c.queued = false;
@@ -227,6 +162,7 @@ export class Matchmaker {
     }
   }
 
+  // lobby work only (filling rooms, countdowns); the 30 Hz simulation runs on the host
   start() {
     const step = 1000 / TICK_HZ;
     this.next = performance.now();
@@ -236,10 +172,9 @@ export class Matchmaker {
       const now = Date.now();
       for (const [id, r] of this.rooms) { r.update(now); if (r.closed) this.rooms.delete(id); }
       this.lastTickMs = performance.now() - t0;
-      // drift-corrected: schedule against the ideal timeline, not "33 ms after we finished"
       this.next += step;
       const wait = this.next - performance.now();
-      if (wait < -step * 5) this.next = performance.now(); // fell far behind: resync instead of spiralling
+      if (wait < -step * 5) this.next = performance.now();
       this.timer = setTimeout(loop, Math.max(0, wait));
     };
     this.timer = setTimeout(loop, step);

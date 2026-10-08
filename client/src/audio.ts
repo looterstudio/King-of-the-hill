@@ -69,6 +69,7 @@ class Sfx {
   }
   siren() { if (!this.ctx || !this.enabled) return; for (let i = 0; i < 3; i++) this.tone(660, 880, 0.18, 0.5, 'sawtooth', i * 0.6); }
   open(golden: boolean) { if (!this.ctx || !this.enabled) return; this.burst(3000, 2, 0.2, 0.15, 'bandpass'); this.tone(golden ? 880 : 660, golden ? 1760 : 990, 0.2, 0.35, 'triangle', 0.05); }
+  shieldBreak() { if (this.ctx && this.enabled) { this.burst(4000, 1.5, 0.35, 0.18, 'highpass'); this.tone(1400, 500, 0.2, 0.2, 'triangle'); } }
   jump() { if (this.ctx && this.enabled) this.tone(300, 520, 0.08, 0.12, 'sine'); }
 }
 
