@@ -4,7 +4,7 @@
 // routed to the right sockets.
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
+import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, matchPoints, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
 import type { LobbyRoom, RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import type { MatchHost } from './host.ts';
 import type { Outbound, SpecRequest } from './match.ts';
@@ -47,7 +47,7 @@ export class Client {
 }
 
 export interface RoomHooks {
-  onWin(room: Room, winner: Client, tickets: number): { awarded: boolean; epoch: number };
+  onScore(room: Room, c: Client, points: number): { awarded: boolean; epoch: number };
   onFlag?(room: Room, c: Client | null, f: Flag): void;
   minVerifiedForTicket: number;
 }
@@ -108,7 +108,7 @@ export class Room {
       else for (const id of s.to) { const c = this.seats.find((x) => x.id === id); if (c && c.room === this) c.sendRaw(s.json, s.drop); }
     }
     if (o.flags) for (const f of o.flags) { this.flagged.set(f.id, f.reason); this.hooks.onFlag?.(this, this.seats.find((c) => c.id === f.id) ?? null, f); }
-    if (o.ended) this.finish(o.ended.winners, now);
+    if (o.ended) this.finish(o.ended.winners, o.ended.places, now);
   }
 
   update(now: number) {
@@ -134,21 +134,22 @@ export class Room {
     }
   }
 
-  private finish(winnerIds: number[], now: number) {
-    const tickets = MODES[this.mode].tickets;
+  private finish(winnerIds: number[], places: Record<number, [number, number]>, now: number) {
     let res = { awarded: false, epoch: -1 };
-    // a ticket needs enough distinct verified wallets at the start, so a few wallets cannot farm
-    // wins; anyone the cheat checks flagged during the match gets nothing
-    if (this.verifiedAtStart >= this.hooks.minVerifiedForTicket) {
-      for (const id of winnerIds) {
-        const c = this.seats.find((x) => x.id === id && x.room === this);
-        if (!c || !c.wallet || this.flagged.has(id)) continue;
-        const r = this.hooks.onWin(this, c, tickets);
-        if (r.awarded) res = r;
-      }
+    const points: Record<number, number> = {};
+    // points need enough distinct verified wallets at the start, so a few wallets cannot farm
+    // each other; anyone the cheat checks flagged during the match gets nothing
+    const counts = this.verifiedAtStart >= this.hooks.minVerifiedForTicket;
+    for (const c of this.seats) {
+      const [place, kills] = places[c.id] ?? [0, 0];
+      const pts = matchPoints(this.mode, place, kills, winnerIds.includes(c.id));
+      points[c.id] = pts;
+      if (!counts || !pts || !c.wallet || this.flagged.has(c.id)) continue;
+      const r = this.hooks.onScore(this, c, pts);
+      if (r.awarded) res = r;
     }
     this.phase = 'over'; this.overAt = now + RESULT_MS;
-    this.broadcast({ t: 'result', winner: winnerIds[0] ?? null, winners: winnerIds, tickets, ticketAwarded: res.awarded, epoch: res.epoch });
+    this.broadcast({ t: 'result', winner: winnerIds[0] ?? null, winners: winnerIds, points, awarded: counts, epoch: res.epoch });
   }
 }
 

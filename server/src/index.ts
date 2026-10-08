@@ -11,8 +11,8 @@ import { loginMessage, type ClientMsg, type PotView, type ServerMsg } from '../.
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
 import { fromRaw, makePot } from './pot.ts';
-import { PriceFeed, rawNeeded } from './price.ts';
-import { Epochs } from './epoch.ts';
+import { PriceFeed } from './price.ts';
+import { CANDLE_MS, Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
 import { InProcessHost, WorkerHost } from './host.ts';
 
@@ -20,7 +20,7 @@ const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requi
 
 const pot = makePot(config);
 const price = new PriceFeed(config);
-const epochs = new Epochs(config, pot);
+const epochs = new Epochs(config, pot, () => Date.now(), () => price.usd());
 const clients = new Set<Client>();
 const byWallet = new Map<string, Client>();
 let nextId = 1;
@@ -30,7 +30,7 @@ const flags: { at: number; room: string; mode: string; wallet: string | null; na
 mkdirSync(config.dataDir, { recursive: true });
 const mm = new Matchmaker({
   minVerifiedForTicket: MIN_VERIFIED,
-  onWin: (_room, winner, tickets) => ({ awarded: true, epoch: epochs.recordWin(winner.wallet!, winner.name, tickets) }),
+  onScore: (_room, c, points) => ({ awarded: true, epoch: epochs.recordWin(c.wallet!, c.name, points) }),
   onFlag: (room, c, f) => {
     const row = { at: Date.now(), room: room.id, mode: room.mode, wallet: c?.wallet ?? null, name: c?.name ?? `#${f.id}`, reason: f.reason };
     flags.push(row); if (flags.length > 500) flags.shift();
@@ -46,6 +46,7 @@ function potView(): PotView {
     epoch: epochs.current, epochEndMs: epochs.endsAt, lamports: pot.balance().toString(),
     rolloverLamports: epochs.rolloverIn.toString(), commit: epochs.commitFor(epochs.current),
     online: clients.size, rooms: mm.rooms.size, tickets: epochs.leaderboard(10),
+    closeFrom: epochs.endsAt - CANDLE_MS, holdTokens: epochs.requirement(), symbol: config.tokenSymbol, solUsd: price.solUsd(),
   };
 }
 
@@ -94,16 +95,17 @@ const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 2048, p
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 const cleanName = (s: unknown) => String(s ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 14) || 'guest';
 
-// null = may play. Uses the 15-min median price, and fails closed when the price feed is down.
-async function checkHold(wallet: string): Promise<string | null> {
-  if (config.holdMinUsd <= 0) return null;
-  const usd = price.usd();
-  if (usd === null) return 'token price unavailable, try again in a minute';
+// Anyone may play. Points for the pot need the epoch's hold requirement, which is checked again at
+// hidden snapshots and at the close (epoch.ts): this answer is only what the player is told now.
+// null = holding enough, otherwise why not.
+async function holdStatus(wallet: string): Promise<string | null> {
+  const need = epochs.requirement();
+  if (need <= 0) return null;
   let h;
-  try { h = await pot.holderTokens(wallet); } catch { return 'could not read your balance, try again'; }
-  const need = rawNeeded(config.holdMinUsd, usd, h.decimals);
-  if (h.raw >= need) return null;
-  return `you need $${config.holdMinUsd} of the token to play: ${fromRaw(need, h.decimals)} tokens (you have ${fromRaw(h.raw, h.decimals)})`;
+  try { h = await pot.holderTokens(wallet); } catch { return 'could not read your balance yet'; }
+  const raw = epochs.rawRequirement(epochs.current, h.decimals);
+  if (h.raw >= raw) return null;
+  return `hold ${fromRaw(raw, h.decimals)} $${config.tokenSymbol} to score points for the pot (you have ${fromRaw(h.raw, h.decimals)})`;
 }
 
 async function onMessage(c: Client, msg: ClientMsg) {
@@ -120,30 +122,26 @@ async function onMessage(c: Client, msg: ClientMsg) {
       const ok = nacl.sign.detached.verify(new TextEncoder().encode(loginMessage(c.nonce)), sig, pk);
       if (!ok) return c.send({ t: 'error', msg: 'signature does not match' });
       const wallet = bs58.encode(pk);
-      const holdErr = await checkHold(wallet);
-      if (holdErr) return c.send({ t: 'error', msg: holdErr });
+      const eligible = await holdStatus(wallet);
       // one live seat per wallet: a second tab replaces the first
       const prev = byWallet.get(wallet);
       if (prev && prev !== c) { prev.send({ t: 'error', msg: 'signed in somewhere else' }); prev.ws.close(); }
       byWallet.set(wallet, c);
       c.wallet = wallet; c.name = shortWallet(wallet); c.authed = true;
-      return c.send({ t: 'authed', name: c.name, wallet, num: c.num });
+      return c.send({ t: 'authed', name: c.name, wallet, num: c.num, eligible });
     }
     case 'guest': {
       if (c.authed) return;
       if (!config.allowGuests) return c.send({ t: 'error', msg: 'connect a wallet to play' });
-      if (config.potSource === 'solana' && config.holdMinUsd > 0) return c.send({ t: 'error', msg: `connect a wallet holding $${config.holdMinUsd} of the token to play` });
       c.name = cleanName(msg.name); c.authed = true;
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);
-      return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num });
+      return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });
     }
     case 'queue': {
       if (!c.authed) return c.send({ t: 'error', msg: 'sign in first' });
       if (c.room?.phase === 'over') c.room.remove(c);
       if (clients.size > config.maxConnections) return c.send({ t: 'error', msg: 'server full' });
-      // checked again on every queue, not just at login: selling after signing in must not keep you in
-      if (c.wallet) { const holdErr = await checkHold(c.wallet); if (holdErr) return c.send({ t: 'error', msg: holdErr }); }
       return mm.enqueue(c, { mode: msg.mode, party: msg.party, room: msg.room });
     }
     case 'spec': {

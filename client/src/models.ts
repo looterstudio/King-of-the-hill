@@ -276,7 +276,7 @@ export function buildFigure(ink: InkRenderer, id: number): Figure {
 }
 
 // pose a figure for this frame from its interpolated state
-export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number) {
+export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number, down = false) {
   const moved = Math.hypot(x - f.lastX, z - f.lastZ);
   f.speed += ((dt > 0 ? moved / dt : 0) - f.speed) * Math.min(1, dt * 10);
   f.lastX = x; f.lastZ = z;
@@ -298,4 +298,10 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   const aim = gliding ? 2.6 : pitch;
   f.armL.rotation.x = aim; f.armR.rotation.x = aim;
   f.head.rotation.x = gliding ? 0 : pitch * 0.6;
+  if (down) { // knocked: flat on the belly, crawling on the elbows, no gun
+    for (const g of f.guns.values()) g.visible = false;
+    f.torso.rotation.x = 1.35; f.torso.position.y = 0.3;
+    f.legL.rotation.x = 1.45 + swing * 0.3; f.legR.rotation.x = 1.45 - swing * 0.3;
+    f.armL.rotation.x = 2.4 + swing * 0.5; f.armR.rotation.x = 2.4 - swing * 0.5; f.head.rotation.x = -0.9;
+  }
 }

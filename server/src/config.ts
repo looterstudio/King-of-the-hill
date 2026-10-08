@@ -28,7 +28,12 @@ export const config = {
   vaultAddress: env.VAULT_ADDRESS ?? '',   // vault PDA: seeds ["vault"]
   configAddress: env.CONFIG_ADDRESS ?? '', // config PDA: seeds ["config"]
   tokenMint: env.TOKEN_MINT ?? '',
-  holdMinUsd: Number(env.HOLD_MIN_USD ?? '50'), // USD value of the token a wallet must hold to play
+  // to score points a wallet must hold min(HOLD_TOKENS, $HOLD_MIN_USD worth), fixed per epoch
+  holdMinUsd: Number(env.HOLD_MIN_USD ?? '50'),
+  holdTokens: Number(env.HOLD_TOKENS ?? '50000'),
+  tokenSymbol: env.TOKEN_SYMBOL ?? 'KING',
+  solMint: 'So11111111111111111111111111111111111111112',
+  mockSolUsd: Number(env.MOCK_SOL_USD ?? '150'),
   priceUrl: env.PRICE_URL ?? 'https://lite-api.jup.ag/price/v3?ids=', // Jupiter price API, mint appended
   mockPriceUsd: Number(env.MOCK_PRICE_USD ?? '0.0001'),
   vaultReserveLamports: BigInt(env.VAULT_RESERVE_LAMPORTS ?? '1000000'), // rent + fees buffer, never paid out

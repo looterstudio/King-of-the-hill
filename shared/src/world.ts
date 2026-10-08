@@ -200,13 +200,14 @@ export interface Body {
   launchT: number; // launch pad: fly up first, open the glider at the top
   ride: number; head: number; vpitch: number; spd: number; // in a vehicle: 1 car, 2 heli, 3 plane; its heading, pitch, speed
   seat: number; // 0 driving (or on foot), 1+ riding along as a passenger
+  down: number; // knocked: seconds left before bleeding out (0 = standing)
 }
 export interface MoveInput { fwd: number; strafe: number; yaw: number; pitch: number; jump: boolean; sprint: boolean; slide: boolean; grapple: boolean; up?: number }
 
 export const newBody = (x: number, y: number, z: number): Body => ({
   x, y, z, vx: 0, vy: 0, vz: 0, grounded: false, gliding: false, airJumps: 1, wallX: 0, wallZ: 0, wallT: 99,
   slideT: 0, dashT: 0, dashX: 0, dashZ: 0, dashReady: true, hook: false, gx: 0, gy: 0, gz: 0, hookCd: 0, launchT: 0,
-  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0,
+  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0,
 });
 
 // gliding: look down to dive (fast fall, fast forward), look up to float and cover distance

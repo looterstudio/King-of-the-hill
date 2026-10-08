@@ -7,7 +7,7 @@ import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { Sim, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
-import { EPOCH_MS, TICK_HZ, WEAPONS, type WeaponId } from '../../shared/src/constants.ts';
+import { EPOCH_MS, KNOCK, PLAYER_HP, SHIELD_MAX, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 import { computePayouts } from '../src/payout.ts';
 import { buildTree, leafHash, verify } from '../src/merkle.ts';
 import { Epochs } from '../src/epoch.ts';
@@ -167,20 +167,20 @@ test('shields soak bullets first; the storm goes straight to health', () => {
   a.x = 0; a.z = 0; b.x = 0; b.z = -10; b.shield = 50;
   const [hit] = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.08, fire: true })]])).filter((e) => e.kind === 'hit');
   assert.ok(hit && hit.kind === 'hit' && hit.shield);
-  assert.equal(b.hp, 100);
+  assert.equal(b.hp, PLAYER_HP);
   assert.ok(b.shield < 50);
 });
 
-test('a shield potion takes 3 s and caps at 100; damage interrupts it', () => {
+test('a shield potion takes 3 s and caps at full; damage interrupts it', () => {
   const sim = arena([1]);
   const p = sim.players.get(1)!;
-  p.items.big = 2; p.shield = 70;
+  p.items.big = 2; p.shield = 200;
   sim.step(DT, new Map([[1, inp({ item: 1 })]]));
   assert.equal(p.use?.item, 'big');
   for (let i = 0; i < TICK_HZ * 2; i++) sim.step(DT, new Map());
-  assert.equal(p.shield, 70, 'not done yet');
+  assert.equal(p.shield, 200, 'not done yet');
   for (let i = 0; i < TICK_HZ * 1.2; i++) sim.step(DT, new Map());
-  assert.equal(p.shield, 100);
+  assert.equal(p.shield, SHIELD_MAX);
   assert.equal(p.items.big, 1);
 });
 
@@ -198,13 +198,16 @@ test('burst rifle fires three; minigun has to spin up', () => {
   assert.ok(sim.shots.length > 5);
 });
 
-test('the heavy sniper one-shots a full shield and full health', () => {
-  const sim = arena([1, 2]);
-  const a = sim.players.get(1)!, b = sim.players.get(2)!;
-  a.x = 0; a.z = 0; b.x = 0; b.z = -60; b.shield = 100;
+test('a heavy sniper headshot one-shots full shield and health; a body shot does not', () => {
+  const sim = arena([1, 2, 3]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!, c = sim.players.get(3)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -60; b.shield = SHIELD_MAX; c.x = 30; c.z = 0; c.shield = SHIELD_MAX;
   give(a, 'heavy');
-  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.012, fire: true, aim: true })]]));
+  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: 0, fire: true, aim: true })]]));
   assert.equal(b.alive, false);
+  for (let i = 0; i < TICK_HZ * 2.2; i++) sim.step(DT, new Map());
+  sim.step(DT, new Map([[1, inp({ yaw: -Math.PI / 2, pitch: -0.025, fire: true, aim: true, seq: 2 })]]));
+  assert.ok(c.alive && c.shield < SHIELD_MAX, 'body shot: hurt, standing');
 });
 
 test('grenades bounce, blow up, and walls block the blast', () => {
@@ -219,8 +222,8 @@ test('grenades bounce, blow up, and walls block the blast', () => {
   let boom = false;
   for (let i = 0; i < TICK_HZ * 3; i++) if (sim.step(DT, new Map()).some((e) => e.kind === 'boom')) boom = true;
   assert.ok(boom);
-  assert.ok(b.hp < 100, 'near the blast: hurt');
-  assert.equal(c.hp, 100, 'behind the wall: safe');
+  assert.ok(b.hp < PLAYER_HP, 'near the blast: hurt');
+  assert.equal(c.hp, PLAYER_HP, 'behind the wall: safe');
 });
 
 test('instant fort walls you in for a while, then disappears', () => {
@@ -336,7 +339,7 @@ test('every merkle proof verifies for odd and even tree sizes', () => {
   }
 });
 
-test('epoch rollover settles tickets into a claim file', () => {
+test('epoch rollover settles points into a claim file', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let now = EPOCH_MS * 100 + 1000;
   const pot = new MockPot(3_000_000_000n);
@@ -346,7 +349,7 @@ test('epoch rollover settles tickets into a claim file', () => {
   let settled: unknown = null;
   ep.on('settled', (s) => { settled = s; });
   now += EPOCH_MS;
-  ep.check();
+  await ep.check();
   assert.ok(settled);
   const rec = JSON.parse(readFileSync(join(dir, 'epochs', '100.json'), 'utf8'));
   assert.equal(rec.claims.length, 2);
@@ -359,7 +362,7 @@ test('epoch rollover settles tickets into a claim file', () => {
   assert.equal(ep2.leaderboard().length, 0);
 });
 
-test('an epoch missed while the server was down settles on boot', () => {
+test('an epoch missed while the server was down settles on boot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let now = EPOCH_MS * 200 + 5;
   const pot = new MockPot(1_000_000_000n);
@@ -367,7 +370,7 @@ test('an epoch missed while the server was down settles on boot', () => {
   ep.recordWin(wallet(), 'x');
   now += EPOCH_MS * 2; // down for two boundaries
   const ep2 = new Epochs({ ...config, dataDir: dir }, pot, () => now);
-  ep2.catchUp();
+  await ep2.catchUp();
   const rec = JSON.parse(readFileSync(join(dir, 'epochs', '200.json'), 'utf8'));
   assert.equal(rec.claims.length, 1);
 });
@@ -430,7 +433,8 @@ test('a live match routes snapshots to each player and ends with its winner', as
   assert.ok(out.some((s) => s.json.includes('"left"')));
   m.sim.eliminate(3, 1, 'shot', []);
   const end = m.step(Date.now());
-  assert.deepEqual(end.ended, { winners: [1] });
+  assert.deepEqual(end.ended?.winners, [1]);
+  assert.equal(end.ended?.places[1][0], 1, 'the winner placed first');
 });
 
 test('breaking a shield is reported once, on the hit that empties it', () => {
@@ -455,7 +459,7 @@ test('teams: no friendly fire, grenades spare teammates, the last team standing 
   assert.ok(ev.some((e) => e.kind === 'hit' && e.victim === 3), 'the bullet goes through to the enemy behind');
   m.sim.eliminate(3, 1, 'shot', []); m.sim.eliminate(4, 1, 'shot', []); m.sim.eliminate(2, 4, 'shot', []);
   const end = m.step(Date.now());
-  assert.deepEqual(end.ended, { winners: [1, 2] }, 'a fallen teammate still wins with the team');
+  assert.deepEqual(end.ended?.winners, [1, 2], 'a fallen teammate still wins with the team');
 });
 
 test('parties stay together and solo players fill the gaps', async () => {
@@ -559,7 +563,7 @@ test('running someone over hurts them; crashing into a wall at speed dents the c
   tickN(sim, 1, { interact: true });
   const ev = tickN(sim, 120, { fwd: 1, sprint: true, yaw: 0 });
   assert.ok(ev.some((e) => e.kind === 'hit' && e.victim === 2 && e.by === 1), 'the pedestrian was hit');
-  assert.ok(b.hp < 100 || !b.alive);
+  assert.ok(b.hp < PLAYER_HP || !b.alive);
   assert.ok((sim.vehicles[0]?.hp ?? 0) < 500, 'the wall hurt the car');
   assert.ok(a.alive);
 });
@@ -590,10 +594,10 @@ test('shooting a car damages it; destroying it blows up the driver', () => {
   assert.equal(sim.vehicles.length, 0, 'wrecked');
   assert.ok(ev2.some((e) => e.kind === 'boom'));
   assert.equal(a.ride, 0);
-  assert.ok(a.hp < 100 || !a.alive, 'the driver took the blast');
+  assert.ok(a.hp < PLAYER_HP || !a.alive, 'the driver took the blast');
 });
 
-test('C4: your own charge takes 100 off health, but shields save you', () => {
+test('C4: your own charge takes a full health bar, but shields save you', () => {
   for (const [shield, survives] of [[0, false], [100, true]] as const) {
     const sim = arena([1, 2]), a = sim.players.get(1)!;
     a.x = 0; a.z = 0; a.shield = shield; a.perk = { kind: 'c4', n: 2 };
@@ -676,4 +680,183 @@ test('upgrade kits and benches add damage; a molotov sets the ground on fire', (
   s2.step(DT, new Map([[1, inp({ perk: true, yaw: 0, pitch: -0.4 })]]));
   for (let i = 0; i < 90; i++) s2.step(DT, new Map());
   assert.ok(s2.effects.some((e) => e.kind === 'fire') || d.hp < 100, 'fire on the ground');
+});
+
+// duos and squads: knocked first, picked up by a teammate holding E, out when the team is down
+function teamArena(teams: [number, number][]) {
+  const sim = new Sim(1, World.custom([]));
+  sim.spawn(teams.map(([id]) => id), new Map(teams));
+  for (const p of sim.players.values()) { p.y = 0; p.gliding = false; p.grounded = true; p.fireCd = 0; p.pitch = 0; p.slots = ['ar', 'pistol', null, null]; p.mags = [30, 16, 0, 0]; p.cur = 0; }
+  return sim;
+}
+
+test('with a teammate standing you are knocked, not out; a teammate holding E picks you up', () => {
+  const sim = teamArena([[1, 1], [2, 1], [3, 3]]);
+  const [a, b, c] = [1, 2, 3].map((i) => sim.players.get(i)!);
+  a.x = 0; a.z = 0; b.x = 1; b.z = 0; c.x = 0; c.z = -10;
+  a.hp = 5;
+  // c is 10 m down -z from a; facing +z (yaw pi) aims at a
+  let knocked = false;
+  for (let i = 0; i < 20 && !knocked; i++) {
+    c.fireCd = 0;
+    if (sim.step(DT, new Map([[3, inp({ yaw: Math.PI, pitch: -0.08, fire: true, seq: 2 + i })]])).some((e) => e.kind === 'knock' && e.victim === 1)) knocked = true;
+  }
+  assert.ok(knocked, 'knocked');
+  assert.ok(a.alive && a.down > 0);
+  assert.equal(a.hp, KNOCK.hp);
+  // knocked players can't shoot
+  const before = a.mags[0];
+  sim.step(DT, new Map([[1, inp({ fire: true, seq: 99 })]]));
+  assert.equal(a.mags[0], before);
+  // b holds E next to a for 5 s
+  for (let i = 0; i < TICK_HZ * KNOCK.revive + 2; i++) sim.step(DT, new Map([[2, inp({ hold: true, seq: 100 + i })]]));
+  assert.equal(a.down, 0, 'back up');
+  assert.equal(a.hp, KNOCK.reviveHp);
+});
+
+test('a knocked player bleeds out; the last one standing going down takes the knocked with them', () => {
+  const sim = teamArena([[1, 1], [2, 1], [3, 3]]);
+  const [a, b] = [1, 2].map((i) => sim.players.get(i)!);
+  a.x = 0; a.z = 0; b.x = 30; b.z = 0;
+  (sim as unknown as { fall: (q: PlayerState, by: number | null, cause: string, ev: unknown[]) => void }).fall(a, 3, 'shot', []);
+  assert.ok(a.down > 0);
+  for (let i = 0; i < TICK_HZ * (KNOCK.bleed + 1); i++) sim.step(DT, new Map());
+  assert.equal(a.alive, false, 'bled out');
+  assert.equal(sim.players.get(3)!.kills, 1, 'the knock gets the kill');
+
+  const s2 = teamArena([[1, 1], [2, 1], [3, 3]]);
+  const [x, y] = [1, 2].map((i) => s2.players.get(i)!);
+  x.x = 0; y.x = 20;
+  const fall = (s2 as unknown as { fall: (q: PlayerState, by: number | null, cause: string, ev: unknown[]) => void }).fall.bind(s2);
+  fall(x, 3, 'shot', []);
+  assert.ok(x.alive && x.down > 0);
+  fall(y, 3, 'shot', []); // nobody left to pick anyone up
+  assert.equal(x.alive, false);
+  assert.equal(y.alive, false);
+});
+
+test('solo: no knocks, straight out', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!;
+  (sim as unknown as { fall: (q: PlayerState, by: number | null, cause: string, ev: unknown[]) => void }).fall(a, 2, 'shot', []);
+  assert.equal(a.alive, false);
+});
+
+// ---------- pot: hold requirement, hidden snapshots, candle close ----------
+class ThinPot extends MockPot { held = new Map<string, bigint>(); async holderTokens(w: string) { return { raw: this.held.get(w) ?? 0n, decimals: 6 }; } }
+
+test('the hold requirement is min(HOLD_TOKENS, $HOLD_MIN_USD) and fixed for the epoch', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pr-'));
+  let price = 0.001; // $1M market cap at 1B supply: $50 = 50K tokens
+  const ep = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000, holdMinUsd: 50 }, new MockPot(), () => EPOCH_MS * 300 + 5, () => price);
+  assert.equal(ep.requirement(), 50_000);
+  price = 0.0001; // dumps 10x: $50 would be 500K tokens, but the cap keeps it at 50K and it is fixed anyway
+  assert.equal(ep.requirement(), 50_000);
+  const ep2 = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 50_000, holdMinUsd: 50 }, new MockPot(), () => EPOCH_MS * 301 + 5, () => 0.01);
+  assert.equal(ep2.requirement(), 5_000, 'pumped 10x: $50 is 5K tokens, new players need less');
+});
+
+test('selling before a hidden snapshot voids your points; holders keep theirs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pr-'));
+  let now = EPOCH_MS * 400 + 10;
+  const pot = new ThinPot(2_000_000_000n);
+  const ep = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000, holdMinUsd: 0, payoutMode: 'prorata', rolloverBps: 0 }, pot, () => now, () => null);
+  const holder = wallet(), flipper = wallet();
+  pot.held.set(holder, 60_000n * 1_000_000n); pot.held.set(flipper, 60_000n * 1_000_000n);
+  ep.recordWin(holder, 'h', 100); ep.recordWin(flipper, 'f', 100);
+  pot.held.set(flipper, 0n); // sells
+  now = ep.snapshotTimes(400)[0] + 1;
+  await ep.check();
+  assert.ok(ep.isVoid(400, flipper));
+  assert.ok(!ep.isVoid(400, holder));
+  now = EPOCH_MS * 401 + 1;
+  await ep.check();
+  const rec = JSON.parse(readFileSync(join(dir, 'epochs', '400.json'), 'utf8'));
+  assert.equal(rec.claims.length, 1);
+  assert.equal(rec.claims[0].wallet, holder);
+  assert.equal(BigInt(rec.claims[0].lamports), 2_000_000_000n);
+});
+
+test('candle close: points scored after the random close count for the next epoch', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pr-'));
+  let now = EPOCH_MS * 500 + 10;
+  const ep = new Epochs({ ...config, dataDir: dir }, new MockPot(), () => now);
+  const close = ep.closeAt(500);
+  assert.ok(close >= EPOCH_MS * 501 - 30 * 60_000 && close < EPOCH_MS * 501, 'inside the last 30 minutes');
+  assert.equal(ep.recordWin(wallet(), 'early', 20), 500);
+  now = close + 1;
+  assert.equal(ep.recordWin(wallet(), 'late', 20), 501);
+  // the close minute is fixed by the committed secret: a restart computes the same one
+  assert.equal(new Epochs({ ...config, dataDir: dir }, new MockPot(), () => now).closeAt(500), close);
+});
+
+test('match points: win, top placement, kills (capped)', async () => {
+  const { matchPoints } = await import('../../shared/src/constants.ts');
+  assert.equal(matchPoints('solo', 1, 3, true), 115);
+  assert.equal(matchPoints('solo', 7, 2, false), 30);
+  assert.equal(matchPoints('solo', 40, 0, false), 0);
+  assert.equal(matchPoints('squad', 3, 0, false), 20, 'top 3 squads');
+  assert.equal(matchPoints('squad', 4, 0, false), 0);
+  assert.equal(matchPoints('duo', 9, 30, false), 50, 'kills cap at 10');
+});
+
+// ---------- QA sweep: every gun, every perk, every kind of crash ----------
+test('every gun in the game damages a target in front of it', () => {
+  for (const w of WEAPON_IDS) {
+    const sim = arena([1, 2]);
+    const a = sim.players.get(1)!, b = sim.players.get(2)!;
+    const d = Math.min(18, WEAPONS[w].range * 0.5);
+    a.x = 0; a.z = 0; b.x = 0; b.z = -d; b.shield = 0;
+    give(a, w);
+    let hurt = false;
+    for (let i = 0; i < TICK_HZ * 6 && !hurt; i++) {
+      sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -Math.atan2(0.7, d), fire: true, aim: true, seq: i + 1 })]]));
+      hurt = b.hp < PLAYER_HP || !b.alive;
+    }
+    assert.ok(hurt, `${w} hit nothing at ${d} m`);
+  }
+});
+
+test('every perk does something when used', () => {
+  for (const k of ['grenade', 'molotov', 'shock', 'smoke', 'launch', 'fort', 'kit', 'c4', 'nuke'] as const) {
+    const sim = arena([1]);
+    const p = sim.players.get(1)!;
+    p.perk = { kind: k, n: 2 };
+    const before = { proj: sim.projectiles.length, fx: sim.effects.length, ups: p.ups[0], builds: sim.builds.length };
+    sim.step(DT, new Map([[1, inp({ perk: true, pitch: -0.3 })]]));
+    const did = sim.projectiles.length > before.proj || sim.effects.length > before.fx || p.ups[0] > before.ups || sim.builds.length > before.builds;
+    assert.ok(did, `${k} did nothing`);
+  }
+});
+
+test('cars crash into each other: both get dented', () => {
+  const sim = garage('car'), a = sim.players.get(1)!;
+  const b2 = { ...newBody(0, 0, -40), ride: 1, grounded: true, head: Math.PI };
+  sim.vehicles.push({ id: 998, kind: 'car', hp: 500, driver: 0, last: 0, body: b2, gunCd: 0, bombCd: 0, seats: [] });
+  tickN(sim, 1, { interact: true });
+  assert.equal(a.ride, 1);
+  tickN(sim, 120, { fwd: 1, sprint: true, yaw: 0 });
+  const mine = sim.vehicles.find((v) => v.id !== 998), other = sim.vehicles.find((v) => v.id === 998);
+  assert.ok(!other || other.hp < 500, 'the parked car took the hit');
+  assert.ok(!mine || mine.hp < 500, 'and so did ours');
+});
+
+test('a plane flown into a tower wall at speed is wrecked', () => {
+  const tower = { x0: -30, y0: 0, z0: -260, x1: 30, y1: 80, z1: -250, ink: 1, kind: 'wall' as const };
+  const sim = garage('plane', [tower]), p = sim.players.get(1)!;
+  tickN(sim, 1, { interact: true });
+  let wrecked = false;
+  for (let i = 0; i < TICK_HZ * 14 && !wrecked; i++) {
+    sim.step(DT, new Map([[1, inp({ fwd: 1, sprint: true, yaw: 0, pitch: p.y > 14 ? -0.05 : 0.3, seq: i + 2 })]]));
+    wrecked = sim.vehicles.length === 0;
+  }
+  assert.ok(wrecked, `plane still flying at z=${p.z.toFixed(0)} y=${p.y.toFixed(0)}`);
+});
+
+test('a helicopter flown fast into a wall gets dented', () => {
+  const sim = garage('heli', [{ x0: -30, y0: 0, z0: -120, x1: 30, y1: 60, z1: -110, ink: 1, kind: 'wall' }]), p = sim.players.get(1)!;
+  tickN(sim, 1, { interact: true });
+  const v = sim.vehicles[0], hp = v.hp;
+  for (let i = 0; i < TICK_HZ * 10 && sim.vehicles.includes(v) && v.hp === hp; i++) sim.step(DT, new Map([[1, inp({ fwd: 1, sprint: true, yaw: 0, up: p.y < 8 ? 1 : 0, seq: i + 2 })]]));
+  assert.ok(!sim.vehicles.includes(v) || v.hp < hp, `no damage (z=${p.z.toFixed(0)})`);
 });

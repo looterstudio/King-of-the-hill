@@ -13,7 +13,11 @@ export interface PotView {
   commit: string;            // sha256(secret) published at epoch start (draw mode)
   online: number;
   rooms: number;
-  tickets: { name: string; wallet: string; wins: number }[]; // top of the epoch
+  tickets: { name: string; wallet: string; wins: number }[]; // top of the epoch, by points
+  closeFrom: number;         // scoring closes at a random minute between this and epochEndMs
+  holdTokens: number;        // tokens a wallet must hold this epoch to keep its points
+  symbol: string;
+  solUsd: number | null;     // to show the pot in dollars
 }
 
 export interface InflowView { lamports: string; at: number; source: string }
@@ -34,11 +38,13 @@ export interface SnapSelf extends Body {
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; spin: number; ack: number; kills: number; vhp: number; rideV: number; // vhp: your vehicle's health, 0 on foot
+  reviveT: number;   // knocked: how far a teammate has got picking you up (s)
+  reviving: number;  // you are picking up a teammate: progress (s), 0 when not
 }
 // everyone else within VIEW_RANGE, compact: [id, x, y, z, yaw, pitch, hp, flags, weaponIdx, gx?, gy?, gz?]
 // flags: 1 alive, 2 sliding, 4 grappling (anchor appended), 8 gliding, 16 healing; weaponIdx into WEAPON_IDS, -1 none
 export type SnapOther = number[];
-export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32;
+export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64;
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
 export type SnapVehicle = number[];
 // loot on the floor near you: [id, x, y, z, kind (0 weapon, 1 item, 2 perk), what, n]
@@ -57,7 +63,7 @@ export interface LobbyRoom { id: string; mode: Mode; n: number; state: RoomPhase
 
 export type ServerMsg =
   | { t: 'hello'; nonce: string; requireWallet: boolean; allowGuests: boolean; holdMinUsd: number }
-  | { t: 'authed'; name: string; wallet: string | null; num: string }
+  | { t: 'authed'; name: string; wallet: string | null; num: string; eligible?: string | null } // eligible: null = scores points, else why not
   | { t: 'error'; msg: string }
   | { t: 'pot'; pot: PotView }
   | { t: 'inflow'; inflow: InflowView }
@@ -65,9 +71,11 @@ export type ServerMsg =
   | { t: 'queued'; position: number }
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number; mode: Mode }
   | { t: 'lobby'; rooms: LobbyRoom[] }
-  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; watch: number; fx: SnapFx[]; veh: SnapVehicle[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
+  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; board?: number[][]; watch: number; fx: SnapFx[]; veh: SnapVehicle[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills], board = top teams [team, kills, alive, best player] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom' | 'ram'; left: number; head: boolean }
   | { t: 'event'; kind: 'vhit'; vehicle: number; by: number; dmg: number }
+  | { t: 'event'; kind: 'knock'; victim: number; by: number | null; head: boolean }
+  | { t: 'event'; kind: 'revive'; victim: number; by: number }
   | { t: 'event'; kind: 'drop'; x: number; z: number; landed: boolean }
   | { t: 'event'; kind: 'upgrade'; by: number; level: number }
   | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
@@ -76,7 +84,7 @@ export type ServerMsg =
   | { t: 'event'; kind: 'unbuild'; id: number }
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { t: 'event'; kind: 'open'; caseId: number; by: number; golden: boolean }
-  | { t: 'result'; winner: number | null; winners: number[]; tickets: number; ticketAwarded: boolean; epoch: number };
+  | { t: 'result'; winner: number | null; winners: number[]; points: Record<number, number>; awarded: boolean; epoch: number }; // points: what each player scored
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
 

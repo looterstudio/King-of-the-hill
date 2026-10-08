@@ -40,7 +40,7 @@ export class MockPot extends EventEmitter implements PotSource {
   stop() { if (this.timer) clearTimeout(this.timer); }
   balance() { return this.lamports; }
   markPaid(l: bigint) { this.lamports -= l; }
-  async holderTokens(): Promise<Holding> { return { raw: 1n << 62n, decimals: 6 }; }
+  async holderTokens(_wallet?: string): Promise<Holding> { return { raw: 1n << 62n, decimals: 6 }; }
 }
 
 // Production: poll the vault over JSON-RPC. No @solana/web3.js dependency; two calls is all we need.

@@ -5,9 +5,18 @@ Glide in, loot guns, shields and perks off the floor and out of pencil cases, an
 the King's Tower in the middle of the island: the final circle always closes on it. Ten guns from
 common to legendary (the SCAR and a one-shot Heavy Sniper are the prizes), shields and medkits, and
 five perks: grenades, smoke, launch pads, instant forts and, for the luckiest, an atomic bomb you
-can drop anywhere on the map. Play **solo, duos or squads**; the last player (or team) standing
-wins tickets, and the token's trading fees fill one shared pot that pays out to the winners every
-6 hours (00/06/12/18 UTC).
+can drop anywhere on the map. Play **solo, duos or squads**; every match scores points (a win, a
+top-10 finish, kills), and the token's trading fees fill one shared pot that is split by points
+every 6 hours (00/06/12/18 UTC).
+
+- **Fights that last.** 250 health + 250 shield. Guns keep their damage, so an assault rifle needs
+  a full magazine (about 3 s) instead of one second; explosives, fire, rams and the storm scale with
+  health. A Heavy Sniper headshot still drops anyone. Hit an enemy and their health bar shows over
+  their head for two seconds; damage numbers, headshot and kill markers on every hit.
+- **Knocked, not out.** In duos and squads, zero health knocks you down while a teammate is still
+  standing: you crawl, bleed out in 30 s, and a teammate holding `E` next to you for 5 s brings you
+  back at 75 health. When nobody on the team is left standing, the knocked are out. A kill board
+  shows the top teams by kills all match.
 
 - **The island.** 800 × 800 m, 23 named places, a snowfield across the north and a desert in the
   south-east. New: The Spire (a 30-floor skyscraper with a helipad), Mount Doodle, Snowpeak and
@@ -32,11 +41,11 @@ wins tickets, and the token's trading fees fill one shared pot that pays out to 
   atomic bomb. Upgrade benches and kits add up to three stars (+66% damage) to a gun.
 - **Squads in vehicles.** Teammates ride along as passengers (3 in cars and helicopters, 1 in a
   plane) and shoot out of the windows; bail out of an aircraft and your glider opens.
-- **C4 and supply drops.** C4 sticks where it lands and goes off on the second press: 100 damage
-  inside 2.5 m, your own included, so you survive your charge only with shields up. Every time the
+- **C4 and supply drops.** C4 sticks where it lands and goes off on the second press: a full
+  health bar (250) inside 2.5 m, your own included, so you survive your charge only with shields up. Every time the
   storm moves, a balloon crate drops into the next circle with a legendary gun, C4 or a nuke.
-- **Modes.** Solo win = 4 tickets, duo win = 2 each, squad win = 1 each, so every mode is worth the
-  same per player on average. Friends type the same **party code** to drop on one team; empty spots
+- **Modes and points.** A win is 100 points solo, 50 each in duos, 25 each in squads (the same per
+  match on average); a top-10 finish (top 5 duos, top 3 squads) is +20 and every kill +5 (up to 10). Friends type the same **party code** to drop on one team; empty spots
   are filled. No friendly fire; teammates are marked through walls and always on the minimap.
 - **Rooms.** The lobby lists every room filling or live, with a join button. Up to 5 rooms fill at
   once (`OPEN_ROOMS`), 10 full matches run per process (`MAX_ROOMS`), spread over worker threads.
@@ -45,7 +54,7 @@ wins tickets, and the token's trading fees fill one shared pot that pays out to 
 - **Anti-cheat.** The server is the authority for movement, fire rate, damage and loot. On top:
   replayed inputs are dropped, aimbot patterns (snap-to-target hits, absurd headshot rates) flag the
   player, and enemies you have no line of sight to beyond 40 m are never sent to your client, so a
-  wallhack has nothing to draw. Flagged players earn no tickets and land in `data/flags.jsonl`
+  wallhack has nothing to draw. Flagged players earn no points and land in `data/flags.jsonl`
   (`GET /api/admin/flags` with `ADMIN_TOKEN`).
 
 The look and feel follow the ballpoint-shooter and classic battle-royale genres; all code here is
@@ -83,15 +92,21 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 
 1. Token fees (pump.fun creator fees, or a Token-2022 transfer fee swapped to SOL) are swept into the
    `vault` PDA of `programs/pot_vault`.
-2. Players sign in with Phantom (signed nonce, verified with ed25519 on the server) and must hold
-   **$50 worth of the token** (`HOLD_MIN_USD`). Value = balance × the **15-minute median** Jupiter
-   price, so pumping the price for a block does not let a small wallet in. The check runs at login
-   **and on every room join**, so selling after signing in doesn't keep you playing. If the price
-   feed is down, new joins are refused (fail closed). Guests can't play when a hold is required.
-3. Winning a match is worth tickets (solo 4, duo 2 each, squad 1 each). A ticket only counts if the match started with at least
-   `MIN_VERIFIED_FOR_TICKET` distinct wallets, so a handful of your own wallets can't farm a near-empty match.
+2. **Anyone can play** (guests too). Points for the pot go to wallets that sign in with Phantom (signed
+   nonce, verified with ed25519) and **hold the epoch's requirement**: `min(HOLD_TOKENS, $HOLD_MIN_USD)`
+   worth of the token, priced at the **one-hour median** and fixed in tokens when the epoch starts.
+   A price drop never pushes a holder out mid-epoch (the 50K cap), a pump never prices new players
+   out (the $50 side).
+3. **No buying 5 minutes before the payout.** The server checks every scoring wallet's balance at
+   six secret moments in the epoch and again at the close; below the requirement at any of them and
+   that wallet's points for the epoch are void (`data/voids.jsonl`). Scoring itself closes at a
+   random minute inside the last 30 (a candle close), so nobody can time the end; points after it
+   count for the next epoch. Snapshot times and the close minute derive from the epoch secret, whose
+   hash is published at epoch start and which is revealed at settlement, so anyone can check them.
+   Points only count if the match started with at least `MIN_VERIFIED_FOR_TICKET` distinct wallets,
+   so a handful of your own wallets can't farm a near-empty match.
 4. At the 6h boundary the server takes a snapshot of the free vault balance, keeps `ROLLOVER_BPS` (10%) to start
-   the next pot, splits the rest (`PAYOUT_MODE=prorata` by tickets, or `draw` with weighted 60/25/15
+   the next pot, splits the rest (`PAYOUT_MODE=prorata` by points, or `draw` with weighted 60/25/15
    tiers seeded by commit-reveal), and writes `data/epochs/<epoch>.json` with a merkle root and a proof per winner.
 5. The authority (your Squads multisig) posts `settle_epoch(root, total, count)` on chain. Winners call `claim` with their proof.
    The program never lets the authority pay out more than the free balance, settle an epoch early or twice,
@@ -105,7 +120,9 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 | `SOLANA_RPC_URL` | mainnet | use a paid RPC in production |
 | `VAULT_ADDRESS` / `CONFIG_ADDRESS` | | PDAs of the vault program |
 | `TOKEN_MINT` | | the game's coin (required when `HOLD_MIN_USD` > 0) |
-| `HOLD_MIN_USD` | `50` | USD of the token needed to play |
+| `HOLD_MIN_USD` | `50` | USD side of the hold requirement for scoring points |
+| `HOLD_TOKENS` | `50000` | token side: the requirement never exceeds this many tokens |
+| `TOKEN_SYMBOL` | `KING` | shown in the lobby |
 | `PRICE_URL` | Jupiter price v3 | mint is appended to it |
 | `REQUIRE_WALLET` / `ALLOW_GUESTS` | `false` / `true` | set `true` / `false` in production |
 | `MIN_VERIFIED_FOR_TICKET` | 4 with wallets, 1 in dev | anti-farm floor |

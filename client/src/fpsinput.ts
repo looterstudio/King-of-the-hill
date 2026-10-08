@@ -91,7 +91,7 @@ export class FpsInput {
       grapple: !!k('KeyQ'),
       jump: this.latched.jump, slide: this.latched.slide, reload: this.latched.reload, slot: this.latched.slot,
       up: k('Space') - (k('KeyC') || k('ControlLeft') ? 1 : 0), // held: helicopter climb / descend
-      interact: this.latched.interact, perk: this.latched.perk, item: this.latched.item,
+      interact: this.latched.interact, perk: this.latched.perk, item: this.latched.item, hold: !!k('KeyE'),
       fire: this.fire, aim: this.aim, yaw: this.yaw, pitch: this.pitch,
     };
     this.latched = { jump: false, slide: false, reload: false, slot: 0, interact: false, perk: false, item: 0 };

@@ -13,6 +13,13 @@ export const MODES: Record<Mode, { name: string; size: number; tickets: number }
   duo: { name: 'Duos', size: 2, tickets: 2 },
   squad: { name: 'Squads', size: 4, tickets: 1 },
 };
+// points for the pot, every match: a win, or a top placement (top 10 players: top 10 in solo,
+// top 5 duos, top 3 squads), plus kills. Payouts split the pot by points.
+export const POINTS = { win: { solo: 100, duo: 50, squad: 25 } as Record<Mode, number>, top: 20, kill: 5, killCap: 10 };
+export const topPlaces = (mode: Mode) => Math.ceil(10 / MODES[mode].size);
+export function matchPoints(mode: Mode, place: number, kills: number, won: boolean) {
+  return (won ? POINTS.win[mode] : place > 0 && place <= topPlaces(mode) ? POINTS.top : 0) + Math.min(kills, POINTS.killCap) * POINTS.kill;
+}
 export const OPEN_ROOMS = 5;          // rooms filling at the same time, across modes
 export const ROOM_MIN = 2;            // a room starts with fewer than 10 once the fill timer runs out
 export const FILL_WAIT_MS = 45_000;   // how long a room waits for more players after the 2nd joins
@@ -31,8 +38,16 @@ export const WALK_SPEED = 6.2;
 export const SPRINT_SPEED = 8.6;
 export const JUMP_V = 7.6;
 export const STEP_H = 0.55;             // stairs and curbs are climbed without jumping
-export const PLAYER_HP = 100;
+// 250 health + 250 shield: guns keep their damage, so fights last ~2.5x longer than at 100/100
+// (an assault rifle needs a full mag, about 3 s); explosives, fire, rams and the storm scale up
+// with health so they keep their bite
+export const PLAYER_HP = 250;
+export const LIFE_SCALE = 2.5;
 export const HEADSHOT_MULT = 1.8;
+// duos and squads: at 0 health you are knocked, not out, while a teammate is still standing.
+// You crawl, bleed out in 30 s, and a teammate holding E next to you for 5 s brings you back.
+// If nobody on your team is left standing, everyone knocked is out.
+export const KNOCK = { hp: 100, bleed: 30, revive: 5, reach: 2.2, reviveHp: 75, crawl: 1.9, eye: 0.55 };
 export const REWIND_MAX_TICKS = 9;      // lag compensation looks back at most 300 ms
 export const VIEW_RANGE = 170;          // players farther than this are not sent to you
 
@@ -40,14 +55,14 @@ export const VIEW_RANGE = 170;          // players farther than this are not sen
 export interface RingPhase { wait: number; shrink: number; radius: number; dps: number }
 export const RING_START_R = 580;        // covers the corners of the island
 export const RING_PHASES: RingPhase[] = [
-  { wait: 60, shrink: 70, radius: 330, dps: 2 },
-  { wait: 45, shrink: 55, radius: 190, dps: 4 },
-  { wait: 35, shrink: 40, radius: 105, dps: 7 },
-  { wait: 25, shrink: 30, radius: 55, dps: 11 },
-  { wait: 20, shrink: 25, radius: 25, dps: 16 },
-  { wait: 12, shrink: 18, radius: 0, dps: 28 },
+  { wait: 60, shrink: 70, radius: 330, dps: 5 },
+  { wait: 45, shrink: 55, radius: 190, dps: 10 },
+  { wait: 35, shrink: 40, radius: 105, dps: 18 },
+  { wait: 25, shrink: 30, radius: 55, dps: 28 },
+  { wait: 20, shrink: 25, radius: 25, dps: 40 },
+  { wait: 12, shrink: 18, radius: 0, dps: 70 },
 ];
-export const RING_DPS_START = 1;
+export const RING_DPS_START = 2.5;
 
 // ---- loot ----
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
@@ -70,9 +85,9 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, auto: false, headMult: 2 },
   minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.2, auto: true, spinUp: 0.7 },
   scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.75, auto: true },
-  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 210, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
-  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.4, auto: false, proj: 'rocket' },
-  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.8, auto: false, proj: 'missile' },
+  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 300, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
+  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 285, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.4, auto: false, proj: 'rocket' },
+  stinger: { name: 'Stinger', rarity: 'rare', dmg: 500, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.8, auto: false, proj: 'missile' },
 };
 // rockets fly straight and blow up on whatever they touch; Stinger missiles lock onto the nearest
 // helicopter or plane in front of you and chase it
@@ -80,15 +95,15 @@ export const ROCKET = { speed: 58, radius: 6, life: 7 };
 export const MISSILE = { speed: 64, turn: 2.6, cone: 0.45, range: 420, radius: 5, life: 8 };
 // weapon upgrades: each level adds damage; benches upgrade once per player, kits anywhere
 export const UPGRADE = { max: 3, perLevel: 0.22, benchReach: 2.4 };
-export const MOLOTOV = { radius: 4.5, life: 7, dps: 15 };
+export const MOLOTOV = { radius: 4.5, life: 7, dps: 38 };
 export const SHOCK = { radius: 7, push: 22, fuse: 1.4 };
 export const SLOTS = 4;
 
 export type ItemId = 'mini' | 'big' | 'med';
 export const ITEMS: Record<ItemId, { name: string; rarity: Rarity; use: number; max: number; shield?: number; shieldCap?: number; heal?: number }> = {
-  mini: { name: 'Mini Shield', rarity: 'uncommon', use: 1.0, max: 6, shield: 25, shieldCap: 50 },
-  big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 50, shieldCap: 100 },
-  med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 100 },
+  mini: { name: 'Mini Shield', rarity: 'uncommon', use: 1.0, max: 6, shield: 60, shieldCap: 125 },
+  big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 125, shieldCap: 250 },
+  med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 250 },
 };
 export type PerkId = 'grenade' | 'molotov' | 'shock' | 'smoke' | 'launch' | 'fort' | 'kit' | 'c4' | 'nuke';
 export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number }> = {
@@ -102,16 +117,17 @@ export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number
   c4: { name: 'C4', rarity: 'epic', count: 2 },
   nuke: { name: 'Atomic Bomb', rarity: 'legendary', count: 1 },
 };
-export const SHIELD_MAX = 100;
-export const GRENADE = { fuse: 2.2, radius: 7, dmg: 105, speed: 19 };
+export const SHIELD_MAX = 250;
+export const GRENADE = { fuse: 2.2, radius: 7, dmg: 260, speed: 19 };
 export const SMOKE = { radius: 7, life: 12 };
 export const PAD = { life: 30, launch: 24 };
 export const FORT = { life: 30, size: 2.2, height: 1.8 };
-export const NUKE = { delay: 6, radius: 26, dmg: 400, range: 450 };
+export const NUKE = { delay: 6, radius: 26, dmg: 1000, range: 450 };
 export const INTERACT_R = 2.3;
-// C4: throw it (it sticks where it lands), press again to set it off. Up to 100 damage, walls
-// block it, shields soak it first: with shields up you survive your own charge, without you don't.
-export const C4 = { radius: 7, dmg: 100, speed: 15, core: 2.5 };
+// C4: throw it (it sticks where it lands), press again to set it off. Up to 250 damage (a full
+// health bar), walls block it, shields soak it first: with shields up you survive your own
+// charge, without you don't.
+export const C4 = { radius: 7, dmg: 250, speed: 15, core: 2.5 };
 // supply drops: a crate on a balloon falls into the next circle every time the storm moves
 export const SUPPLY = { height: 110, fall: 7 };
 
@@ -125,12 +141,12 @@ export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number
   heli: { name: 'Helicopter', hp: 650, r: 2.3, h: 2.6, top: 25, boost: 32, accel: 14, reach: 4.2, seats: 3 },
   plane: { name: 'Plane', hp: 350, r: 2.4, h: 1.8, top: 46, boost: 62, accel: 11, reach: 4.6, seats: 1 },
 };
-export const RAM = { minSpeed: 7, dmgPerMs: 4.2, cooldown: 0.6 };      // running people over
+export const RAM = { minSpeed: 7, dmgPerMs: 10.5, cooldown: 0.6 };      // running people over
 export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle
-export const VEH_BOOM = { radius: 7.5, dmg: 110 };                     // a wrecked vehicle explodes
+export const VEH_BOOM = { radius: 7.5, dmg: 275 };                     // a wrecked vehicle explodes
 export const HELI_GUN = { dmg: 14, cd: 0.09, range: 170, spread: 0.028 };
 export const PLANE_GUN = { dmg: 12, cd: 0.07, range: 200, spread: 0.02 };
-export const BOMB = { radius: 8, dmg: 125, cd: 2.5 };
+export const BOMB = { radius: 8, dmg: 310, cd: 2.5 };
 
 // economy
 export const EPOCH_MS = 6 * 60 * 60 * 1000; // pot draws every 6h, aligned to 00/06/12/18 UTC

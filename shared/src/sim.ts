@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  BOMB, C4, CRASH, HELI_GUN, MAP_HALF, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  BOMB, C4, CRASH, KNOCK, LIFE_SCALE, HELI_GUN, MAP_HALF, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -29,6 +29,7 @@ export interface PlayerState extends Body {
   use: { item: ItemId; t: number } | null;
   reloadT: number; fireCd: number; spin: number; burstLeft: number; burstT: number;
   kills: number; ack: number; team: number; rideV: number; // id of the vehicle you are in, 0 on foot
+  downBy: number | null; reviveT: number; reviver: number; // knocked: who did it, revive progress, by whom
 }
 export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
@@ -36,11 +37,14 @@ export interface Input {
   fire: boolean; aim: boolean; reload: boolean; slot: number; view: number;
   interact: boolean; item: number; perk: boolean; // item: 1 = best shield, 2 = medkit
   up: number; // helicopter climb (+1) / descend (-1)
+  hold: boolean; // E held down: reviving a knocked teammate
 }
 export interface Ring { x: number; y: number; r: number; nx: number; ny: number; nr: number; phase: number; closing: boolean; dps: number; nextAt: number }
 export interface Shot { ox: number; oy: number; oz: number; ex: number; ey: number; ez: number; by: number; hit: boolean }
 export type ElimCause = 'shot' | 'ring' | 'left' | 'boom' | 'ram';
 export type SimEvent =
+  | { kind: 'knock'; victim: number; by: number | null; head: boolean }
+  | { kind: 'revive'; victim: number; by: number }
   | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { kind: 'elim'; victim: number; by: number | null; cause: ElimCause; head: boolean }
   | { kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
@@ -52,7 +56,7 @@ export type SimEvent =
   | { kind: 'drop'; x: number; z: number; landed: boolean }
   | { kind: 'upgrade'; by: number; level: number };
 
-export const emptyInput = (): Input => ({ seq: 0, fwd: 0, strafe: 0, yaw: 0, pitch: 0, jump: false, sprint: false, slide: false, grapple: false, fire: false, aim: false, reload: false, slot: 0, view: 0, interact: false, item: 0, perk: false, up: 0 });
+export const emptyInput = (): Input => ({ seq: 0, fwd: 0, strafe: 0, yaw: 0, pitch: 0, jump: false, sprint: false, slide: false, grapple: false, fire: false, aim: false, reload: false, slot: 0, view: 0, interact: false, item: 0, perk: false, up: 0, hold: false });
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const finite = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -66,7 +70,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
     fire: raw?.fire === true, aim: raw?.aim === true, reload: raw?.reload === true,
     slot: clamp(Math.floor(finite(raw?.slot)), 0, SLOTS), view: Math.floor(finite(raw?.view)),
     interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 2), perk: raw?.perk === true,
-    up: clamp(finite(raw?.up), -1, 1),
+    up: clamp(finite(raw?.up), -1, 1), hold: raw?.hold === true,
   };
 }
 
@@ -74,6 +78,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
   if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
   if (p.ride) return moveVehicle(w, p, inp, dt, GRAVITY);
+  if (p.down > 0) { moveBody(w, p, { ...inp, jump: false, sprint: false, slide: false, grapple: false }, dt, GRAVITY, KNOCK.crawl, KNOCK.crawl, 0); return 0; }
   moveBody(w, p, { ...inp, sprint: inp.sprint && !inp.aim && !using }, dt, GRAVITY, inp.aim || using ? WALK_SPEED * 0.55 : WALK_SPEED, SPRINT_SPEED, JUMP_V);
   return 0;
 };
@@ -205,6 +210,7 @@ export class Sim {
         slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
+        downBy: null, reviveT: 0, reviver: 0,
       });
     });
   }
@@ -219,7 +225,8 @@ export class Sim {
     const p = this.players.get(id);
     if (!p || !p.alive) return;
     if (p.rideV) this.exitVehicle(p);
-    p.alive = false; p.hp = 0; p.shield = 0;
+    if (p.down > 0 && by === null) by = p.downBy; // bled out or finished by the storm: the knock gets the kill
+    p.alive = false; p.hp = 0; p.shield = 0; p.down = 0;
     if (by !== null && by !== id) { const k = this.players.get(by); if (k) k.kills++; }
     // everything they carried spills on the floor in a little ring
     const gy = this.world.groundAt(p.x, p.z, p.y + 0.1);
@@ -233,7 +240,44 @@ export class Sim {
       if (k === 'perk') this.loot[this.loot.length - 1].n = n;
     });
     ev.push({ kind: 'elim', victim: id, by, cause, head });
+    // nobody left standing on the team: the knocked are out too
+    if (!this.standing(p.team)) for (const q of this.players.values()) if (q.alive && q.team === p.team) this.eliminate(q.id, q.downBy, 'shot', ev);
   }
+
+  // anyone on the team still on their feet
+  private standing(team: number, except = 0) { for (const q of this.players.values()) if (q.alive && q.down === 0 && q.team === team && q.id !== except) return true; return false; }
+
+  // health ran out: knocked if a teammate can still pick you up, otherwise out
+  private fall(q: PlayerState, by: number | null, cause: ElimCause, ev: SimEvent[], head = false) {
+    if (!q.alive) return;
+    if (q.down === 0 && this.standing(q.team, q.id)) {
+      if (q.rideV) this.exitVehicle(q);
+      Object.assign(q, { down: KNOCK.bleed, hp: KNOCK.hp, shield: 0, downBy: by === q.id ? null : by, reviveT: 0, reviver: 0, use: null, hook: false, slideT: 0, reloadT: 0, burstLeft: 0, spin: 0 });
+      ev.push({ kind: 'knock', victim: q.id, by: q.downBy, head });
+      return;
+    }
+    this.eliminate(q.id, by, cause, ev, head);
+  }
+
+  // teammates holding E next to a knocked player bring them back up
+  private stepRevives(dt: number, inputs: Map<number, Input>, ev: SimEvent[]) {
+    this.reviving.clear();
+    for (const p of this.players.values()) {
+      if (!p.alive || p.down === 0) continue;
+      let by = 0;
+      for (const q of this.players.values()) {
+        if (!q.alive || q.down > 0 || q.team !== p.team || q.id === p.id || q.ride || q.gliding || !inputs.get(q.id)?.hold) continue;
+        if (Math.hypot(q.x - p.x, q.z - p.z) < KNOCK.reach && Math.abs(q.y - p.y) < 1.6) { by = q.id; break; }
+      }
+      if (!by) { p.reviveT = 0; p.reviver = 0; continue; }
+      p.reviver = by; p.reviveT += dt; this.reviving.add(by);
+      if (p.reviveT >= KNOCK.revive) {
+        Object.assign(p, { down: 0, hp: KNOCK.reviveHp, shield: 0, downBy: null, reviveT: 0, reviver: 0 });
+        ev.push({ kind: 'revive', victim: p.id, by });
+      }
+    }
+  }
+  private reviving = new Set<number>();
 
   private stepRing() {
     const ring = this.ring, phase = RING_PHASES[ring.phase];
@@ -329,7 +373,7 @@ export class Sim {
       const dmg = Math.round(dmgAt(t, hit.head));
       const h = this.hurt(hit.q, dmg);
       ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg, head: hit.head, ...h });
-      if (hit.q.hp <= 0) this.eliminate(hit.q.id, p.id, 'shot', ev, hit.head);
+      if (hit.q.hp <= 0) this.fall(hit.q, p.id, 'shot', ev, hit.head);
     }
   }
 
@@ -457,7 +501,7 @@ export class Sim {
         const h = this.hurt(q, dmg);
         if (by && by !== q.id) ev.push({ kind: 'hit', victim: q.id, by, dmg, head: false, ...h });
         q.vx += b.vx * 0.7; q.vz += b.vz * 0.7; q.vy = 7; q.grounded = false; q.gliding = false;
-        if (q.hp <= 0) this.eliminate(q.id, by && by !== q.id ? by : null, 'ram', ev);
+        if (q.hp <= 0) this.fall(q, by && by !== q.id ? by : null, 'ram', ev);
       }
     }
     // vehicles hitting each other: both get dented, the faster the worse
@@ -481,7 +525,7 @@ export class Sim {
     const team = this.players.get(owner)?.team;
     for (const v of [...this.vehicles]) {
       const b = v.body, d = Math.hypot(b.x - x, b.y + 1 - y, b.z - z);
-      if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * 1.3 * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
+      if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * (1.3 / LIFE_SCALE) * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
     }
     for (const q of this.players.values()) {
       if (!q.alive || (q.id !== owner && q.team === team) || (q.ride >= 2 && !q.seat)) continue; // pilots: the aircraft takes it
@@ -494,7 +538,7 @@ export class Sim {
       const amount = Math.round(dmg * (nuke || d <= core ? 1 : 1 - ((d - core) / (radius - core)) * 0.7));
       const h = this.hurt(q, amount);
       if (owner !== q.id) ev.push({ kind: 'hit', victim: q.id, by: owner, dmg: amount, head: false, ...h });
-      if (q.hp <= 0) this.eliminate(q.id, owner, 'boom', ev);
+      if (q.hp <= 0) this.fall(q, owner, 'boom', ev);
     }
   }
 
@@ -552,6 +596,7 @@ export class Sim {
 
   private interact(p: PlayerState, ev: SimEvent[]) {
     if (p.rideV) { this.exitVehicle(p); return; }
+    for (const q of this.players.values()) if (q.alive && q.down > 0 && q.team === p.team && q.id !== p.id && Math.hypot(q.x - p.x, q.z - p.z) < KNOCK.reach) return; // E is for reviving
     // open the nearest pencil case, otherwise swap for the nearest gun on the floor
     let best: Case | null = null, bd = INTERACT_R;
     for (const c of this.cases) { if (c.open || Math.abs(c.y - p.y) > 1.6) continue; const d = Math.hypot(c.x - p.x, c.z - p.z); if (d < bd) { bd = d; best = c; } }
@@ -734,7 +779,7 @@ export class Sim {
           if (Math.hypot(q.x - e.x, q.z - e.z) > MOLOTOV.radius || Math.abs(q.y - e.y) > 2.5) continue;
           const dmg = Math.round(MOLOTOV.dps / 3), h = this.hurt(q, dmg);
           if (q.id !== e.owner) ev.push({ kind: 'hit', victim: q.id, by: e.owner, dmg, head: false, ...h });
-          if (q.hp <= 0) this.eliminate(q.id, q.id === e.owner ? null : e.owner, 'boom', ev);
+          if (q.hp <= 0) this.fall(q, q.id === e.owner ? null : e.owner, 'boom', ev);
         }
       }
       if (e.kind === 'pad') for (const p of this.players.values()) {
@@ -756,6 +801,7 @@ export class Sim {
     const ring = this.ring;
     // supply drops: one a minute in, then one every time the storm moves on
     if (this.pendingDrop || (this.tick === Math.round(60 / dt))) { this.pendingDrop = false; this.supplyDrop(ev); }
+    this.stepRevives(dt, inputs, ev);
 
     for (const p of this.players.values()) {
       if (!p.alive) continue;
@@ -764,6 +810,12 @@ export class Sim {
       p.yaw = inp.yaw; p.pitch = inp.pitch;
       p.fireCd = Math.max(0, p.fireCd - dt);
       p.burstT = Math.max(0, p.burstT - dt);
+      if (p.down > 0) { // knocked: crawl, bleed, nothing else
+        moveStep(this.world, p, inp, dt);
+        if ((p.down -= dt) <= 0) { p.down = 0.001; this.eliminate(p.id, p.downBy, 'shot', ev); continue; }
+        if (Math.hypot(p.x - ring.x, p.z - ring.y) > ring.r) { this.hurt(p, ring.dps * dt, true); if (p.hp <= 0) this.fall(p, null, 'ring', ev); }
+        continue;
+      }
 
       if (inp.slot >= 1 && inp.slot <= SLOTS && p.slots[inp.slot - 1] && inp.slot - 1 !== p.cur) {
         p.cur = inp.slot - 1; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.fireCd = Math.max(p.fireCd, 0.25);
@@ -805,7 +857,7 @@ export class Sim {
       if (!p.alive) continue;
 
       // on foot, or leaning out of a car window (drive-by); never from inside an aircraft
-      if (w && !p.gliding && p.reloadT === 0 && !p.use && (p.ride <= 1 || p.seat > 0)) {
+      if (w && !p.gliding && p.reloadT === 0 && !p.use && !this.reviving.has(p.id) && (p.ride <= 1 || p.seat > 0)) {
         const def = WEAPONS[w];
         if (def.spinUp) p.spin = inp.fire ? Math.min(def.spinUp, p.spin + dt) : Math.max(0, p.spin - dt * 2);
         const spunUp = !def.spinUp || p.spin >= def.spinUp;
@@ -820,7 +872,7 @@ export class Sim {
 
       if (Math.hypot(p.x - ring.x, p.z - ring.y) > ring.r) {
         this.hurt(p, ring.dps * dt, true);
-        if (p.hp <= 0) this.eliminate(p.id, null, 'ring', ev);
+        if (p.hp <= 0) this.fall(p, null, 'ring', ev);
       }
     }
 

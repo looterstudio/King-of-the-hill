@@ -8,7 +8,8 @@ import { Watchdog, type Flag } from './anticheat.ts';
 
 // targets: 'all' = everyone still in the match; otherwise player ids. drop = may be skipped for a slow client
 export interface Send { to: 'all' | number[]; json: string; drop?: boolean }
-export interface Outbound { roomId: string; sends: Send[]; ended?: { winners: number[] }; flags?: Flag[] }
+// ended.places: id -> [team placement (1 = won), kills]
+export interface Outbound { roomId: string; sends: Send[]; ended?: { winners: number[]; places: Record<number, [number, number]> }; flags?: Flag[] }
 export interface SpecRequest { dir?: 1 | -1; target?: number; at?: [number, number] | null }
 
 // anti-wallhack: enemies farther than this are only sent while there is a line of sight to them
@@ -43,6 +44,7 @@ export class Match {
   private rays = 0;
   private startedAt: number;
   private teamSize: number;
+  private teamPlace = new Map<number, number>(); // team -> where it finished (set when its last member is out)
   ended = false;
 
   constructor(public roomId: string, seed: number, ids: number[], now: number, teams?: Record<number, number>) {
@@ -106,6 +108,8 @@ export class Match {
         for (const [k, v] of this.watching) if (v === e.victim) this.watching.set(k, this.mateOf(k) ?? next);
         this.watching.set(e.victim, next);
         out.push({ to: 'all', json: JSON.stringify({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive, head: e.head }) });
+        const team = this.sim.players.get(e.victim)?.team, alive = this.sim.teamsAlive;
+        if (team !== undefined && !alive.has(team) && !this.teamPlace.has(team)) this.teamPlace.set(team, alive.size + 1);
       } else if (e.kind === 'hit') {
         this.watchdog.hit(e.by, e.head, this.sim.tick);
         out.push({ to: [e.victim, e.by], json: JSON.stringify({ t: 'event', ...e }) }); // only the two involved care
@@ -182,7 +186,12 @@ export class Match {
     if (teams.size <= 1 || now - this.startedAt > ROUND_MAX_MS) {
       this.snapshot(out);
       this.ended = true;
-      return { roomId: this.roomId, sends: out, ended: { winners: this.winners(teams) }, flags };
+      const winners = this.winners(teams), wonTeam = winners.length ? this.sim.players.get(winners[0])?.team : undefined;
+      // teams still standing at the time cap share second place behind the winner
+      for (const t of teams) if (!this.teamPlace.has(t)) this.teamPlace.set(t, t === wonTeam ? 1 : 2);
+      const places: Record<number, [number, number]> = {};
+      for (const p of this.sim.players.values()) places[p.id] = [this.teamPlace.get(p.team) ?? 0, p.kills];
+      return { roomId: this.roomId, sends: out, ended: { winners, places }, flags };
     }
     return { roomId: this.roomId, sends: out, flags };
   }

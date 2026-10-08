@@ -3,8 +3,8 @@
 // server, interpolates everyone else 100 ms in the past, and draws it all through InkRenderer:
 // players, loot, pencil cases, grenades, smoke, pads, forts and incoming nukes.
 import * as THREE from 'three';
-import { EYE_H, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { EYE_H, KNOCK, PLAYER_HP, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { OTHER_ALIVE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
@@ -40,6 +40,7 @@ export class Game3D {
   ring = { x: 0, y: 0, r: 999, nx: 0, ny: 0, nr: 0, closing: false, nextIn: 0, phase: 0 };
   alive = 0;
   leader: [number, number] | null = null;
+  board: number[][] = [];
   prompt = '';                     // "E · open pencil case" etc.
   nukes: { x: number; z: number; t: number }[] = [];
   drops: { x: number; z: number }[] = [];        // supply drops falling or landed (for the minimap)
@@ -53,7 +54,9 @@ export class Game3D {
   private pending: Input[] = [];
   private seq = 0;
   private snaps: { s: Snap; at: number }[] = [];
-  private avatars = new Map<number, Figure & { tag: HTMLDivElement }>();
+  private avatars = new Map<number, Figure & { tag: HTMLDivElement; html?: string }>();
+  private hitUntil = new Map<number, number>(); // enemies you just hit show their health over their head
+  markHit(id: number) { this.hitUntil.set(id, this.time + 2.2); }
   private viewChute: THREE.Group | null = null;
   private tracers: Tracer[] = [];
   private tracerGeo: THREE.BufferGeometry;
@@ -323,7 +326,7 @@ export class Game3D {
   onSnap(s: Snap) {
     this.snaps.push({ s, at: performance.now() / 1000 });
     if (this.snaps.length > 30) this.snaps.shift();
-    this.ring = s.ring; this.alive = s.alive; this.leader = s.leader;
+    this.ring = s.ring; this.alive = s.alive; this.leader = s.leader; this.board = s.board ?? [];
     if (s.loot) this.syncLoot(s.loot);
     if (s.cases) this.syncCases(s.cases);
     this.syncFx(s.fx);
@@ -360,7 +363,7 @@ export class Game3D {
   get weapon(): WeaponId | null { return this.self ? this.self.slots[this.self.cur] : null; }
 
   // called at 30 Hz with sampled controls; returns the input to send (or null)
-  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean; up: number }): Input | null {
+  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean; up: number; hold: boolean }): Input | null {
     if (!this.world || !this.self || !this.self.alive || !this.pred) return null;
     let slot = c.slot;
     if (slot < 0) { // wheel: cycle through filled slots
@@ -370,7 +373,7 @@ export class Game3D {
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
     if (c.reload && this.self.reloadT === 0) sfx.reload();
-    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up };
+    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
     this.lastTickAt = performance.now() / 1000;
@@ -502,7 +505,11 @@ export class Game3D {
     this.prompt = '';
     const p = this.pred, me = this.self;
     if (!p || !me?.alive || p.gliding) return;
-    if (p.ride) return; // the vehicle panel shows how to get out
+    if (p.ride || p.down > 0) return; // the vehicle panel shows how to get out
+    for (const id of this.mates) {
+      const o = this.infoOf(id);
+      if (o && o[7] & OTHER_DOWN && Math.hypot(o[1] - p.x, o[3] - p.z) < KNOCK.reach && Math.abs(o[2] - p.y) < 1.6) { this.prompt = 'hold E · revive your teammate'; return; }
+    }
     for (const v of this.vehiclesNow) {
       const def = VEHICLES[VEHICLE_KINDS[v[1]]], name = v[1] === 0 ? 'car' : v[1] === 1 ? 'helicopter' : 'plane';
       if (Math.hypot(v[2] - p.x, v[4] - p.z) > def.reach || Math.abs(v[3] - p.y) > 2.5) continue;
@@ -564,8 +571,8 @@ export class Game3D {
         cam.position.copy(eye);
         cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
       } else {
-        cam.position.copy(pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
-        cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : 0, 'YXZ');
+        cam.position.copy(pos.add(new THREE.Vector3(0, (this.pred.down > 0 ? KNOCK.eye : EYE_H + crouch) + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
+        cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : this.pred.down > 0 ? 0.12 : 0, 'YXZ');
       }
       const w = this.weapon;
       const zoom = look.aim && w ? WEAPONS[w].zoom : 1;
@@ -595,13 +602,18 @@ export class Game3D {
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
-      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt);
+      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt, !!(o[7] & OTHER_DOWN));
       const d = a.root.position.distanceTo(cam.position);
       v.set(o[1], o[2] + 2.5, o[3]).project(cam);
       const mate = this.mates.has(o[0]);
       // teammates are marked everywhere, through walls, with how far away they are
-      if (mate) a.tag.textContent = d > 25 ? `${this.seats.get(o[0])?.num ?? ''} · ${Math.round(d)}m` : this.seats.get(o[0])?.num ?? '';
-      if ((d < 50 || mate) && v.z < 1) {
+      const num = this.seats.get(o[0])?.num ?? '', knocked = !!(o[7] & OTHER_DOWN);
+      const shown = (this.hitUntil.get(o[0]) ?? 0) > this.time;
+      const hpk = Math.max(0, Math.min(1, o[6] / (knocked ? KNOCK.hp : PLAYER_HP)));
+      const html = mate ? `${num}${d > 25 ? ` · ${Math.round(d)}m` : ''}${knocked ? ' · <b>knocked</b>' : ''}`
+        : shown ? `${num}<span class="hpbar ${knocked ? 'knocked' : ''}"><i style="width:${Math.round(hpk * 100)}%"></i></span>` : num;
+      if (a.html !== html) { a.tag.innerHTML = html; a.html = html; }
+      if ((d < 50 || mate || shown) && v.z < 1) {
         a.tag.style.display = 'block';
         a.tag.style.transform = `translate(${((v.x + 1) / 2) * innerWidth}px, ${((1 - v.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
       } else a.tag.style.display = 'none';
@@ -666,7 +678,7 @@ export class Game3D {
     const gliding = (!!this.pred?.gliding || !!this.pred?.ride) && !!me?.alive;
     const w = this.weapon;
     const scoped = look.aim && (w === 'heavy' || w === 'hunting');
-    for (const [id, g] of this.guns) g.visible = !!me?.alive && w === id && !scoped && !gliding && !me.use;
+    for (const [id, g] of this.guns) g.visible = !!me?.alive && w === id && !scoped && !gliding && !me.use && !((this.pred?.down ?? 0) > 0);
     if (this.viewChute) { this.viewChute.visible = gliding && !this.pred?.ride; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
     const g = w ? this.guns.get(w) : null;
     if (g && me && w) {

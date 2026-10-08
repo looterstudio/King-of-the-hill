@@ -1,7 +1,7 @@
 // Offline demo transport: plays the server's role inside the browser with bots and a simulated
 // fee stream. Same Sim, same snapshots, same input queue semantics, so the UI under test is real.
 import {
-  COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, MAP_HALF, MODES, MODE_IDS, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type Mode, type WeaponId,
+  COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, KNOCK, matchPoints, MAP_HALF, MODES, MODE_IDS, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type Mode, type WeaponId,
 } from '../../shared/src/constants.ts';
 import type { ClientMsg, LobbyRoom, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, emptyInput, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
@@ -20,7 +20,8 @@ export class LocalNet {
   onOpen: (() => void) | null = null;
   onClose: (() => void) | null = null;
   private lamports = 7_400_000_000n;
-  private tickets = new Map<string, { name: string; wins: number }>();
+  private tickets = new Map<string, { name: string; wins: number }>(); // points this epoch
+  private teamPlace = new Map<number, number>();
   private me: RoomSeat | null = null;
   private myWallet = fakeWallet();
   private queue: Input[] = [];
@@ -34,7 +35,7 @@ export class LocalNet {
   private viewer: Viewer = { lootVer: -1, lootAt: -9 };
 
   constructor() {
-    for (let i = 0; i < 6; i++) this.tickets.set(fakeWallet(), { name: NAMES[i], wins: (6 - i + Math.floor(Math.random() * 3)) * 2 });
+    for (let i = 0; i < 6; i++) this.tickets.set(fakeWallet(), { name: NAMES[i], wins: (6 - i + Math.floor(Math.random() * 3)) * 45 + Math.floor(Math.random() * 30) });
     for (let i = 0; i < 5; i++) this.fake.push(this.fakeRoom(i < 3));
   }
   private fakeRoom(live: boolean): LobbyRoom {
@@ -75,7 +76,7 @@ export class LocalNet {
   private emitPot() {
     const epoch = epochOf(Date.now());
     const top = [...this.tickets.entries()].map(([wallet, t]) => ({ wallet, name: t.name, wins: t.wins })).sort((a, b) => b.wins - a.wins).slice(0, 8);
-    this.emit({ t: 'pot', pot: { epoch, epochEndMs: epochEnd(epoch), lamports: this.lamports.toString(), rolloverLamports: '0', commit: '', online: 1287 + Math.floor(Math.random() * 40), rooms: 31 + Math.floor(Math.random() * 4), tickets: top } });
+    this.emit({ t: 'pot', pot: { epoch, epochEndMs: epochEnd(epoch), lamports: this.lamports.toString(), rolloverLamports: '0', commit: '', online: 1287 + Math.floor(Math.random() * 40), rooms: 31 + Math.floor(Math.random() * 4), tickets: top, closeFrom: epochEnd(epoch) - 30 * 60_000, holdTokens: 50_000, symbol: 'KING', solUsd: 150 } });
   }
 
   send(m: ClientMsg) {
@@ -133,7 +134,7 @@ export class LocalNet {
     // a team glides to the same spot
     const spot = new Map<number, { x: number; z: number }>();
     for (const b of r.bots) { const t = teams.get(b.id)!; const at = spot.get(t) ?? { x: b.dropX, z: b.dropZ }; spot.set(t, at); b.dropX = at.x + (Math.random() - 0.5) * 8; b.dropZ = at.z + (Math.random() - 0.5) * 8; }
-    this.queue = []; this.last = emptyInput(); this.killer = null; this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
+    this.queue = []; this.last = emptyInput(); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
@@ -155,6 +156,13 @@ export class LocalNet {
       return inp;
     }
     if (self.ride) { inp.interact = true; return inp; }
+    const mateNear = (down: boolean, r: number) => {
+      let best: PlayerState | null = null, bd = r;
+      for (const q of sim.players.values()) { if (!q.alive || q.id === b.id || q.team !== self.team || (q.down > 0) !== down) continue; const d = Math.hypot(q.x - self.x, q.z - self.z); if (d < bd) { bd = d; best = q; } }
+      return best;
+    };
+    // knocked: crawl to the nearest teammate still standing
+    if (self.down > 0) { const m = mateNear(false, 200); if (m) { inp.yaw = yawTo(m.x, m.z); inp.fwd = Math.hypot(m.x - self.x, m.z - self.z) > 1.2 ? 1 : 0; } return inp; }
 
     // re-pick the nearest enemy a few times a second and check line of sight
     b.losT -= 1 / TICK_HZ;
@@ -175,10 +183,17 @@ export class LocalNet {
     const inRing = Math.hypot(self.x - g.x, self.z - g.y) < g.r * 0.92;
     const rank = (w: WeaponId | null) => (w ? RARITY_ORDER.indexOf(WEAPONS[w].rarity) : -1);
     const fighting = !!(tgt && tgt.alive && b.los);
+    // a knocked teammate and nobody shooting at us up close: go and pick them up
+    const hurt = mateNear(true, 45);
+    if (hurt && !(fighting && tgt && Math.hypot(tgt.x - self.x, tgt.z - self.z) < 20)) {
+      const d = Math.hypot(hurt.x - self.x, hurt.z - self.z);
+      inp.yaw = yawTo(hurt.x, hurt.z); inp.fwd = d > 1.3 ? 1 : 0; inp.sprint = d > 6; inp.hold = d < KNOCK.reach - 0.2;
+      return inp;
+    }
 
     if (self.use) { inp.fwd = 0; inp.strafe = b.strafe * 0.3; return inp; } // stand still and finish healing
-    if (!fighting && self.shield < 60 && (self.items.big || self.items.mini) && Math.random() < 0.2) inp.item = 1;
-    else if (!fighting && self.hp < 60 && self.items.med && Math.random() < 0.2) inp.item = 2;
+    if (!fighting && self.shield < 150 && (self.items.big || self.items.mini) && Math.random() < 0.2) inp.item = 1;
+    else if (!fighting && self.hp < 150 && self.items.med && Math.random() < 0.2) inp.item = 2;
 
     // far from the circle: grab a car if one is close
     const car = Math.hypot(self.x - g.nx, self.z - g.ny) > g.nr + 70 && !fighting ? sim.vehicles.find((v) => v.kind === 'car' && !v.driver && Math.hypot(v.body.x - self.x, v.body.z - self.z) < 30) : null;
@@ -210,7 +225,7 @@ export class LocalNet {
         const k = self.perk.kind;
         if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && Math.random() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
         if (k === 'kit') inp.perk = true;
-        if ((k === 'smoke' || k === 'fort') && self.hp < 45 && Math.random() < 0.08) inp.perk = true;
+        if ((k === 'smoke' || k === 'fort') && self.hp < 110 && Math.random() < 0.08) inp.perk = true;
         if (k === 'nuke' && d > 40 && Math.random() < 0.05) inp.perk = true;
       }
     } else {
@@ -256,6 +271,8 @@ export class LocalNet {
     for (const e of sim.step(1 / TICK_HZ, inputs)) {
       if (e.kind === 'elim') {
         if (e.victim === 1) this.killer = e.by;
+        const team = sim.players.get(e.victim)?.team, alive = sim.teamsAlive;
+        if (team !== undefined && !alive.has(team) && !this.teamPlace.has(team)) this.teamPlace.set(team, alive.size + 1);
         this.emit({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: sim.alive, head: e.head });
       } else if (e.kind === 'hit') { if (e.victim === 1 || e.by === 1) this.emit({ t: 'event', ...e }); }
       else if (e.kind === 'vhit') { if (e.by === 1) this.emit({ t: 'event', ...e }); }
@@ -300,14 +317,18 @@ export class LocalNet {
     clearInterval(this.loop);
     const team = [...sim.teamsAlive][0];
     const winners = team === undefined ? [] : [...sim.players.values()].filter((p) => p.team === team).map((p) => p.id);
-    const tickets = MODES[r.mode].tickets;
-    for (const id of winners) {
-      const seat = r.seats.find((s) => s.id === id)!;
-      const key = id === 1 ? this.myWallet : `bot-${seat.name}`;
+    if (team !== undefined) this.teamPlace.set(team, 1);
+    const points: Record<number, number> = {};
+    for (const p of sim.players.values()) {
+      const pts = matchPoints(r.mode, this.teamPlace.get(p.team) ?? 0, p.kills, winners.includes(p.id));
+      points[p.id] = pts;
+      if (!pts) continue;
+      const seat = r.seats.find((s) => s.id === p.id)!;
+      const key = p.id === 1 ? this.myWallet : `bot-${seat.name}`;
       const t = this.tickets.get(key) ?? { name: seat.name, wins: 0 };
-      t.wins += tickets; this.tickets.set(key, t);
+      t.wins += pts; this.tickets.set(key, t);
     }
-    this.emit({ t: 'result', winner: winners[0] ?? null, winners, tickets, ticketAwarded: winners.length > 0, epoch: epochOf(Date.now()) });
+    this.emit({ t: 'result', winner: winners[0] ?? null, winners, points, awarded: true, epoch: epochOf(Date.now()) });
     this.emitPot();
     r.timers.push(window.setTimeout(() => this.closeRoom(), RESULT_MS - 300)); // free the seat before the client shows the lobby
   }

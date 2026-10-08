@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { ITEMS, MAP_HALF, MODES, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
-import { loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
+import { ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
@@ -132,12 +132,13 @@ $('partyNew').onclick = () => {
 renderMode();
 
 // ---------- pot odometer: each digit is a rolling column ----------
-function odometer(el: HTMLElement, text: string) {
-  if (el.dataset.v === text) return;
-  el.dataset.v = text;
+function odometer(el: HTMLElement, text: string, sym = '◎') {
+  if (el.dataset.v === text + sym) return;
+  el.dataset.v = text + sym;
   const cells = el.querySelectorAll<HTMLElement>('.dg, .pt');
-  if (cells.length !== text.length || [...text].some((ch, i) => (ch >= '0' && ch <= '9') !== cells[i].classList.contains('dg'))) {
-    el.innerHTML = '<span class="sym">◎</span>' + [...text].map((ch) => ch >= '0' && ch <= '9'
+  if (el.dataset.sym !== sym || cells.length !== text.length || [...text].some((ch, i) => (ch >= '0' && ch <= '9') !== cells[i].classList.contains('dg'))) {
+    el.dataset.sym = sym;
+    el.innerHTML = `<span class="sym">${sym}</span>` + [...text].map((ch) => ch >= '0' && ch <= '9'
       ? `<span class="dg"><span class="col">${'0123456789'.split('').map((d) => `<span>${d}</span>`).join('')}</span></span>`
       : `<span class="pt">${ch}</span>`).join('');
   }
@@ -195,15 +196,17 @@ ticker('<span class="gold">golden pencil cases hold <b>the SCAR & the Heavy Snip
 $('leaveBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); $('queueInfo').textContent = ''; };
 
 // ---------- lobby ----------
-const marks = (n: number) => '<i></i>'.repeat(Math.min(n, 15));
+const marks = (n: number) => '<i></i>'.repeat(Math.min(Math.ceil(n / 50), 15));
+const kfmt = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M` : n >= 1e3 ? `${+(n / 1e3).toFixed(n % 1e3 ? 1 : 0)}K` : n.toLocaleString('en-US', { maximumFractionDigits: 0 }));
 function renderPot(p: PotView) {
   state.pot = p;
+  $('holdReq').textContent = p.holdTokens > 0 ? `${kfmt(p.holdTokens)} $${p.symbol}` : `$${p.symbol}`;
   jar.setSol(sol(p.lamports)); miniJar.setSol(sol(p.lamports));
   $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
   $('tickets').innerHTML = p.tickets.length
     ? p.tickets.map((t, i) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''} ${i === 0 ? 'top' : ''}"><span class="name"><span>${i === 0 ? '<i class="crown">♛</i> ' : ''}${esc(t.name)}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
-    : '<li class="nobody">Nobody has won a match yet. The first winner shows up here.</li>';
+    : '<li class="nobody">Nobody has scored yet. Win, place top 10 or get kills to show up here.</li>';
 }
 function toast(text: string) {
   const el = $('inflowToast'); el.textContent = text; el.classList.add('on');
@@ -255,7 +258,7 @@ function damageNumber(victim: number, dmg: number, head: boolean, shield = false
     pendingHits.delete(victim);
     const at = game.screenOf(victim, entry.head) ?? { x: innerWidth / 2 + 40, y: innerHeight / 2 - 40 };
     const el = document.createElement('div');
-    el.className = `dmgnum ${entry.head ? 'head' : entry.shield ? 'shield' : ''} ${entry.dmg >= 60 ? 'big' : ''}`;
+    el.className = `dmgnum ${entry.head ? 'head' : entry.shield ? 'shield' : ''} ${entry.dmg >= 120 ? 'big' : ''}`;
     el.textContent = String(entry.dmg);
     el.style.left = `${at.x + (Math.random() - 0.5) * 30}px`; el.style.top = `${at.y}px`;
     $('tags').appendChild(el);
@@ -385,7 +388,6 @@ net.on((m: ServerMsg) => {
   switch (m.t) {
     case 'hello':
       state.nonce = m.nonce; state.authed = false; updatePlay();
-      $('holdReq').textContent = m.holdMinUsd > 0 ? `$${m.holdMinUsd} of the token` : 'the token';
       $('guestBtn').classList.toggle('hidden', !m.allowGuests);
       $('guestName').classList.toggle('hidden', !m.allowGuests);
       if (state.authMode === 'guest') net.send({ t: 'guest', name: state.name || 'guest' });
@@ -394,7 +396,7 @@ net.on((m: ServerMsg) => {
       break;
     case 'authed':
       state.authed = true; state.name = m.name; state.wallet = m.wallet;
-      $('me').textContent = `Player ${m.num} · ${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}`;
+      $('me').textContent = `Player ${m.num} · ${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}${m.eligible ? ` · ${m.eligible}` : m.wallet && state.authMode !== 'guest' ? ' · scoring points for the pot' : ''}`;
       $('me').classList.add('on');
       updatePlay();
       break;
@@ -416,7 +418,7 @@ net.on((m: ServerMsg) => {
       $('lastDraw').className = 'draw-sum';
       $('lastDraw').innerHTML = s.winners.length
         ? `<div>Round #${s.epoch} · pot <b>${fmtSol(sol(s.potLamports))}</b></div><ol class="ledger">${s.winners.slice(0, 6).map((w) => `<li><span class="name"><span>${esc(w.name || w.wallet.slice(0, 6))}</span></span><span class="marks"><em>${fmtSol(sol(w.lamports))}</em></span></li>`).join('')}</ol><div class="root">merkle root ${s.merkleRoot}</div>`
-        : `Round #${s.epoch}: nobody won a match, so ${fmtSol(sol(s.rollover))} rolls into the next one.`;
+        : `Round #${s.epoch}: nobody scored, so ${fmtSol(sol(s.rollover))} rolls into the next one.`;
       break;
     }
     case 'queued': $('queueInfo').textContent = `In queue, position ${m.position}`; break;
@@ -426,8 +428,8 @@ net.on((m: ServerMsg) => {
       $('queueInfo').textContent = '';
       state.roomMode = m.mode;
       $('roomMode').textContent = MODES[m.mode].name; $('roomMode').className = `mode-tag ${m.mode}`;
-      $('roomFoot').textContent = m.mode === 'solo' ? 'Up to 100 drop in. 1 walks out with 4 tickets.'
-        : `Up to 100 drop in, in ${m.mode === 'duo' ? 'teams of 2' : 'squads of 4'}. The last team standing gets ${MODES[m.mode].tickets} ticket${MODES[m.mode].tickets > 1 ? 's' : ''} each.`;
+      $('roomFoot').textContent = m.mode === 'solo' ? `Up to 100 drop in. A win is ${POINTS.win.solo} points, top ${topPlaces('solo')} +${POINTS.top}, every kill +${POINTS.kill}.`
+        : `Up to 100 drop in, in ${m.mode === 'duo' ? 'teams of 2' : 'squads of 4'}. A win is ${POINTS.win[m.mode]} points each, top ${topPlaces(m.mode)} teams +${POINTS.top}, every kill +${POINTS.kill}. Knocked teammates can be picked up.`;
       if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); drawPreview(m.seed); }
       if (m.state === 'live') {
         state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set();
@@ -448,7 +450,7 @@ net.on((m: ServerMsg) => {
     case 'event': {
       if (m.kind === 'hit') {
         if (m.by === state.you) {
-          hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head);
+          hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head); game.markHit(m.victim);
           if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); }
         }
         if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); }
@@ -467,6 +469,20 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
       if (m.kind === 'vhit') { hitmarker(false); sfx.hit(false); const v = game.vehiclesNow.find((x) => x[0] === m.vehicle); vehicleNumber(v, m.dmg); break; }
       if (m.kind === 'upgrade') { if (m.by === state.you) { hint(`weapon upgraded ${'★'.repeat(m.level)} · +${Math.round(m.level * 22)}% damage`, 2200); sfx.open(true); } break; }
+      if (m.kind === 'knock') {
+        const mineK = m.victim === state.you || m.by === state.you || game.mates.has(m.victim);
+        feed(`<span style="color:#c98a00">⬇ ${esc(label(m.victim))}</span> <span class="by">knocked${m.by !== null ? ` by ${esc(label(m.by))}` : ''}</span>`, mineK);
+        if (m.by === state.you) { hint(`${label(m.victim)} knocked · finish them or they get picked up`, 1800); sfx.hit(true); hitmarker(m.head, true); }
+        if (m.victim === state.you) banner('Knocked', 'crawl to cover · a teammate can pick you up (hold E, 5 s)', false, 2200);
+        else if (game.mates.has(m.victim)) hint(`teammate ${label(m.victim)} is knocked · get to them and hold E`, 2600);
+        break;
+      }
+      if (m.kind === 'revive') {
+        feed(`<span style="color:#2f9e44">⬆ ${esc(label(m.victim))}</span> <span class="by">picked up by ${esc(label(m.by))}</span>`, m.victim === state.you || m.by === state.you || game.mates.has(m.victim));
+        if (m.victim === state.you) hint('back on your feet · heal up', 2000);
+        if (m.by === state.you) { hint(`${label(m.victim)} is back up`, 1600); sfx.open(false); }
+        break;
+      }
       if (m.kind === 'drop') {
         if (!m.landed) { feed('<b style="color:#c98a00">📦 supply drop incoming</b> · legendary inside', false); hint('supply drop incoming: legendary loot, find the balloon', 2600); sfx.siren(); }
         break;
@@ -480,17 +496,17 @@ net.on((m: ServerMsg) => {
         const mates = matesAlive();
         game.watch = mates[0] ?? m.by;
         banner('Eliminated', mates.length ? `your team is still in it · watching ${label(mates[0])}` : `#${m.left + 1} of ${state.seats.length} · spectating`, false, 3000);
-      } else if (game.mates.has(m.victim)) hint(`teammate ${label(m.victim)} is down`, 2200);
+      } else if (game.mates.has(m.victim)) hint(`teammate ${label(m.victim)} was eliminated`, 2200);
       break;
     }
     case 'result': {
       state.over = true;
       input.unlock(); $('pause').classList.add('hidden');
       const winners = m.winners ?? (m.winner === null ? [] : [m.winner]);
-      const won = winners.includes(state.you), team = winners.length > 1, t = m.tickets ?? 1;
+      const won = winners.includes(state.you), team = winners.length > 1, mine = m.points?.[state.you] ?? 0;
       const word = !winners.length ? 'Draw' : won ? 'Victory!' : team ? `Team ${label(winners[0])} wins` : `${label(winners[0])} wins`;
-      const tix = `${t} ticket${t > 1 ? 's' : ''}`;
-      const sub = m.ticketAwarded ? (won ? `+${tix}${team ? ' each' : ''} for the next payout` : `take${team ? '' : 's'} ${tix}${team ? ' each' : ''} for the pot`) : won ? 'no ticket: not enough verified wallets in this match' : '';
+      const sub = !m.awarded ? (mine ? `${mine} points · not counted: not enough verified wallets in this match` : '')
+        : mine ? `+${mine} points for the pot${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
       if (winners.length) ticker(`<span class="gold">♛ <b>${esc(winners.map((w) => seatOf(w)?.name ?? label(w)).join(' + '))}</b> won a ${MODES[state.roomMode].name.toLowerCase()} match</span>`);
       banner(word, sub, won);
       setTimeout(() => { $('banner').classList.add('hidden'); show('lobby'); }, RESULT_MS);
@@ -550,7 +566,16 @@ function frame(now: number) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
       if (Math.abs(target - state.potShown) < 0.0005) state.potShown = target;
-      odometer($('potAmount'), target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }));
+      // dollars big (people think in dollars), SOL small underneath
+      const usd = state.pot.solUsd;
+      if (usd) {
+        const d = target * usd;
+        odometer($('potAmount'), d.toLocaleString('en-US', { minimumFractionDigits: d < 1000 ? 2 : 0, maximumFractionDigits: d < 1000 ? 2 : 0 }), '$');
+        setText($('potSol'), `${target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} SOL`);
+      } else { odometer($('potAmount'), target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })); setText($('potSol'), ''); }
+      const closing = Date.now() >= state.pot.closeFrom;
+      setText($('candle'), closing ? 'scoring can close any minute now' : 'scoring closes at a random minute in the last 30');
+      $('candle').classList.toggle('hot', closing);
       const [hh, mm, ss] = hms(state.pot.epochEndMs - Date.now()).split(':');
       const cd = $('countdown').querySelectorAll('b');
       if (cd[0].textContent !== hh) cd[0].textContent = hh;
@@ -571,7 +596,7 @@ function frame(now: number) {
       setText($('hpNum'), String(me.hp));
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
       setText($('shNum'), String(me.shield));
-      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 30);
+      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 75);
       for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
       setText($('ammo'), def ? String(mag) : '–');
       setText($('ammoMax'), def ? `/${def.mag}` : '');
@@ -586,8 +611,14 @@ function frame(now: number) {
       setHTML($('items'), `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
         + `<span class="${me.items.med ? '' : 'empty'}"><kbd>6</kbd> medkit ×${me.items.med}</span>`
         + `<span class="${me.perk ? '' : 'empty'}" style="${me.perk ? `color:${RARITY_CSS[PERKS[me.perk.kind].rarity]}` : ''}"><kbd>G</kbd> ${me.perk ? `${PERKS[me.perk.kind].name} ×${me.perk.n}` : 'no perk'}</span>`);
-      $('useBar').classList.toggle('hidden', !me.use);
-      if (me.use) { const total = ITEMS[me.use.item].use; setText($('useLabel'), ITEMS[me.use.item].name); $('useFill').style.width = `${(1 - me.use.t / total) * 100}%`; }
+      // one bar for anything that takes time: healing, bleeding out, being picked up, picking up
+      const bar = me.use ? { label: ITEMS[me.use.item].name, k: 1 - me.use.t / ITEMS[me.use.item].use, cls: '' }
+        : me.reviving > 0 ? { label: 'reviving teammate…', k: me.reviving / KNOCK.revive, cls: 'revive' }
+        : me.down > 0 && me.reviveT > 0 ? { label: 'being picked up…', k: me.reviveT / KNOCK.revive, cls: 'revive' }
+        : me.down > 0 ? { label: `KNOCKED · bleeding out ${Math.ceil(me.down)}s`, k: me.down / KNOCK.bleed, cls: 'bleed' } : null;
+      $('useBar').classList.toggle('hidden', !bar || !me.alive);
+      if (bar) { setText($('useLabel'), bar.label); $('useFill').style.width = `${bar.k * 100}%`; $('useBar').dataset.kind = bar.cls; }
+      document.body.classList.toggle('knocked', me.alive && me.down > 0);
       setHTML($('prompt'), game.prompt);
       setText($('killCount'), String(me.kills));
       const body = game.me;
@@ -602,8 +633,9 @@ function frame(now: number) {
     const sq = $('squad');
     if (game.mates.size) {
       setHTML(sq, [...game.mates].map((id) => {
-        const down = state.dead.has(id), o = game.infoOf(id), hp = down ? 0 : o ? o[6] : 100;
-        return `<div class="mate ${down ? 'down' : ''}"><span>${esc(seatOf(id)?.name ?? label(id))}</span><div class="bar"><i style="width:${hp}%"></i></div></div>`;
+        const down = state.dead.has(id), o = game.infoOf(id), hp = down ? 0 : o ? Math.round((o[6] / PLAYER_HP) * 100) : 100;
+        const knocked = !down && !!o && !!(o[7] & OTHER_DOWN);
+        return `<div class="mate ${down ? 'down' : knocked ? 'knocked' : ''}"><span>${esc(seatOf(id)?.name ?? label(id))}</span><div class="bar"><i style="width:${hp}%"></i></div></div>`;
       }).join(''));
     } else setHTML(sq, '');
     const spec = !!me && !me.alive && !state.over;
@@ -631,11 +663,19 @@ function frame(now: number) {
     if (nk) setText($('nukeWarn'), `☢ ATOMIC BOMB INCOMING · ${Math.ceil(nk.t)}s · get out of the red zone`);
     setText($('aliveCount'), String(game.alive));
     const L = game.leader;
+    // kill board: the top teams by kills; your own team always shows
+    const myTeam = seatOf(state.you)?.team ?? state.you, solo = state.roomMode === 'solo';
+    const rows = game.board.slice(0, 5);
+    if (!rows.some((r) => r[0] === myTeam) && me && me.kills > 0) rows.push([myTeam, me.kills, me.alive ? 1 : 0, state.you]);
+    setHTML($('board'), rows.length ? `<h4>kill board</h4>${rows.map((r, i) => {
+      const mine = r[0] === myTeam, who = mine ? (solo ? 'you' : 'your squad') : solo ? label(r[3]) : `team ${label(r[3])}`;
+      return `<div class="${mine ? 'me' : ''} ${r[2] === 0 ? 'out' : ''}"><em>${i + 1}</em><span>${esc(who)}</span><b>${r[1]}</b>${solo ? '' : `<small>${r[2]} in</small>`}</div>`;
+    }).join('')}` : '');
     setHTML($('leader'), L ? `<span class="crown">♛</span> kill leader <b>${L[0] === state.you ? 'you' : esc(label(L[0]))}</b> · ${L[1]}` : '');
     const g = game.ring, st = $('storm');
     st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
-    if (state.pot) setText($('miniPot'), fmtSol(sol(state.pot.lamports)));
+    if (state.pot) { const s = sol(state.pot.lamports), u = state.pot.solUsd; setText($('miniPot'), u ? `$${Math.round(s * u).toLocaleString('en-US')}` : fmtSol(s)); }
     if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); }
     miniJar.frame(dt);
   }
