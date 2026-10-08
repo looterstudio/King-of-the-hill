@@ -1,134 +1,121 @@
-// Deterministic battle royale simulation. Runs on the server only (and in the offline demo);
-// pure functions of (state, inputs, dt) with a seeded RNG, no timers and no I/O, so a room is
-// just a Sim plus a tick counter and is trivial to test.
+// Battle royale simulation (first person, 3D, up to 100 players). Authoritative on the server,
+// mirrored in the offline demo. Deterministic for a seed; no timers, no I/O.
+// Everyone drops with the same four guns, so the better player wins, not the luckier looter.
 import {
-  ARENA_R, ARMOR_MAX, DASH_CD, DASH_SPEED, DASH_TIME, LOOT_COUNT, MEDKIT_HP, PICKUP_R, PILLARS,
-  PLAYER_HP, PLAYER_R, PLAYER_SPEED, RING_DPS_START, RING_PHASES, WEAPONS,
-  type LootKind, type WeaponId,
+  EYE_H, GRAVITY, HEADSHOT_MULT, HEAD_R, HEAD_Y, JUMP_V, PLAYER_HP, PLAYER_R, REGEN_DELAY, REGEN_RATE,
+  REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SPRINT_SPEED, WALK_SPEED, WEAPONS,
+  WEAPON_ORDER, type WeaponId,
 } from './constants.ts';
+import { rng } from './rng.ts';
+import { World, moveBody, newBody, type Body } from './world.ts';
 
-export interface Pillar { x: number; y: number; r: number }
-export interface Loot { id: number; x: number; y: number; kind: LootKind }
-export interface PlayerState {
-  id: number; x: number; y: number; aim: number; hp: number; armor: number; alive: boolean;
-  weapon: WeaponId; ammo: number;
-  fireCd: number; dashCd: number; dashT: number; dashX: number; dashY: number; kills: number;
+export { rng };
+
+export interface PlayerState extends Body {
+  id: number; yaw: number; pitch: number; hp: number; alive: boolean;
+  weapon: WeaponId; mag: Record<WeaponId, number>; reloadT: number;
+  fireCd: number; sinceHurt: number; kills: number; ack: number;
 }
-export interface Bullet { id: number; owner: number; x: number; y: number; vx: number; vy: number; life: number; dmg: number }
-export interface Input { mx: number; my: number; aim: number; fire: boolean; dash: boolean }
+export interface Input {
+  seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
+  jump: boolean; sprint: boolean; slide: boolean; grapple: boolean;
+  fire: boolean; aim: boolean; reload: boolean; slot: number; view: number;
+}
 export interface Ring { x: number; y: number; r: number; nx: number; ny: number; nr: number; phase: number; closing: boolean; dps: number; nextAt: number }
+export interface Shot { ox: number; oy: number; oz: number; ex: number; ey: number; ez: number; by: number; hit: boolean }
 export type SimEvent =
-  | { kind: 'hit'; victim: number; by: number }
-  | { kind: 'pickup'; player: number; loot: LootKind }
-  | { kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' };
+  | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean }
+  | { kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left'; head: boolean };
 
-// mulberry32: small seeded PRNG so the client can rebuild the same map from the room seed
-export function rng(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function makePillars(seed: number): Pillar[] {
-  const r = rng(seed), out: Pillar[] = [];
-  for (let tries = 0; out.length < PILLARS && tries < 500; tries++) {
-    const ang = r() * Math.PI * 2, dist = 120 + r() * (ARENA_R - 220), rad = 34 + r() * 48;
-    const p = { x: Math.cos(ang) * dist, y: Math.sin(ang) * dist, r: rad };
-    if (out.every((q) => Math.hypot(q.x - p.x, q.y - p.y) > q.r + p.r + 90)) out.push(p);
-  }
-  return out;
-}
-
-// loot table: guns are rarer the stronger they are
-const LOOT_TABLE: [LootKind, number][] = [['shotgun', 5], ['rifle', 5], ['sniper', 2], ['medkit', 7], ['armor', 6]];
-export function makeLoot(seed: number, pillars: Pillar[]): Loot[] {
-  const r = rng(seed ^ 0x5bd1e995), out: Loot[] = [];
-  const total = LOOT_TABLE.reduce((s, [, w]) => s + w, 0);
-  for (let tries = 0; out.length < LOOT_COUNT && tries < 800; tries++) {
-    const ang = r() * Math.PI * 2, dist = Math.sqrt(r()) * (ARENA_R - 60);
-    const x = Math.cos(ang) * dist, y = Math.sin(ang) * dist;
-    if (pillars.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + 30)) continue;
-    if (out.some((l) => Math.hypot(l.x - x, l.y - y) < 110)) continue;
-    let pick = r() * total, kind: LootKind = 'medkit';
-    for (const [k, w] of LOOT_TABLE) { if (pick < w) { kind = k; break; } pick -= w; }
-    out.push({ id: out.length + 1, x, y, kind });
-  }
-  return out;
-}
-
-// the next safe circle always sits fully inside the current one
-function nextCircle(r: () => number, x: number, y: number, rad: number, nr: number) {
-  const room = Math.max(0, rad - nr), a = r() * Math.PI * 2, d = Math.sqrt(r()) * room;
-  return { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d };
-}
+export const emptyInput = (): Input => ({ seq: 0, fwd: 0, strafe: 0, yaw: 0, pitch: 0, jump: false, sprint: false, slide: false, grapple: false, fire: false, aim: false, reload: false, slot: 0, view: 0 });
+export const fullMags = (): Record<WeaponId, number> => ({ rifle: WEAPONS.rifle.mag, shotgun: WEAPONS.shotgun.mag, sniper: WEAPONS.sniper.mag, pistol: WEAPONS.pistol.mag });
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const finite = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 
 // inputs come from the network: never trust shape or range
 export function sanitizeInput(raw: Partial<Input> | undefined): Input {
-  let mx = clamp(finite(raw?.mx), -1, 1), my = clamp(finite(raw?.my), -1, 1);
-  const len = Math.hypot(mx, my);
-  if (len > 1) { mx /= len; my /= len; }
-  return { mx, my, aim: finite(raw?.aim), fire: raw?.fire === true, dash: raw?.dash === true };
+  return {
+    seq: Math.floor(finite(raw?.seq)), fwd: clamp(finite(raw?.fwd), -1, 1), strafe: clamp(finite(raw?.strafe), -1, 1),
+    yaw: finite(raw?.yaw), pitch: clamp(finite(raw?.pitch), -1.5, 1.5),
+    jump: raw?.jump === true, sprint: raw?.sprint === true, slide: raw?.slide === true, grapple: raw?.grapple === true, fire: raw?.fire === true, aim: raw?.aim === true, reload: raw?.reload === true,
+    slot: clamp(Math.floor(finite(raw?.slot)), 0, 4), view: Math.floor(finite(raw?.view)),
+  };
+}
+
+export const moveStep = (w: World, p: Body, inp: Input, dt: number) =>
+  moveBody(w, p, { ...inp, sprint: inp.sprint && !inp.aim }, dt, GRAVITY, inp.aim ? WALK_SPEED * 0.6 : WALK_SPEED, SPRINT_SPEED, JUMP_V);
+
+// accuracy: aiming tightens it, moving and being airborne loosen it
+export function spreadFor(p: Body, w: WeaponId, aim: boolean): number {
+  const base = WEAPONS[w].spread, speed = Math.hypot(p.vx, p.vz);
+  let s = base * (aim ? (w === 'sniper' ? 0.02 : 0.5) : 1) * (1 + speed / 8);
+  if (!p.grounded) s *= 2;
+  return s;
+}
+
+function nextCircle(r: () => number, x: number, y: number, rad: number, nr: number) {
+  const room = Math.max(0, rad - nr), a = r() * Math.PI * 2, d = Math.sqrt(r()) * room;
+  return { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d };
+}
+
+// ray vs player hitboxes (vertical cylinder body + head sphere); returns {t, head} or null
+export function rayPlayer(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, px: number, py: number, pz: number): { t: number; head: boolean } | null {
+  let best: { t: number; head: boolean } | null = null;
+  const hx = ox - px, hy = oy - (py + HEAD_Y), hz = oz - pz;
+  const b = hx * dx + hy * dy + hz * dz, c = hx * hx + hy * hy + hz * hz - HEAD_R * HEAD_R, disc = b * b - c;
+  if (disc >= 0) { const t = -b - Math.sqrt(disc); if (t >= 0) best = { t, head: true }; }
+  const fx = ox - px, fz = oz - pz, a2 = dx * dx + dz * dz;
+  if (a2 > 1e-9) {
+    const br = fx * dx + fz * dz, cr = fx * fx + fz * fz - (PLAYER_R + 0.05) ** 2, dr = br * br - a2 * cr;
+    if (dr >= 0) {
+      const t = (-br - Math.sqrt(dr)) / a2, y = oy + dy * t;
+      if (t >= 0 && y >= py && y <= py + HEAD_Y - HEAD_R && (!best || t < best.t)) best = { t, head: false };
+    }
+  }
+  return best;
 }
 
 export class Sim {
+  world: World;
   players = new Map<number, PlayerState>();
-  bullets: Bullet[] = [];
-  pillars: Pillar[];
-  loot: Loot[];
   ring: Ring;
-  lootVer = 0;               // bumps whenever loot appears or disappears, so rooms only resend on change
+  shots: Shot[] = [];   // drained by whoever encodes snapshots
   t = 0;
-  private nextBullet = 1;
+  tick = 0;
   private rand: () => number;
   private phaseStart = 0;
-  private from = { x: 0, y: 0, r: ARENA_R };
+  private from = { x: 0, y: 0, r: RING_START_R };
+  private history: { tick: number; pos: Map<number, { x: number; y: number; z: number }> }[] = [];
 
-  constructor(seed: number) {
+  constructor(public seed: number, world?: World) {
+    this.world = world ?? new World(seed);
     this.rand = rng(seed ^ 0x9e3779b9);
-    this.pillars = makePillars(seed);
-    this.loot = makeLoot(seed, this.pillars);
-    const first = RING_PHASES[0], c = nextCircle(this.rand, 0, 0, ARENA_R, first.radius);
-    this.ring = { x: 0, y: 0, r: ARENA_R, nx: c.x, ny: c.y, nr: first.radius, phase: 0, closing: false, dps: RING_DPS_START, nextAt: first.wait };
+    const first = RING_PHASES[0], c = nextCircle(this.rand, 0, 0, RING_START_R - 110, first.radius);
+    this.ring = { x: 0, y: 0, r: RING_START_R, nx: c.x, ny: c.y, nr: first.radius, phase: 0, closing: false, dps: RING_DPS_START, nextAt: first.wait };
   }
 
-  // seat players evenly on a circle so nobody spawns next to someone else
+  // everyone drops in from the sky over the island and glides down wherever they like
   spawn(ids: number[]) {
-    const n = ids.length;
-    ids.forEach((id, i) => {
-      const a = (i / n) * Math.PI * 2, d = ARENA_R * 0.78;
-      const p: PlayerState = {
-        id, x: Math.cos(a) * d, y: Math.sin(a) * d, aim: a + Math.PI, hp: PLAYER_HP, armor: 0, alive: true,
-        weapon: 'pistol', ammo: Infinity, fireCd: 1, dashCd: 0, dashT: 0, dashX: 0, dashY: 0, kills: 0,
-      };
-      this.pushOutOfPillars(p);
-      this.players.set(id, p);
+    ids.forEach((id) => {
+      const a = this.rand() * Math.PI * 2, d = 40 + Math.sqrt(this.rand()) * 140;
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      this.players.set(id, {
+        ...newBody(x, 90 + this.rand() * 20, z), gliding: true, id,
+        yaw: Math.atan2(x, z), pitch: -0.5, hp: PLAYER_HP, alive: true,
+        weapon: 'rifle', mag: fullMags(), reloadT: 0, fireCd: 0.5, sinceHurt: 99, kills: 0, ack: 0,
+      });
     });
   }
 
   get alive() { let n = 0; for (const p of this.players.values()) if (p.alive) n++; return n; }
 
-  eliminate(id: number, by: number | null, cause: 'shot' | 'ring' | 'left', ev: SimEvent[]) {
+  eliminate(id: number, by: number | null, cause: 'shot' | 'ring' | 'left', ev: SimEvent[], head = false) {
     const p = this.players.get(id);
     if (!p || !p.alive) return;
     p.alive = false; p.hp = 0;
     if (by !== null) { const k = this.players.get(by); if (k) k.kills++; }
-    // a fallen player's gun drops where they died, so fights pay off
-    if (p.weapon !== 'pistol' && p.ammo > 0) this.lootVer++, this.loot.push({ id: 1000 + this.nextBullet++, x: p.x, y: p.y, kind: p.weapon });
-    ev.push({ kind: 'elim', victim: id, by, cause });
-  }
-
-  private damage(p: PlayerState, amount: number) {
-    const soak = Math.min(p.armor, amount);
-    p.armor -= soak;
-    p.hp -= amount - soak;
+    ev.push({ kind: 'elim', victim: id, by, cause, head });
   }
 
   private stepRing() {
@@ -143,111 +130,84 @@ export class Sim {
     ring.r = this.from.r + (ring.nr - this.from.r) * k;
     ring.nextAt = this.phaseStart + phase.wait + phase.shrink;
     if (k >= 1) {
-      ring.dps = phase.dps;
-      ring.phase++;
-      this.phaseStart = this.t;
+      ring.dps = phase.dps; ring.phase++; this.phaseStart = this.t;
       this.from = { x: ring.x, y: ring.y, r: ring.r };
       const next = RING_PHASES[ring.phase];
       if (next) { const c = nextCircle(this.rand, ring.x, ring.y, ring.r, next.radius); ring.nx = c.x; ring.ny = c.y; ring.nr = next.radius; }
     }
   }
 
+  private hurt(p: PlayerState, amount: number) { p.hp -= amount; p.sinceHurt = 0; }
+
+  // where everyone was at a past tick, for lag-compensated hits
+  private positionsAt(tick: number) { return this.history.find((e) => e.tick === tick)?.pos ?? null; }
+
+  private fire(p: PlayerState, inp: Input, ev: SimEvent[]) {
+    const w = WEAPONS[p.weapon];
+    p.fireCd = w.cd;
+    p.mag[p.weapon]--;
+    const spread = spreadFor(p, p.weapon, inp.aim);
+    const view = clamp(inp.view, this.tick - REWIND_MAX_TICKS, this.tick);
+    const past = this.positionsAt(view);
+    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    for (let i = 0; i < w.pellets; i++) {
+      const yaw = p.yaw + (this.rand() - 0.5) * 2 * spread, pitch = p.pitch + (this.rand() - 0.5) * 2 * spread;
+      const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
+      const tWorld = this.world.raycast(ox, oy, oz, dx, dy, dz, w.range);
+      let hit: { t: number; head: boolean; q: PlayerState } | null = null;
+      for (const q of this.players.values()) {
+        if (!q.alive || q.id === p.id) continue;
+        const at = past?.get(q.id) ?? q;
+        if (Math.abs(at.x - ox) > w.range || Math.abs(at.z - oz) > w.range) continue;
+        const h = rayPlayer(ox, oy, oz, dx, dy, dz, at.x, at.y, at.z);
+        if (h && h.t < tWorld && (!hit || h.t < hit.t)) hit = { ...h, q };
+      }
+      const t = hit ? hit.t : tWorld;
+      this.shots.push({ ox, oy, oz, ex: ox + dx * t, ey: oy + dy * t, ez: oz + dz * t, by: p.id, hit: !!hit });
+      if (hit && hit.q.alive) {
+        const dmg = w.dmg * (hit.head ? HEADSHOT_MULT : 1);
+        this.hurt(hit.q, dmg);
+        ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg: Math.round(dmg), head: hit.head });
+        if (hit.q.hp <= 0) this.eliminate(hit.q.id, p.id, 'shot', ev, hit.head);
+      }
+    }
+  }
+
   step(dt: number, inputs: Map<number, Input>): SimEvent[] {
     const ev: SimEvent[] = [];
-    this.t += dt;
+    this.t += dt; this.tick++;
     this.stepRing();
     const ring = this.ring;
 
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const inp = inputs.get(p.id) ?? { mx: 0, my: 0, aim: p.aim, fire: false, dash: false };
-      p.aim = inp.aim;
+      const inp = inputs.get(p.id) ?? { ...emptyInput(), yaw: p.yaw, pitch: p.pitch };
+      p.ack = inp.seq;
+      p.yaw = inp.yaw; p.pitch = inp.pitch;
       p.fireCd = Math.max(0, p.fireCd - dt);
-      p.dashCd = Math.max(0, p.dashCd - dt);
+      p.sinceHurt += dt;
 
-      if (inp.dash && p.dashCd === 0 && (inp.mx || inp.my)) {
-        p.dashT = DASH_TIME; p.dashCd = DASH_CD; p.dashX = inp.mx; p.dashY = inp.my;
+      if (inp.slot >= 1 && inp.slot <= 4 && WEAPON_ORDER[inp.slot - 1] !== p.weapon) {
+        p.weapon = WEAPON_ORDER[inp.slot - 1]; p.reloadT = 0; p.fireCd = Math.max(p.fireCd, 0.25); // swapping cancels a reload
       }
-      let vx = inp.mx * PLAYER_SPEED, vy = inp.my * PLAYER_SPEED;
-      if (p.dashT > 0) { p.dashT -= dt; vx = p.dashX * DASH_SPEED; vy = p.dashY * DASH_SPEED; }
-      p.x += vx * dt; p.y += vy * dt;
-      this.pushOutOfPillars(p);
-      const d = Math.hypot(p.x, p.y), lim = ARENA_R - PLAYER_R;
-      if (d > lim) { p.x *= lim / d; p.y *= lim / d; }
+      const def = WEAPONS[p.weapon];
+      if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) { p.reloadT = 0; p.mag[p.weapon] = def.mag; } }
+      else if ((inp.reload && p.mag[p.weapon] < def.mag) || (inp.fire && p.mag[p.weapon] === 0)) p.reloadT = def.reload;
 
-      this.pickUp(p, ev);
+      moveStep(this.world, p, inp, dt);
+      if (inp.fire && p.fireCd === 0 && p.reloadT === 0 && p.mag[p.weapon] > 0 && !p.gliding) this.fire(p, inp, ev);
 
-      if (inp.fire && p.fireCd === 0) {
-        const w = WEAPONS[p.weapon];
-        p.fireCd = w.cd;
-        for (let i = 0; i < w.pellets; i++) {
-          const a = p.aim + (w.pellets > 1 ? (i / (w.pellets - 1) - 0.5) * w.spread : 0) + (this.rand() - 0.5) * w.spread * 0.4;
-          const cx = Math.cos(a), cy = Math.sin(a);
-          this.bullets.push({
-            id: this.nextBullet++, owner: p.id, x: p.x + cx * (PLAYER_R + 6), y: p.y + cy * (PLAYER_R + 6),
-            vx: cx * w.speed, vy: cy * w.speed, life: w.life, dmg: w.dmg,
-          });
-        }
-        if (p.weapon !== 'pistol' && --p.ammo <= 0) { p.weapon = 'pistol'; p.ammo = Infinity; }
-      }
-
-      if (Math.hypot(p.x - ring.x, p.y - ring.y) > ring.r) {
-        p.hp -= ring.dps * dt; // the storm ignores armor
+      if (p.sinceHurt > REGEN_DELAY && p.hp < PLAYER_HP) p.hp = Math.min(PLAYER_HP, p.hp + REGEN_RATE * dt);
+      if (Math.hypot(p.x - ring.x, p.z - ring.y) > ring.r) {
+        this.hurt(p, ring.dps * dt);
         if (p.hp <= 0) this.eliminate(p.id, null, 'ring', ev);
       }
     }
 
-    // bullets: swept segment vs circle so a fast bullet cannot tunnel through a player at 30 Hz
-    const keep: Bullet[] = [];
-    outer: for (const b of this.bullets) {
-      const x0 = b.x, y0 = b.y;
-      b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      if (b.life <= 0 || Math.hypot(b.x, b.y) > ARENA_R) continue;
-      for (const pl of this.pillars) if (segHitsCircle(x0, y0, b.x, b.y, pl.x, pl.y, pl.r)) continue outer;
-      for (const p of this.players.values()) {
-        if (!p.alive || p.id === b.owner) continue;
-        if (segHitsCircle(x0, y0, b.x, b.y, p.x, p.y, PLAYER_R)) {
-          this.damage(p, b.dmg);
-          ev.push({ kind: 'hit', victim: p.id, by: b.owner });
-          if (p.hp <= 0) this.eliminate(p.id, b.owner, 'shot', ev);
-          continue outer;
-        }
-      }
-      keep.push(b);
-    }
-    this.bullets = keep;
+    const pos = new Map<number, { x: number; y: number; z: number }>();
+    for (const p of this.players.values()) if (p.alive) pos.set(p.id, { x: p.x, y: p.y, z: p.z });
+    this.history.push({ tick: this.tick, pos });
+    if (this.history.length > REWIND_MAX_TICKS + 2) this.history.shift();
     return ev;
   }
-
-  // walk over loot to take it; a full health bar or armor leaves medkits/armor for others
-  private pickUp(p: PlayerState, ev: SimEvent[]) {
-    for (let i = this.loot.length - 1; i >= 0; i--) {
-      const l = this.loot[i];
-      if (Math.hypot(l.x - p.x, l.y - p.y) > PICKUP_R + PLAYER_R) continue;
-      if (l.kind === 'medkit') { if (p.hp >= PLAYER_HP) continue; p.hp = Math.min(PLAYER_HP, p.hp + MEDKIT_HP); }
-      else if (l.kind === 'armor') { if (p.armor >= ARMOR_MAX) continue; p.armor = ARMOR_MAX; }
-      else { if (p.weapon === l.kind && p.ammo >= WEAPONS[l.kind].ammo) continue; p.weapon = l.kind; p.ammo = WEAPONS[l.kind].ammo; }
-      this.loot.splice(i, 1);
-      this.lootVer++;
-      ev.push({ kind: 'pickup', player: p.id, loot: l.kind });
-    }
-  }
-
-  private pushOutOfPillars(p: PlayerState) {
-    for (const pl of this.pillars) {
-      const dx = p.x - pl.x, dy = p.y - pl.y, d = Math.hypot(dx, dy), min = pl.r + PLAYER_R;
-      if (d < min) {
-        const nx = d > 1e-6 ? dx / d : 1, ny = d > 1e-6 ? dy / d : 0;
-        p.x = pl.x + nx * min; p.y = pl.y + ny * min;
-      }
-    }
-  }
-}
-
-export function segHitsCircle(x0: number, y0: number, x1: number, y1: number, cx: number, cy: number, r: number) {
-  const dx = x1 - x0, dy = y1 - y0, fx = x0 - cx, fy = y0 - cy;
-  const a = dx * dx + dy * dy;
-  const t = a > 0 ? clamp(-(fx * dx + fy * dy) / a, 0, 1) : 0;
-  const px = fx + dx * t, py = fy + dy * t;
-  return px * px + py * py <= r * r;
 }

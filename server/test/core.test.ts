@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
-import { Sim, sanitizeInput, segHitsCircle } from '../../shared/src/sim.ts';
-import { ARENA_R, EPOCH_MS, PLAYER_HP, TICK_HZ } from '../../shared/src/constants.ts';
+import { Sim, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input } from '../../shared/src/sim.ts';
+import { World, newBody, rayBox } from '../../shared/src/world.ts';
+import { EPOCH_MS, TICK_HZ } from '../../shared/src/constants.ts';
 import { computePayouts } from '../src/payout.ts';
 import { buildTree, leafHash, verify } from '../src/merkle.ts';
 import { Epochs } from '../src/epoch.ts';
@@ -16,94 +17,183 @@ import { config } from '../src/config.ts';
 const wallet = () => bs58.encode(nacl.sign.keyPair().publicKey);
 const policy = (mode: 'prorata' | 'draw', seed = Buffer.alloc(32, 7)) => ({ mode, rolloverBps: 1000, drawTiersBps: [6000, 2500, 1500], seed });
 
+const inp = (o: Partial<Input> = {}): Input => ({ ...emptyInput(), ...o });
+const DT = 1 / TICK_HZ;
+// a sim on flat empty ground, players placed by hand
+function arena(ids: number[]) {
+  const sim = new Sim(1, World.custom([]));
+  sim.spawn(ids);
+  for (const p of sim.players.values()) { p.y = 0; p.gliding = false; p.grounded = true; p.fireCd = 0; p.pitch = 0; }
+  return sim;
+}
+
 test('sanitizeInput clamps hostile input', () => {
-  const i = sanitizeInput({ mx: 50, my: 50, aim: NaN, fire: 'yes' as unknown as boolean });
-  assert.ok(Math.hypot(i.mx, i.my) <= 1 + 1e-9);
-  assert.equal(i.aim, 0);
-  assert.equal(i.fire, false);
+  const i = sanitizeInput({ fwd: 50, strafe: -9, pitch: 99, yaw: NaN, fire: 'yes' as unknown as boolean, slot: 77 });
+  assert.equal(i.fwd, 1); assert.equal(i.strafe, -1); assert.equal(i.pitch, 1.5); assert.equal(i.yaw, 0);
+  assert.equal(i.fire, false); assert.equal(i.slot, 4);
 });
 
-test('swept bullets cannot tunnel through a player', () => {
-  assert.ok(segHitsCircle(-100, 0, 100, 0, 0, 0, 5));
-  assert.ok(!segHitsCircle(-100, 20, 100, 20, 0, 0, 5));
+test('rays hit boxes and tell heads from bodies', () => {
+  assert.equal(rayBox(0, 1, 0, 1, 0, 0, { x0: 5, y0: 0, z0: -1, x1: 6, y1: 2, z1: 1 }), 5);
+  assert.equal(rayBox(0, 3, 0, 1, 0, 0, { x0: 5, y0: 0, z0: -1, x1: 6, y1: 2, z1: 1 }), -1);
+  assert.equal(rayPlayer(0, 1.62, 0, 1, 0, 0, 10, 0, 0)?.head, true);
+  assert.equal(rayPlayer(0, 1.0, 0, 1, 0, 0, 10, 0, 0)?.head, false);
+  assert.equal(rayPlayer(0, 2.5, 0, 1, 0, 0, 10, 0, 0), null);
 });
 
-test('a player shot to zero is eliminated and credited', () => {
-  const sim = new Sim(1);
-  sim.pillars = [];
-  sim.spawn([1, 2]);
+test('walls stop you, stairs take you to the roof', () => {
+  const steps = Array.from({ length: 8 }, (_, i) => ({ x0: -1, y0: 0, z0: -2 - (i + 1) * 0.6, x1: 1, y1: (i + 1) * 0.5, z1: -2 - i * 0.6, ink: 2, kind: 'stair' as const }));
+  const roof = { x0: -5, y0: 0, z0: -20, x1: 5, y1: 4, z1: -2 - 8 * 0.6, ink: 0, kind: 'building' as const };
+  const w = World.custom([...steps, roof, { x0: 3, y0: 0, z0: -1, x1: 4, y1: 3, z1: 1, ink: 2, kind: 'wall' }]);
+  const p = newBody(0, 0, 0); p.grounded = true;
+  for (let i = 0; i < 60; i++) moveStep(w, p, inp({ strafe: 1, yaw: 0 }), DT); // walk +x into the wall
+  assert.ok(p.x < 3 - 0.39 && p.x > 2.5, `stopped at the wall, x=${p.x}`);
+  p.x = 0;
+  for (let i = 0; i < 45; i++) moveStep(w, p, inp({ fwd: 1, yaw: 0 }), DT); // walk -z up the stairs (9 m)
+  assert.ok(Math.abs(p.y - 4) < 1e-6, `on the roof, y=${p.y}`);
+});
+
+test('players glide in from the sky and land', () => {
+  const sim = new Sim(3, World.custom([]));
+  sim.spawn([1]);
+  const p = sim.players.get(1)!;
+  assert.ok(p.gliding && p.y > 50);
+  for (let i = 0; i < TICK_HZ * 15 && p.gliding; i++) sim.step(DT, new Map([[1, inp({ yaw: p.yaw, fwd: 1 })]]));
+  assert.equal(p.gliding, false);
+  assert.equal(p.y, 0);
+});
+
+test('a rifle kills a target on open ground; headshots hit harder', () => {
+  const sim = arena([1, 2]);
   const a = sim.players.get(1)!, b = sim.players.get(2)!;
-  sim.loot = [];
-  a.x = 0; a.y = 0; b.x = 200; b.y = 0; a.fireCd = 0;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -20;
   const ev = [];
-  for (let i = 0; i < TICK_HZ * 4 && b.alive; i++) {
-    ev.push(...sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]])));
-    b.x = 200; b.y = 0; // pin the target
-  }
+  for (let i = 0; i < TICK_HZ * 3 && b.alive; i++) ev.push(...sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.035, fire: true, view: sim.tick })]]))); // chest height
   assert.equal(b.alive, false);
   assert.equal(a.kills, 1);
-  assert.ok(ev.some((e) => e.kind === 'elim' && e.victim === 2 && e.by === 1));
+  const body = sim.players.size && ev.find((e) => e.kind === 'hit' && !e.head);
+  assert.ok(body);
+  // eye level is head height: a level shot at a standing target is a headshot
+  const s2 = arena([1, 2]);
+  const c = s2.players.get(1)!, d = s2.players.get(2)!;
+  c.x = 0; c.z = 0; d.x = 0; d.z = -15;
+  const [hit] = s2.step(DT, new Map([[1, inp({ yaw: 0, pitch: 0, fire: true })]])).filter((e) => e.kind === 'hit');
+  assert.ok(hit && hit.kind === 'hit' && hit.head && hit.dmg > 19);
+});
+
+test('lag compensation: a shot lands where the shooter saw the target', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -20;
+  sim.step(DT, new Map());
+  const seen = sim.tick;
+  for (let i = 0; i < 4; i++) { b.x += 1.5; sim.step(DT, new Map()); } // target strafes 6 m away
+  a.fireCd = 0;
+  const now = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.03, fire: true, view: seen })]]));
+  assert.ok(now.some((e) => e.kind === 'hit'), 'rewound hit');
+  const sim2 = arena([1, 2]);
+  const c = sim2.players.get(1)!, d = sim2.players.get(2)!;
+  c.x = 0; c.z = 0; d.x = 6; d.z = -20;
+  assert.ok(!sim2.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.03, fire: true, view: sim2.tick + 1 })]])).some((e) => e.kind === 'hit'), 'no rewind, no hit');
 });
 
 test('the storm eventually kills anyone outside it', () => {
-  const sim = new Sim(2);
-  sim.spawn([1]);
+  const sim = arena([1]);
   const p = sim.players.get(1)!;
-  for (let i = 0; i < TICK_HZ * 200 && p.alive; i++) {
-    // stand on the far side of the safe circle
-    const g = sim.ring, a = Math.atan2(-g.y, -g.x);
-    p.x = Math.cos(a) * (ARENA_R - 30); p.y = Math.sin(a) * (ARENA_R - 30);
-    if (Math.hypot(p.x - g.x, p.y - g.y) < g.r) { p.x = g.x + g.r + 40; p.y = g.y; }
-    sim.step(1 / TICK_HZ, new Map());
+  for (let i = 0; i < TICK_HZ * 500 && p.alive; i++) {
+    const g = sim.ring, a = Math.atan2(-g.y, -g.x), r = Math.min(155, g.r + 20);
+    p.x = g.x + Math.cos(a) * r; p.z = g.y + Math.sin(a) * r;
+    sim.step(DT, new Map());
   }
   assert.equal(p.alive, false);
-  assert.ok(PLAYER_HP > 0);
 });
 
 test('each storm circle sits inside the previous one', () => {
-  for (let seed = 1; seed < 30; seed++) {
-    const sim = new Sim(seed);
-    let prev = { x: sim.ring.x, y: sim.ring.y, r: sim.ring.r };
-    for (let i = 0; i < TICK_HZ * 120; i++) {
-      sim.step(1 / TICK_HZ, new Map());
+  for (let seed = 1; seed < 20; seed++) {
+    const sim = new Sim(seed, World.custom([]));
+    let prevR = sim.ring.r;
+    for (let i = 0; i < TICK_HZ * 420; i++) {
+      sim.step(DT, new Map());
       const g = sim.ring;
       assert.ok(Math.hypot(g.nx - g.x, g.ny - g.y) + g.nr <= g.r + 1e-6, `seed ${seed} next circle escapes`);
-      assert.ok(g.r <= prev.r + 1e-6);
-      prev = { x: g.x, y: g.y, r: g.r };
+      assert.ok(g.r <= prevR + 1e-6);
+      prevR = g.r;
     }
+    assert.equal(sim.ring.r, 0);
   }
 });
 
-test('loot: pick up a shotgun, it fires pellets and runs dry back to the pistol', () => {
-  const sim = new Sim(5);
-  sim.pillars = [];
-  sim.spawn([1]);
+test('everyone has all four guns; magazines empty and reload', () => {
+  const sim = arena([1]);
   const p = sim.players.get(1)!;
-  sim.loot = [{ id: 1, x: p.x, y: p.y, kind: 'shotgun' }];
-  sim.step(1 / TICK_HZ, new Map());
+  assert.equal(p.weapon, 'rifle');
+  sim.step(DT, new Map([[1, inp({ slot: 2 })]]));
   assert.equal(p.weapon, 'shotgun');
-  assert.equal(sim.loot.length, 0);
   p.fireCd = 0;
-  sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]]));
-  assert.equal(sim.bullets.length, 6);
-  for (let i = 0; i < 400 && p.weapon === 'shotgun'; i++) { p.fireCd = 0; sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]])); }
-  assert.equal(p.weapon, 'pistol');
+  sim.step(DT, new Map([[1, inp({ fire: true })]]));
+  assert.equal(sim.shots.length, 9);
+  assert.equal(p.mag.shotgun, 5);
+  for (let i = 0; i < 400 && p.mag.shotgun > 0; i++) { p.fireCd = 0; sim.step(DT, new Map([[1, inp({ fire: true })]])); }
+  assert.equal(p.mag.shotgun, 0);
+  sim.step(DT, new Map([[1, inp({ fire: true })]])); // trigger on empty starts the reload
+  assert.ok(p.reloadT > 0);
+  for (let i = 0; i < TICK_HZ * 3; i++) sim.step(DT, new Map());
+  assert.equal(p.mag.shotgun, 6);
 });
 
-test('armor soaks bullets, medkits heal but never above max', () => {
-  const sim = new Sim(6);
-  sim.pillars = [];
-  sim.spawn([1, 2]);
-  const a = sim.players.get(1)!, b = sim.players.get(2)!;
-  a.x = 0; a.y = 0; b.x = 150; b.y = 0; b.armor = 50; a.fireCd = 0;
-  for (let i = 0; i < 20 && sim.bullets.length === 0; i++) sim.step(1 / TICK_HZ, new Map([[1, { mx: 0, my: 0, aim: 0, fire: true, dash: false }]]));
-  for (let i = 0; i < 10; i++) { b.x = 150; b.y = 0; sim.step(1 / TICK_HZ, new Map()); }
-  assert.equal(b.hp, 100);
-  assert.ok(b.armor < 50);
-  b.hp = 80;
-  sim.loot = [{ id: 9, x: b.x, y: b.y, kind: 'medkit' }];
-  sim.step(1 / TICK_HZ, new Map());
-  assert.equal(b.hp, 100);
+test('health comes back after a few seconds out of combat', () => {
+  const sim = arena([1]);
+  const p = sim.players.get(1)!;
+  p.hp = 40; p.sinceHurt = 0;
+  for (let i = 0; i < TICK_HZ * 4; i++) sim.step(DT, new Map());
+  assert.equal(Math.round(p.hp), 40);
+  for (let i = 0; i < TICK_HZ * 6; i++) sim.step(DT, new Map());
+  assert.equal(p.hp, 100);
+});
+
+test('movement kit: double jump, air dash, slide, wall jump, grapple', () => {
+  const flat = World.custom([]);
+  const p = newBody(0, 0, 0); p.grounded = true;
+  moveStep(flat, p, inp({ jump: true }), DT);
+  for (let i = 0; i < 8; i++) moveStep(flat, p, inp(), DT);
+  const y1 = p.y;
+  moveStep(flat, p, inp({ jump: true }), DT); // second jump in the air
+  for (let i = 0; i < 8; i++) moveStep(flat, p, inp(), DT);
+  assert.ok(p.y > y1 + 0.5, 'double jump gains height');
+  assert.equal(p.airJumps, 0);
+  moveStep(flat, p, inp({ jump: true }), DT); // no third jump
+  assert.ok(p.vy < 0);
+
+  const d = newBody(0, 5, 0);
+  moveStep(flat, d, inp({ slide: true, fwd: 1 }), DT);
+  assert.ok(Math.hypot(d.vx, d.vz) > 15 && d.vy === 0, 'air dash bursts forward and holds height');
+  assert.equal(d.dashReady, false);
+
+  const s = newBody(0, 0, 0); s.grounded = true;
+  for (let i = 0; i < 5; i++) moveStep(flat, s, inp({ fwd: 1, sprint: true }), DT);
+  moveStep(flat, s, inp({ slide: true, fwd: 1 }), DT);
+  assert.ok(s.slideT > 0 && Math.hypot(s.vx, s.vz) > 10.5, 'slide boosts speed past sprint (8.6)');
+
+  const wall = World.custom([{ x0: 2, y0: 0, z0: -5, x1: 3, y1: 10, z1: 5, ink: 2, kind: 'wall' }]);
+  const wj = newBody(0, 8, 0); wj.airJumps = 0;
+  for (let i = 0; i < 12; i++) moveStep(wall, wj, inp({ strafe: 1 }), DT); // drift into the wall
+  assert.ok(wj.wallT < 0.2);
+  moveStep(wall, wj, inp({ jump: true }), DT);
+  assert.ok(wj.vy > 5 && wj.vx < -4, 'wall jump kicks up and away');
+
+  const g = newBody(0, 0, 0); g.grounded = true;
+  let top = 0;
+  for (let i = 0; i < 25; i++) { moveStep(wall, g, inp({ grapple: true, yaw: -Math.PI / 2, pitch: 0.5 }), DT); top = Math.max(top, g.y); }
+  assert.ok(g.x > 1.2 && top > 0.8, `grapple pulls up to the wall (x=${g.x.toFixed(2)}, top=${top.toFixed(2)})`);
+});
+
+test('the generated island: every rooftop is reachable by its stairs', () => {
+  const w = new World(1234);
+  assert.ok(w.roofs.length > 20);
+  for (const roof of w.roofs) {
+    const top = w.boxes.filter((b) => b.kind === 'stair').some((b) => Math.abs(b.y1 - roof.y) < 1e-6 && (Math.abs(b.x1 - roof.x0) < 1e-6 || Math.abs(b.x0 - roof.x1) < 1e-6));
+    assert.ok(top, `roof at ${roof.x0},${roof.z0} has a top step`);
+  }
 });
 
 test('prorata never pays more than the pot and keeps dust in rollover', () => {

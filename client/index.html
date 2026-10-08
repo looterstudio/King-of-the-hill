@@ -43,7 +43,7 @@
         <h2>How to play</h2>
         <ol class="steps">
           <li><b>Connect a wallet</b> holding <span id="holdReq" class="hl">$50 of the token</span></li>
-          <li><b>Drop into a room of 10.</b> Grab loot, outrun the storm.</li>
+          <li><b>Drop into a battle royale of up to 100.</b> Everyone gets the same four guns.</li>
           <li><b>Last one standing</b> wins 1 ticket.</li>
           <li><b>Every 6 hours</b> the pot is split by tickets.</li>
         </ol>
@@ -86,36 +86,62 @@
       <div class="fillbar" aria-hidden="true"><div id="fillBar"></div></div>
     </div>
     <div id="seats" class="seats"></div>
-    <p class="room-foot">10 drop in. 1 walks out with the ticket.</p>
+    <p class="room-foot">Up to 100 drop in. 1 walks out with the ticket.</p>
     <button id="leaveBtn" class="btn ghost">Leave room</button>
   </div>
 </section>
 
 <!-- ============ HUD ============ -->
 <section id="hud" class="hidden">
+  <div id="tags" class="tags"></div>
   <div class="hud-tl">
-    <div class="alive"><b id="aliveCount">10</b><span>alive</span></div>
-    <div id="tally" class="tally" aria-hidden="true"></div>
+    <div class="alive"><b id="aliveCount">0</b><span>alive</span></div>
+    <div class="kills">kills <b id="killCount">0</b></div>
   </div>
-  <div class="hud-tc"><div id="storm" class="storm">storm moves in 14s</div></div>
+  <div class="hud-tc"><div id="storm" class="storm">storm moves in --s</div></div>
   <div class="hud-tr">
     <div class="mini-label">pot</div>
     <div id="miniPot" class="mini-pot">◎ 0</div>
+    <canvas id="minimap" width="170" height="170"></canvas>
   </div>
+  <div id="crosshair" class="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="dot"></i></div>
+  <div id="scope" class="scope hidden"></div>
+  <div id="hitmarker" class="hitmarker"><i></i><i></i></div>
+  <div id="dmg" class="dmg"></div>
   <div id="feed" class="feed"></div>
   <div class="hud-bl">
-    <div class="bars">
-      <div class="bar-row"><span>health</span><div class="bar hp"><div id="hpFill"></div></div><b id="hpNum">100</b></div>
-      <div class="bar-row"><span>armor</span><div class="bar armor"><div id="armorFill"></div></div><b id="armorNum">0</b></div>
-    </div>
-    <div class="keys"><kbd>WASD</kbd> move <kbd>click</kbd> shoot <kbd>space</kbd> dash</div>
+    <div class="hp-row"><span>HP</span><div class="bar hp"><div id="hpFill"></div></div><b id="hpNum">100</b></div>
+    <div class="ammo-row"><b id="ammo">30</b><span id="ammoMax">/30</span><em id="reloading" class="hidden">reloading…</em></div>
+    <div id="magTally" class="tally"></div>
   </div>
   <div class="hud-br">
-    <div id="weapon" class="weapon">pistol</div>
-    <div id="ammo" class="ammo">∞</div>
+    <ol id="weapons" class="weapons"></ol>
+    <div id="weapon" class="weapon">rifle</div>
   </div>
-  <div id="pickup" class="pickup"></div>
+  <div id="hint" class="hint"></div>
   <div id="banner" class="banner hidden"></div>
+</section>
+
+<section id="pause" class="pause hidden">
+  <div class="pause-card">
+    <h2 id="pauseTitle">Click to drop in</h2>
+    <p class="pause-sub">You glide down first. Steer with the mouse, land anywhere, then fight.</p>
+    <button id="resumeBtn" class="btn play">Play</button>
+    <div class="controls">
+      <div><h4>Mouse + keyboard</h4>
+        <p><kbd>WASD</kbd> move · <kbd>Mouse</kbd> look · <kbd>Shift</kbd> sprint</p>
+        <p><kbd>LMB</kbd> fire · <kbd>RMB</kbd> aim down sights</p>
+        <p><kbd>Space</kbd> jump · again in the air = double jump · on a wall = wall jump</p>
+        <p><kbd>C</kbd>/<kbd>Ctrl</kbd> slide on the ground · air dash in the air</p>
+        <p><kbd>Q</kbd>/<kbd>E</kbd> hold to grapple and reel in</p>
+        <p><kbd>R</kbd> reload · <kbd>1-4</kbd>/<kbd>wheel</kbd> rifle · shotgun · sniper · pistol</p>
+        <p><kbd>Esc</kbd> pause</p>
+      </div>
+    </div>
+    <label class="setting">look sensitivity <input id="sens" type="range" min="0.3" max="2.5" step="0.05" /> <b id="sensVal">100%</b></label>
+    <label class="setting"><input id="invert" type="checkbox" /> invert vertical look</label>
+    <button id="quitBtn" class="btn ghost">Leave match</button>
+  </div>
 </section>
 
 <script type="module" src="./src/main.ts"></script>

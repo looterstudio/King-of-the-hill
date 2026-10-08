@@ -92,7 +92,7 @@ async function checkHold(wallet: string): Promise<string | null> {
 async function onMessage(c: Client, msg: ClientMsg) {
   switch (msg.t) {
     case 'in': {
-      if (c.room?.phase === 'live') c.input = sanitizeInput(msg);
+      if (c.room?.phase === 'live') c.pushInput(sanitizeInput(msg));
       return;
     }
     case 'auth': {

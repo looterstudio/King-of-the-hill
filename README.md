@@ -1,9 +1,13 @@
 # Pot Royale
 
-10-player elimination rooms. The token's trading fees fill one shared pot; every 6 hours
-(00/06/12/18 UTC) the pot pays out to the wallets that won rooms during those 6 hours.
-The game is drawn in ballpoint on notebook paper, and the lobby shows the pot as a glass piggy bank
-hanging from the ceiling that fills with coins as fees come in.
+A first-person battle royale drawn in ballpoint on graph paper, for up to 100 players per match.
+Everyone glides in from the sky with the same four guns (rifle, shotgun, sniper, pistol) and the
+same movement kit: sprint, slide, double jump, wall jump, air dash and a grapple. The storm closes
+in five phases; the last player standing wins the match and a ticket. The token's trading fees
+fill one shared pot, and every 6 hours (00/06/12/18 UTC) it pays out to the wallets that won.
+
+The look and feel follow the ballpoint-shooter genre (ink outlines, hatching, notebook paper);
+all code here is original.
 
 ## Run it locally
 
@@ -14,7 +18,8 @@ npm run dev:client      # vite on :5173, proxies /ws and /api to the server
 ```
 
 Open two tabs at http://localhost:5173, join as guests, and click **Find a room** in both.
-A room starts at 10 players, or 20 s after the second player joins.
+A match starts at 100 players, or 45 s after the second player joins. `npm run build:demo` builds a
+single-player version that runs entirely in the browser against bots.
 
 Production: `npm run build && npm start` (the server serves `dist/`). Or `docker build -t pot-royale .`
 
@@ -27,8 +32,8 @@ cargo test -p pot_vault             # on-chain merkle matches the server tree by
 npm run loadtest -- --bots 2000     # bot swarm against a running server
 ```
 
-Measured on one Node process (4 vCPU container): **2000 bots, 192 rooms at once, 6–10 ms per
-tick against a 33 ms budget, 0 errors.**
+Measured on one Node process (4 vCPU container): **400 bots in four full 100-player matches,
+2.5–10 ms per tick against a 33 ms budget, 0 errors.**
 
 ## How a round of money moves
 
@@ -39,8 +44,8 @@ tick against a 33 ms budget, 0 errors.**
    price, so pumping the price for a block does not let a small wallet in. The check runs at login
    **and on every room join**, so selling after signing in doesn't keep you playing. If the price
    feed is down, new joins are refused (fail closed). Guests can't play when a hold is required.
-3. Winning a room is worth 1 ticket. A ticket only counts if the room started with at least
-   `MIN_VERIFIED_FOR_TICKET` distinct wallets, so two of your own wallets can't farm a 2-player room.
+3. Winning a match is worth 1 ticket. A ticket only counts if the match started with at least
+   `MIN_VERIFIED_FOR_TICKET` distinct wallets, so a handful of your own wallets can't farm a near-empty match.
 4. At the 6h boundary the server takes a snapshot of the free vault balance, keeps `ROLLOVER_BPS` (10%) to start
    the next pot, splits the rest (`PAYOUT_MODE=prorata` by tickets, or `draw` with weighted 60/25/15
    tiers seeded by commit-reveal), and writes `data/epochs/<epoch>.json` with a merkle root and a proof per winner.

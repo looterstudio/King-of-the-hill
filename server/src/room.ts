@@ -6,8 +6,8 @@ import {
   COUNTDOWN_MS, FILL_WAIT_MS, RESULT_MS, ROOM_MAX, ROOM_MIN, ROUND_MAX_MS, SNAP_EVERY, TICK_HZ,
 } from '../../shared/src/constants.ts';
 import type { RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
-import { Sim, type Input } from '../../shared/src/sim.ts';
-import { encodeSnap } from '../../shared/src/snap.ts';
+import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
+import { frame, snapFor } from '../../shared/src/snap.ts';
 
 const SOFT_BUFFER = 256 * 1024;      // skip snapshots to a client this far behind
 const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
@@ -15,7 +15,16 @@ const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
 export class Client {
   room: Room | null = null;
   queued = false;
-  input: Input = { mx: 0, my: 0, aim: 0, fire: false, dash: false };
+  // one input per tick, in order: the client predicts with the same inputs, so none may be skipped
+  // or doubled. A client sending faster than 30 Hz only fills the queue; it never moves faster.
+  queue: Input[] = [];
+  last: Input = emptyInput();
+  pushInput(i: Input) { this.queue.push(i); if (this.queue.length > 10) this.queue.shift(); }
+  nextInput(): Input {
+    const i = this.queue.shift();
+    if (i) { this.last = i; return i; }
+    return { ...this.last, jump: false, slot: 0 }; // late packet: keep walking, don't re-trigger one-shots
+  }
   name = '';
   wallet: string | null = null;
   authed = false;
@@ -55,7 +64,6 @@ export class Room {
   private fillDeadline: number | null = null;
   startsAt: number | null = null;
   private overAt = 0;
-  private tick = 0;
   private liveSince = 0;
   verifiedAtStart = 0;
   closed = false;
@@ -96,8 +104,15 @@ export class Room {
   private emitElims(ev: ReturnType<Sim['step']>) {
     if (!this.sim) return;
     for (const e of ev) {
-      if (e.kind === 'elim') this.broadcast({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive });
-      else if (e.kind === 'pickup') this.broadcast({ t: 'event', kind: 'pickup', player: e.player, loot: e.loot });
+      if (e.kind === 'elim') {
+        if (e.by !== null) for (const [k, v] of this.watching) if (v === e.victim) this.watching.set(k, e.by);
+        this.watching.set(e.victim, e.by ?? e.victim);
+        this.broadcast({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive, head: e.head });
+      } else if (e.kind === 'hit') {
+        // hit feedback only matters to the two people involved
+        const s = JSON.stringify({ t: 'event', kind: 'hit', victim: e.victim, by: e.by, dmg: e.dmg, head: e.head });
+        for (const c of this.seats) if (c.id === e.victim || c.id === e.by) c.sendRaw(s);
+      }
     }
   }
 
@@ -116,6 +131,7 @@ export class Room {
         if (this.startsAt !== null && now >= this.startsAt) {
           this.phase = 'live'; this.liveSince = now;
           this.sim = new Sim(this.seed);
+          for (const c of this.seats) { c.queue = []; c.last = emptyInput(); }
           this.sim.spawn(this.seats.map((c) => c.id));
           this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
           this.announce();
@@ -125,9 +141,9 @@ export class Room {
       case 'live': {
         const sim = this.sim!;
         const inputs = new Map<number, Input>();
-        for (const c of this.seats) if (c.room === this) inputs.set(c.id, c.input);
+        for (const c of this.seats) if (c.room === this) inputs.set(c.id, c.nextInput());
         this.emitElims(sim.step(1 / TICK_HZ, inputs));
-        if (++this.tick % SNAP_EVERY === 0) this.snapshot();
+        if (sim.tick % SNAP_EVERY === 0) this.snapshot();
         if (sim.alive <= 1 || now - this.liveSince > ROUND_MAX_MS) this.finish(now);
         break;
       }
@@ -141,13 +157,21 @@ export class Room {
     }
   }
 
-  private sentLootVer = -1;
+  // dead players keep watching whoever eliminated them (or anyone still standing)
+  private watching = new Map<number, number>();
   private snapshot() {
-    const sim = this.sim!;
-    // loot goes out when it changes, and once a second anyway for clients that skipped a snapshot
-    const withLoot = sim.lootVer !== this.sentLootVer || this.tick % TICK_HZ === 0;
-    this.sentLootVer = sim.lootVer;
-    this.broadcast(encodeSnap(sim, this.tick, withLoot), true);
+    const f = frame(this.sim!);
+    for (const c of this.seats) {
+      if (c.room !== this) continue;
+      let watch = c.id;
+      const me = this.sim!.players.get(c.id);
+      if (me && !me.alive) {
+        let w = this.watching.get(c.id);
+        if (w === undefined || !this.sim!.players.get(w)?.alive) { w = [...this.sim!.players.values()].find((p) => p.alive)?.id ?? c.id; this.watching.set(c.id, w); }
+        watch = w;
+      }
+      c.sendRaw(JSON.stringify(snapFor(f, c.id, watch)), true);
+    }
   }
 
   private finish(now: number) {

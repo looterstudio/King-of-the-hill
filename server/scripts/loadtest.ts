@@ -13,7 +13,7 @@ let snaps = 0, results = 0, open = 0, errors = 0;
 
 function bot(i: number) {
   const ws = new WebSocket(URL_);
-  let me = -1, players: { id: number; x: number; y: number; alive: boolean }[] = [];
+  let me = -1, self: { x: number; z: number; alive: boolean } | null = null, others: number[][] = [];
   let live = false;
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   ws.on('open', () => { open++; });
@@ -23,21 +23,17 @@ function bot(i: number) {
     if (m.t === 'hello') send({ t: 'guest', name: `bot${i}` });
     else if (m.t === 'authed') send({ t: 'queue' });
     else if (m.t === 'room') { me = m.you; live = m.state === 'live'; }
-    else if (m.t === 'snap') { snaps++; players = m.players; }
+    else if (m.t === 'snap') { snaps++; self = m.self; others = m.others; }
     else if (m.t === 'result') { results++; live = false; setTimeout(() => send({ t: 'queue' }), 6500 + Math.random() * 1500); }
   });
-  let a = Math.random() * 6;
+  let yaw = Math.random() * 6, seq = 0;
   const timer = setInterval(() => {
-    if (!live) return;
-    const self = players.find((p) => p.id === me);
-    if (!self || !self.alive) return;
-    let target = null, best = Infinity;
-    for (const p of players) if (p.alive && p.id !== me) { const d = Math.hypot(p.x - self.x, p.y - self.y); if (d < best) { best = d; target = p; } }
-    a += (Math.random() - 0.5) * 0.6;
-    const toCenter = Math.atan2(-self.y, -self.x);
-    const mv = Math.hypot(self.x, self.y) > 300 ? toCenter : a;
-    const aim = target ? Math.atan2(target.y - self.y, target.x - self.x) : a;
-    send({ t: 'in', seq: 0, mx: Math.cos(mv), my: Math.sin(mv), aim, fire: !!target && best < 700, dash: Math.random() < 0.02 });
+    if (!live || !self || !self.alive) return;
+    let target: number[] | null = null, best = Infinity;
+    for (const o of others) { const d = Math.hypot(o[1] - self.x, o[3] - self.z); if (d < best) { best = d; target = o; } }
+    if (target) yaw = Math.atan2(-(target[1] - self.x), -(target[3] - self.z));
+    else yaw += (Math.random() - 0.5) * 0.3;
+    send({ t: 'in', seq: ++seq, fwd: 1, strafe: Math.sin(seq / 20), yaw, pitch: 0, jump: Math.random() < 0.01, sprint: true, slide: false, grapple: false, fire: !!target && best < 120, aim: false, reload: false, slot: 0, view: 0 });
   }, 1000 / 30);
   return () => { clearInterval(timer); ws.close(); };
 }

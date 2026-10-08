@@ -1,4 +1,6 @@
-import type { LootKind, WeaponId } from './constants.ts';
+import type { WeaponId } from './constants.ts';
+import type { Input } from './sim.ts';
+import type { Body } from './world.ts';
 
 // Wire protocol. JSON over a single WebSocket per player. Clients only ever send intent
 // (inputs, queue requests); every outcome is decided by the server.
@@ -25,13 +27,18 @@ export interface SettledView {
   reveal: string;
 }
 
-export interface SnapPlayer {
-  id: number; x: number; y: number; aim: number; hp: number; armor: number; alive: boolean; dash: boolean;
-  weapon: WeaponId; ammo: number; // ammo -1 = unlimited (pistol)
+// your own player, in full: the client replays unacknowledged inputs from this exact state
+export interface SnapSelf extends Body {
+  yaw: number; pitch: number; hp: number; alive: boolean; weapon: WeaponId;
+  mag: [number, number, number, number]; // rifle, shotgun, sniper, pistol
+  reloadT: number; ack: number; kills: number;
 }
+// everyone else within VIEW_RANGE, compact: [id, x, y, z, yaw, pitch, hp, flags, weaponIdx, gx?, gy?, gz?]
+// flags: 1 alive, 2 sliding, 4 grappling (anchor appended), 8 gliding
+export type SnapOther = number[];
+export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8;
+// ring center is (x, y) on the ground plane, i.e. world x and z
 export interface SnapRing { x: number; y: number; r: number; nx: number; ny: number; nr: number; closing: boolean; nextIn: number; phase: number }
-export interface SnapLoot { id: number; x: number; y: number; kind: LootKind }
-export interface SnapBullet { id: number; x: number; y: number; vx: number; vy: number }
 
 export interface RoomSeat { id: number; num: string; name: string; verified: boolean }
 
@@ -44,9 +51,9 @@ export type ServerMsg =
   | { t: 'settled'; settled: SettledView }
   | { t: 'queued'; position: number }
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number }
-  | { t: 'snap'; tick: number; time: number; ring: SnapRing; players: SnapPlayer[]; bullets: SnapBullet[]; loot?: SnapLoot[] }
-  | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left'; left: number }
-  | { t: 'event'; kind: 'pickup'; player: number; loot: LootKind }
+  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][] } // shot = [ox,oy,oz,ex,ey,ez,by,hit]
+  | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left'; left: number; head: boolean }
+  | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean }
   | { t: 'result'; winner: number | null; ticketAwarded: boolean; epoch: number };
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
@@ -56,6 +63,6 @@ export type ClientMsg =
   | { t: 'guest'; name: string }
   | { t: 'queue' }
   | { t: 'leave' }
-  | { t: 'in'; seq: number; mx: number; my: number; aim: number; fire: boolean; dash: boolean };
+  | ({ t: 'in' } & Input);
 
 export const loginMessage = (nonce: string) => `Pot Royale login\nnonce: ${nonce}`;
