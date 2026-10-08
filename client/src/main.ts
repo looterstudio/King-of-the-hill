@@ -1,7 +1,9 @@
+/// <reference types="vite/client" />
 import bs58 from 'bs58';
 import { RESULT_MS, ROOM_MAX, TICK_HZ } from '../../shared/src/constants.ts';
 import { loginMessage, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { Net } from './net.ts';
+import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Arena } from './arena.ts';
 import { Input } from './input.ts';
@@ -12,7 +14,9 @@ const fmtSol = (v: number) => `◎ ${v.toLocaleString('en-US', { minimumFraction
 const hms = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return [s / 3600, (s % 3600) / 60, s % 60].map((v) => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-const net = new Net();
+// `vite build --mode demo` runs the whole game in the browser with bots; otherwise talk to the server
+const DEMO = import.meta.env.MODE === 'demo';
+const net: Net | LocalNet = DEMO ? new LocalNet() : new Net();
 const jar = new PotJar($<HTMLCanvasElement>('jar'));
 const arenaCanvas = $<HTMLCanvasElement>('arena');
 const arena = new Arena(arenaCanvas);
@@ -59,6 +63,7 @@ try { $<HTMLInputElement>('guestName').value = localStorage.getItem('pr_name') ?
 interface Phantom { connect(): Promise<{ publicKey: { toString(): string } }>; signMessage(m: Uint8Array, enc: 'utf8'): Promise<{ signature: Uint8Array }>; publicKey?: { toString(): string } }
 $('connectBtn').onclick = async () => {
   const w = window as unknown as { phantom?: { solana?: Phantom }; solana?: Phantom };
+  if (DEMO) return err('en la demo entrá como invitado; la wallet se usa en la versión real');
   const prov = w.phantom?.solana ?? w.solana;
   if (!prov) { open('https://phantom.app/', '_blank'); return err('instalá Phantom para jugar con wallet'); }
   try {

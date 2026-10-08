@@ -4,3 +4,4 @@ data
 target
 .env
 *.log
+dist-demo

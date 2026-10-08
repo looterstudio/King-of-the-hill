@@ -16,7 +16,7 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Oswald', system-ui, sans-serif; overflow: hidden; }
 button, input { font: inherit; }
 .hidden { display: none !important; }
-#arena { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+#arena { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
 .screen { position: fixed; inset: 0; overflow-y: auto; padding: 16px; background: radial-gradient(ellipse at 50% 0%, #1b2130 0%, var(--bg) 70%); }
 .top { display: flex; justify-content: space-between; align-items: center; max-width: 1100px; margin: 0 auto; }

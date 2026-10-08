@@ -6,6 +6,7 @@
     "dev:server": "tsx watch server/src/index.ts",
     "dev:client": "vite client",
     "build": "vite build client --outDir ../dist --emptyOutDir",
+    "build:demo": "vite build client --mode demo --outDir ../dist-demo --emptyOutDir",
     "start": "NODE_ENV=production tsx server/src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test server/test/*.test.ts",
