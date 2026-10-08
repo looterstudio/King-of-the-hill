@@ -58,6 +58,7 @@ uniform mat4 uInvProj, uCamWorld;
 uniform vec3 uCamPos;
 uniform vec3 uRing;   // x, z, r of the safe circle
 uniform vec3 uNext;   // x, z, r of the next circle
+uniform vec4 uDanger; // x, z, r, pulse of an incoming nuke (r = 0: none)
 varying vec2 vUv;
 
 const vec3 PAPER = vec3(0.965, 0.949, 0.894);
@@ -137,6 +138,15 @@ void main() {
       float dc = abs(length(wpos.xz - uRing.xy) - uRing.z);
       if (dc < 0.45) col = mix(col, inkColor(1.0), 0.9);
     }
+    // incoming nuke: a pulsing red target painted over everything inside its radius
+    if (uDanger.z > 0.0) {
+      float dd = length(wpos.xz - uDanger.xy);
+      if (dd < uDanger.z) {
+        float h = step(mod(frag.x - frag.y, 7.0 * uPx), 1.6 * uPx);
+        col = mix(col, inkColor(1.0), (0.18 + 0.5 * h) * uDanger.w);
+        if (abs(dd - uDanger.z) < 0.6 || abs(dd - uDanger.z * 0.5) < 0.4) col = mix(col, inkColor(1.0), 0.95);
+      }
+    }
   }
 
   // the storm: red hatching on everything beyond the safe circle's wall
@@ -182,7 +192,7 @@ export class InkRenderer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1));
     this.renderer.autoClear = false;
-    this.camera = new THREE.PerspectiveCamera(78, 1, 0.08, 700);
+    this.camera = new THREE.PerspectiveCamera(78, 1, 0.15, 700);
     this.viewCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
     this.rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
     this.rt.depthTexture = new THREE.DepthTexture(4, 4, THREE.UnsignedIntType);
@@ -192,7 +202,7 @@ export class InkRenderer {
         tBuf: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture }, uRes: { value: new THREE.Vector2() },
         uNear: { value: this.camera.near }, uFar: { value: this.camera.far }, uTime: { value: 0 }, uPx: { value: 1 },
         uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
-        uRing: { value: new THREE.Vector3(0, 0, 1e4) }, uNext: { value: new THREE.Vector3(0, 0, 0) },
+        uRing: { value: new THREE.Vector3(0, 0, 1e4) }, uNext: { value: new THREE.Vector3(0, 0, 0) }, uDanger: { value: new THREE.Vector4(0, 0, 0, 0) },
       },
     }));
     this.post.frustumCulled = false;
@@ -202,12 +212,18 @@ export class InkRenderer {
   }
 
   // one material per ink for plain meshes; instanced meshes carry their ink per instance
+  // one material per ink (and per front/back), shared by every mesh that uses it
+  private cache = new Map<string, THREE.ShaderMaterial>();
   material(ink: number, front = false): THREE.ShaderMaterial {
+    const key = `${ink}:${front}`;
+    const hit = this.cache.get(key);
+    if (hit) return hit;
     const m = new THREE.ShaderMaterial({
       vertexShader: passOneVert, fragmentShader: passOneFrag, side: THREE.DoubleSide, defines: front ? { FRONT: '' } : {},
       uniforms: { uInk: { value: ink }, uLight: { value: this.lightView } },
     });
     this.materials.push(m);
+    this.cache.set(key, m);
     return m;
   }
 
@@ -221,6 +237,7 @@ export class InkRenderer {
     this.post.material.uniforms.uPx.value = pr;
   }
 
+  setDanger(x: number, z: number, r: number, pulse: number) { this.post.material.uniforms.uDanger.value.set(x, z, r, pulse); }
   setStorm(x: number, z: number, r: number, nx: number, nz: number, nr: number) {
     this.post.material.uniforms.uRing.value.set(x, z, r);
     this.post.material.uniforms.uNext.value.set(nx, nz, nr);

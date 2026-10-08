@@ -1,7 +1,7 @@
 // Doodle models built from primitives. The ink renderer outlines and hatches them, so a handful
 // of boxes and cylinders reads as a hand-drawn figure. Nothing here is loaded from files.
 import * as THREE from 'three';
-import type { WeaponId } from '../../shared/src/constants.ts';
+import { WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 import { INK_IDS, type InkRenderer } from './ink.ts';
 
 type Mat = THREE.Material;
@@ -15,41 +15,116 @@ export interface GunMats { body: Mat; dark: Mat; accent: Mat }
 export function buildGun(id: WeaponId, m: GunMats): THREE.Group {
   const g = new THREE.Group();
   const add = (...o: THREE.Object3D[]) => g.add(...o);
-  if (id === 'rifle') {
-    add(box(0.07, 0.1, 0.42, m.body, 0, 0.02, -0.12));               // receiver
-    add(box(0.075, 0.07, 0.24, m.dark, 0, 0.0, -0.42));              // handguard
-    add(tube(0.016, 0.22, m.dark, 0, 0.01, -0.64));                  // barrel
-    add(box(0.05, 0.05, 0.05, m.dark, 0, 0.01, -0.77));              // muzzle
-    const mag = box(0.05, 0.2, 0.08, m.accent, 0, -0.12, -0.16); mag.rotation.x = 0.25; add(mag);
-    add(box(0.05, 0.13, 0.06, m.dark, 0, -0.08, 0.04));              // grip
-    add(box(0.06, 0.1, 0.22, m.body, 0, 0.0, 0.2));                  // stock
-    add(box(0.04, 0.05, 0.1, m.dark, 0, 0.1, -0.1));                 // sight housing
-    add(box(0.05, 0.012, 0.012, m.accent, 0, 0.13, -0.1));           // red-dot frame
-  } else if (id === 'shotgun') {
-    add(box(0.08, 0.1, 0.3, m.body, 0, 0.02, -0.08));
-    add(tube(0.024, 0.5, m.dark, 0, 0.04, -0.45));                   // barrel
-    add(tube(0.02, 0.38, m.dark, 0, -0.01, -0.4));                   // magazine tube
-    add(box(0.07, 0.07, 0.16, m.accent, 0, -0.01, -0.36));           // pump
-    add(box(0.05, 0.13, 0.06, m.dark, 0, -0.08, 0.06));
-    const stock = box(0.065, 0.11, 0.26, m.body, 0, -0.02, 0.22); stock.rotation.x = -0.12; add(stock);
-  } else if (id === 'sniper') {
-    add(box(0.06, 0.09, 0.4, m.body, 0, 0.0, -0.1));
-    add(tube(0.018, 0.6, m.dark, 0, 0.01, -0.6));                    // long barrel
-    add(box(0.045, 0.045, 0.08, m.dark, 0, 0.01, -0.92));            // muzzle brake
-    add(tube(0.035, 0.3, m.dark, 0, 0.1, -0.12, 12));                // scope
-    add(tube(0.045, 0.05, m.accent, 0, 0.1, -0.3, 12), tube(0.045, 0.05, m.accent, 0, 0.1, 0.04, 12)); // lens bells
-    add(box(0.02, 0.05, 0.02, m.dark, 0, 0.055, -0.2), box(0.02, 0.05, 0.02, m.dark, 0, 0.055, -0.04)); // rings
-    const bolt = box(0.08, 0.015, 0.015, m.accent, 0.05, 0.03, 0.02); add(bolt);
-    add(box(0.05, 0.13, 0.06, m.dark, 0, -0.08, 0.08));
-    add(box(0.065, 0.12, 0.3, m.body, 0, -0.01, 0.26));              // stock
-    add(box(0.07, 0.04, 0.12, m.accent, 0, 0.06, 0.26));             // cheek rest
-    const legA = box(0.012, 0.16, 0.012, m.dark, 0.03, -0.08, -0.5); legA.rotation.z = 0.3; const legB = legA.clone(); legB.position.x = -0.03; legB.rotation.z = -0.3; add(legA, legB);
-  } else {
-    add(box(0.05, 0.06, 0.22, m.body, 0, 0.03, -0.05));              // slide
-    add(box(0.045, 0.04, 0.2, m.dark, 0, -0.015, -0.05));            // frame
-    const grip = box(0.045, 0.13, 0.06, m.accent, 0, -0.08, 0.04); grip.rotation.x = -0.2; add(grip);
-    add(box(0.01, 0.02, 0.01, m.dark, 0, 0.07, -0.14));
+  const grip = (z = 0.04, tilt = 0) => { const o = box(0.05, 0.13, 0.06, m.dark, 0, -0.08, z); o.rotation.x = tilt; add(o); };
+  switch (id) {
+    case 'pistol':
+      add(box(0.05, 0.06, 0.22, m.body, 0, 0.03, -0.05), box(0.045, 0.04, 0.2, m.dark, 0, -0.015, -0.05), box(0.01, 0.02, 0.01, m.dark, 0, 0.07, -0.14));
+      grip(0.04, -0.2); break;
+    case 'smg':
+      add(box(0.07, 0.09, 0.3, m.body, 0, 0.02, -0.06), tube(0.018, 0.12, m.dark, 0, 0.02, -0.27), box(0.04, 0.18, 0.05, m.accent, 0, -0.12, -0.08));
+      add(box(0.03, 0.03, 0.18, m.dark, 0, 0.0, 0.16), box(0.06, 0.08, 0.03, m.dark, 0, -0.01, 0.25)); // wire stock
+      grip(0.05); break;
+    case 'tac':
+      add(box(0.08, 0.1, 0.32, m.body, 0, 0.02, -0.06), tube(0.026, 0.42, m.dark, 0, 0.04, -0.42), box(0.07, 0.06, 0.1, m.accent, 0, -0.02, -0.32));
+      add(box(0.04, 0.12, 0.05, m.dark, 0, -0.1, 0.06), box(0.06, 0.09, 0.18, m.body, 0, -0.01, 0.2));
+      break;
+    case 'pump':
+      add(box(0.08, 0.1, 0.3, m.body, 0, 0.02, -0.08), tube(0.024, 0.5, m.dark, 0, 0.04, -0.45), tube(0.02, 0.38, m.dark, 0, -0.01, -0.4), box(0.07, 0.07, 0.16, m.accent, 0, -0.01, -0.36));
+      grip(0.06);
+      { const stock = box(0.065, 0.11, 0.26, m.body, 0, -0.02, 0.22); stock.rotation.x = -0.12; add(stock); }
+      break;
+    case 'ar':
+    case 'scar': {
+      const scar = id === 'scar';
+      add(box(0.07, 0.1, 0.42, m.body, 0, 0.02, -0.12), box(0.075, 0.07, 0.24, m.dark, 0, 0, -0.42), tube(0.016, 0.22, m.dark, 0, 0.01, -0.64), box(0.05, 0.05, 0.05, m.dark, 0, 0.01, -0.77));
+      const mag = box(0.05, 0.2, 0.08, m.accent, 0, -0.12, -0.16); mag.rotation.x = scar ? 0.05 : 0.25; add(mag);
+      grip();
+      add(box(0.06, 0.1, 0.22, m.body, 0, 0, 0.2));
+      if (scar) add(box(0.075, 0.03, 0.5, m.accent, 0, 0.085, -0.2), box(0.05, 0.06, 0.09, m.dark, 0, 0.13, -0.08), tube(0.03, 0.05, m.accent, 0, 0.14, -0.13)); // rail + holo sight
+      else add(box(0.04, 0.05, 0.1, m.dark, 0, 0.1, -0.1), box(0.05, 0.012, 0.012, m.accent, 0, 0.13, -0.1));
+      break;
+    }
+    case 'burst':
+      add(box(0.07, 0.11, 0.5, m.body, 0, 0.02, -0.15), tube(0.017, 0.2, m.dark, 0, 0.02, -0.5), box(0.05, 0.16, 0.07, m.accent, 0, -0.1, -0.05));
+      add(box(0.065, 0.12, 0.22, m.body, 0, 0, 0.18), tube(0.028, 0.18, m.dark, 0, 0.11, -0.1)); // bullpup with a small scope
+      grip(-0.12); break;
+    case 'hunting':
+      add(box(0.06, 0.08, 0.36, m.body, 0, 0, -0.06), tube(0.016, 0.58, m.dark, 0, 0.015, -0.52), box(0.07, 0.12, 0.34, m.accent, 0, -0.02, 0.24));
+      add(box(0.06, 0.015, 0.015, m.dark, 0.05, 0.03, 0.02));
+      break;
+    case 'minigun': {
+      for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; add(tube(0.015, 0.6, m.dark, Math.cos(a) * 0.045, Math.sin(a) * 0.045, -0.5)); }
+      add(tube(0.07, 0.12, m.accent, 0, 0, -0.78), tube(0.07, 0.1, m.accent, 0, 0, -0.3), box(0.16, 0.18, 0.34, m.body, 0, -0.02, -0.02));
+      add(box(0.04, 0.16, 0.04, m.dark, 0, 0.14, -0.05), box(0.1, 0.12, 0.12, m.accent, 0.12, -0.08, 0)); // handle and ammo box
+      break;
+    }
+    case 'heavy':
+      add(box(0.07, 0.1, 0.42, m.body, 0, 0, -0.1), tube(0.022, 0.7, m.dark, 0, 0.01, -0.66), box(0.06, 0.06, 0.12, m.dark, 0, 0.01, -1.04));
+      add(tube(0.04, 0.34, m.dark, 0, 0.12, -0.12, 12), tube(0.052, 0.06, m.accent, 0, 0.12, -0.32, 12), tube(0.052, 0.06, m.accent, 0, 0.12, 0.06, 12));
+      add(box(0.05, 0.16, 0.07, m.dark, 0, -0.1, 0.08), box(0.07, 0.13, 0.34, m.body, 0, -0.01, 0.28), box(0.08, 0.05, 0.14, m.accent, 0, 0.07, 0.28));
+      { const legA = box(0.014, 0.2, 0.014, m.dark, 0.035, -0.1, -0.62); legA.rotation.z = 0.3; const legB = legA.clone(); legB.position.x = -0.035; legB.rotation.z = -0.3; add(legA, legB); }
+      add(box(0.09, 0.02, 0.02, m.accent, 0.06, 0.03, 0.04));
+      break;
   }
+  return g;
+}
+
+// ---------------- loot, cases, gadgets ----------------
+export function buildItem(what: string, ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group();
+  const blue = ink.material(INK_IDS.BLUE), dark = ink.material(INK_IDS.GRAPHITE), red = ink.material(INK_IDS.RED), paper = ink.material(INK_IDS.PAPER), orange = ink.material(INK_IDS.ORANGE), green = ink.material(INK_IDS.GREEN);
+  if (what === 'mini' || what === 'big') {
+    const s = what === 'big' ? 1.3 : 0.9;
+    const bottle = new THREE.Mesh(new THREE.SphereGeometry(0.16 * s, 10, 8), blue); bottle.position.y = 0.16 * s;
+    g.add(bottle, tube(0.05 * s, 0.14 * s, paper, 0, 0.33 * s, 0).rotateX(Math.PI / 2), box(0.08 * s, 0.05 * s, 0.08 * s, dark, 0, 0.42 * s, 0));
+  } else if (what === 'med') {
+    g.add(box(0.42, 0.26, 0.3, paper, 0, 0.13, 0), box(0.06, 0.18, 0.31, red, 0, 0.13, 0), box(0.18, 0.06, 0.31, red, 0, 0.13, 0));
+  } else if (what === 'grenade') {
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), green); b.position.y = 0.14; g.add(b, box(0.05, 0.08, 0.05, dark, 0, 0.29, 0));
+  } else if (what === 'smoke') {
+    g.add(tube(0.09, 0.32, paper, 0, 0.16, 0).rotateX(Math.PI / 2), box(0.2, 0.04, 0.2, dark, 0, 0.33, 0));
+  } else if (what === 'launch') {
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.12, 12), orange).translateY(0.06), box(0.1, 0.02, 0.4, blue, 0, 0.13, 0));
+  } else if (what === 'fort') {
+    g.add(box(0.36, 0.22, 0.18, ink.material(INK_IDS.BROWN), 0, 0.11, 0), box(0.36, 0.22, 0.18, ink.material(INK_IDS.BROWN), 0.04, 0.33, 0.02));
+  } else if (what === 'nuke') {
+    g.add(tube(0.11, 0.6, dark, 0, 0.3, 0).rotateX(Math.PI / 2), new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 10), red).translateY(0.71), box(0.32, 0.02, 0.12, orange, 0, 0.06, 0), box(0.12, 0.02, 0.32, orange, 0, 0.06, 0));
+  }
+  return g;
+}
+
+// a pencil case: a long rounded box with a zipper; golden ones are orange and twice as tempting
+export function buildCase(ink: InkRenderer, golden: boolean): { root: THREE.Group; lid: THREE.Group } {
+  const root = new THREE.Group();
+  const body = ink.material(golden ? INK_IDS.ORANGE : INK_IDS.PINK), dark = ink.material(INK_IDS.GRAPHITE), paper = ink.material(INK_IDS.PAPER);
+  root.add(box(1.1, 0.32, 0.44, body, 0, 0.16, 0));
+  for (let i = 0; i < 3; i++) root.add(tube(0.012, 0.05, paper, -0.35 + i * 0.35, 0.33, 0.2, 6).rotateY(Math.PI / 2)); // pencils peeking out
+  const lid = pivot(0, 0.32, -0.22, box(1.1, 0.12, 0.44, body, 0, 0.06, 0.22), box(1.12, 0.03, 0.03, dark, 0, 0.0, 0.44));
+  root.add(lid);
+  if (golden) { const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.16), ink.material(INK_IDS.ORANGE)); star.position.y = 0.95; star.name = 'star'; root.add(star); }
+  return { root, lid };
+}
+
+export function buildPad(ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.3, 0.18, 16), ink.material(INK_IDS.ORANGE)).translateY(0.09));
+  const arrow = box(0.25, 0.05, 1.1, ink.material(INK_IDS.BLUE), 0, 0.2, 0); g.add(arrow);
+  return g;
+}
+
+export function buildSmoke(ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group(), m = ink.material(INK_IDS.GRAPHITE);
+  for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2, r = i === 0 ? 0 : 3.4; const s = new THREE.Mesh(new THREE.IcosahedronGeometry(2.8 + (i % 3) * 0.6, 1), m); s.position.set(Math.cos(a) * r, 2.2 + (i % 2) * 1.4, Math.sin(a) * r); g.add(s); }
+  return g;
+}
+
+export function buildNukeMarker(ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group();
+  const missile = new THREE.Group();
+  missile.add(tube(0.8, 5, ink.material(INK_IDS.GRAPHITE), 0, 0, 0).rotateX(Math.PI / 2), new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.8, 12), ink.material(INK_IDS.RED)).translateY(-3.4).rotateX(Math.PI));
+  for (const r of [0, Math.PI / 2]) { const fin = box(2.6, 1.2, 0.1, ink.material(INK_IDS.ORANGE), 0, 2.4, 0); fin.rotation.y = r; missile.add(fin); }
+  missile.name = 'missile';
+  g.add(missile);
   return g;
 }
 
@@ -85,7 +160,7 @@ export function buildFigure(ink: InkRenderer, id: number): Figure {
   armL.rotation.y = -0.35; // left hand comes across to the handguard
   const guns = new Map<WeaponId, THREE.Group>();
   const gunMats = { body: ink.material(INK_IDS.BLUE), dark, accent: ink.material(INK_IDS.ORANGE) };
-  for (const w of ['rifle', 'shotgun', 'sniper', 'pistol'] as WeaponId[]) {
+  for (const w of WEAPON_IDS) {
     const g = buildGun(w, gunMats);
     g.scale.setScalar(1.15); g.position.set(0.02, -0.06, -0.48); g.visible = false;
     armR.add(g); guns.set(w, g);
@@ -129,7 +204,7 @@ export function buildFigure(ink: InkRenderer, id: number): Figure {
 }
 
 // pose a figure for this frame from its interpolated state
-export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId, sliding: boolean, gliding: boolean, leader: boolean, dt: number) {
+export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number) {
   const moved = Math.hypot(x - f.lastX, z - f.lastZ);
   f.speed += ((dt > 0 ? moved / dt : 0) - f.speed) * Math.min(1, dt * 10);
   f.lastX = x; f.lastZ = z;

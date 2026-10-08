@@ -47,10 +47,11 @@ class Sfx {
     if (!this.ctx || !this.enabled) return;
     const v = distance === 0 ? 1 : Math.max(0, 0.5 - distance / 220);
     if (v <= 0.01) return;
-    if (w === 'sniper') { this.burst(900, 0.7, 0.9 * v, 0.55); this.tone(120, 40, 0.5 * v, 0.4, 'triangle'); }
-    else if (w === 'shotgun') { this.burst(1400, 0.5, 0.85 * v, 0.35); this.tone(90, 45, 0.35 * v, 0.25, 'triangle'); }
-    else if (w === 'rifle') { this.burst(2200, 0.8, 0.5 * v, 0.12); this.tone(160, 70, 0.2 * v, 0.08, 'square'); }
-    else { this.burst(2600, 0.9, 0.45 * v, 0.1); this.tone(220, 90, 0.15 * v, 0.07, 'square'); }
+    if (w === 'heavy' || w === 'hunting') { this.burst(900, 0.7, 0.9 * v, w === 'heavy' ? 0.8 : 0.5); this.tone(w === 'heavy' ? 80 : 120, 35, 0.55 * v, 0.45, 'triangle'); }
+    else if (w === 'tac' || w === 'pump') { this.burst(1400, 0.5, 0.85 * v, 0.35); this.tone(90, 45, 0.35 * v, 0.25, 'triangle'); }
+    else if (w === 'minigun') { this.burst(2600, 1, 0.35 * v, 0.06); }
+    else if (w === 'pistol') { this.burst(2600, 0.9, 0.45 * v, 0.1); this.tone(220, 90, 0.15 * v, 0.07, 'square'); }
+    else { this.burst(w === 'scar' ? 1900 : 2200, 0.8, 0.5 * v, 0.12); this.tone(w === 'scar' ? 130 : 160, 70, 0.22 * v, 0.08, 'square'); }
   }
   hit(head: boolean) {
     if (!this.ctx || !this.enabled) return;
@@ -60,6 +61,14 @@ class Sfx {
   hurt() { if (this.ctx && this.enabled) { this.burst(500, 1, 0.4, 0.15); this.tone(180, 90, 0.25, 0.15, 'sawtooth'); } }
   elim() { if (this.ctx && this.enabled) { this.tone(880, 880, 0.3, 0.1, 'square'); this.tone(1320, 1320, 0.3, 0.16, 'square', 0.09); } }
   reload() { if (this.ctx && this.enabled) { this.burst(3000, 3, 0.25, 0.04, 'bandpass'); setTimeout(() => this.ctx && this.burst(2400, 3, 0.25, 0.05, 'bandpass'), 180); } }
+  boom(nuke: boolean, distance: number) {
+    if (!this.ctx || !this.enabled) return;
+    const v = Math.max(0.05, 1 - distance / (nuke ? 500 : 160));
+    this.burst(nuke ? 300 : 700, 0.6, (nuke ? 1 : 0.8) * v, nuke ? 2.2 : 0.7);
+    this.tone(nuke ? 70 : 110, 30, 0.6 * v, nuke ? 2 : 0.6, 'triangle');
+  }
+  siren() { if (!this.ctx || !this.enabled) return; for (let i = 0; i < 3; i++) this.tone(660, 880, 0.18, 0.5, 'sawtooth', i * 0.6); }
+  open(golden: boolean) { if (!this.ctx || !this.enabled) return; this.burst(3000, 2, 0.2, 0.15, 'bandpass'); this.tone(golden ? 880 : 660, golden ? 1760 : 990, 0.2, 0.35, 'triangle', 0.05); }
   jump() { if (this.ctx && this.enabled) this.tone(300, 520, 0.08, 0.12, 'sine'); }
 }
 

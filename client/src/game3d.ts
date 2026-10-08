@@ -1,22 +1,32 @@
 // The first-person client: builds the island from the room seed (the same World the server
 // simulates), predicts your own movement with the shared physics and reconciles against the
-// server, interpolates everyone else 100 ms in the past, and draws it all through InkRenderer.
+// server, interpolates everyone else 100 ms in the past, and draws it all through InkRenderer:
+// players, loot, pencil cases, grenades, smoke, pads, forts and incoming nukes.
 import * as THREE from 'three';
-import { EYE_H, TICK_HZ, WEAPONS, WEAPON_ORDER, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_SLIDE, type RoomSeat, type ServerMsg, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { EYE_H, INTERACT_R, ITEMS, NUKE, PERKS, TICK_HZ, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_SLIDE, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
-import { World, type Body } from '../../shared/src/world.ts';
+import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildFigure, buildGun, poseFigure, type Figure } from './models.ts';
+import { buildCase, buildFigure, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, poseFigure, type Figure } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
-const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd'] as const;
+const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
+export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PINK, legendary: INK_IDS.ORANGE };
+export const RARITY_CSS: Record<Rarity, string> = { common: '#6b7080', uncommon: '#2a8a4a', rare: '#1d33b8', epic: '#c03a8a', legendary: '#e8a317' };
+const RARITY_RGB: Record<Rarity, [number, number, number]> = { common: [0.45, 0.47, 0.52], uncommon: [0.16, 0.6, 0.3], rare: [0.11, 0.25, 0.85], epic: [0.78, 0.25, 0.62], legendary: [0.95, 0.65, 0.08] };
+export const lootRarity = (kind: number, what: string): Rarity => kind === 0 ? WEAPONS[what as WeaponId].rarity : kind === 1 ? ITEMS[what as keyof typeof ITEMS].rarity : PERKS[what as keyof typeof PERKS].rarity;
+export const lootName = (kind: number, what: string): string => kind === 0 ? WEAPONS[what as WeaponId].name : kind === 1 ? ITEMS[what as keyof typeof ITEMS].name : PERKS[what as keyof typeof PERKS].name;
+
 interface Tracer { start: THREE.Vector3; end: THREE.Vector3; life: number; mine: boolean }
+interface LootView { g: THREE.Group; d: SnapLoot; phase: number }
+interface CaseView { root: THREE.Group; lid: THREE.Group; d: SnapCase; open: number }
+interface Boom { m: THREE.Mesh; t: number; r: number; life: number }
 
 export class Game3D {
   ink: InkRenderer;
@@ -27,6 +37,9 @@ export class Game3D {
   watch: number | null = null;     // who we spectate after dying
   ring = { x: 0, y: 0, r: 999, nx: 0, ny: 0, nr: 0, closing: false, nextIn: 0, phase: 0 };
   alive = 0;
+  leader: [number, number] | null = null;
+  prompt = '';                     // "E · open pencil case" etc.
+  nukes: { x: number; z: number; t: number }[] = [];
   private worldGroup = new THREE.Group();
   private pred: Body | null = null;
   private prevPos = new THREE.Vector3();
@@ -36,35 +49,39 @@ export class Game3D {
   private seq = 0;
   private snaps: { s: Snap; at: number }[] = [];
   private avatars = new Map<number, Figure & { tag: HTMLDivElement }>();
-  leader: [number, number] | null = null;
   private viewChute: THREE.Group | null = null;
   private tracers: Tracer[] = [];
   private tracerGeo: THREE.BufferGeometry;
   private ropeGeo: THREE.BufferGeometry;
-  private rope: THREE.LineSegments;
+  private beamGeo: THREE.BufferGeometry;
   private guns = new Map<WeaponId, THREE.Group>();
+  private loot = new Map<number, LootView>();
+  private cases = new Map<number, CaseView>();
+  private fx = new Map<number, { g: THREE.Group; kind: string }>();
+  private builds = new Map<number, { idx: number[]; meshes: THREE.Mesh[] }>();
+  private booms: Boom[] = [];
   private gunKick = 0;
   private bob = 0;
   private localCd = 0;
   private time = 0;
   private tagLayer: HTMLDivElement;
-  onShotFeedback: ((x: number, y: number) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, tagLayer: HTMLDivElement) {
     this.ink = new InkRenderer(canvas);
     this.tagLayer = tagLayer;
     this.ink.scene.add(this.worldGroup);
-    this.tracerGeo = new THREE.BufferGeometry();
-    this.tracerGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(600 * 6), 3));
-    this.tracerGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(600 * 6), 3));
-    const tracers = new THREE.LineSegments(this.tracerGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthTest: false }));
-    tracers.frustumCulled = false;
-    this.ink.overlay.add(tracers);
-    this.ropeGeo = new THREE.BufferGeometry();
-    this.ropeGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(200 * 6), 3));
-    this.rope = new THREE.LineSegments(this.ropeGeo, new THREE.LineBasicMaterial({ color: 0x2b2f3a, depthTest: false }));
-    this.rope.frustumCulled = false;
-    this.ink.overlay.add(this.rope);
+    const lines = (n: number, color?: number) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 6), 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 6), 3));
+      const l = new THREE.LineSegments(geo, new THREE.LineBasicMaterial(color === undefined ? { vertexColors: true, transparent: true, opacity: 0.9, depthTest: false } : { color, depthTest: false }));
+      l.frustumCulled = false;
+      this.ink.overlay.add(l);
+      return geo;
+    };
+    this.tracerGeo = lines(600);
+    this.ropeGeo = lines(200, 0x2b2f3a);
+    this.beamGeo = lines(400);
     this.buildGuns();
   }
 
@@ -72,19 +89,25 @@ export class Game3D {
   setRoom(seed: number, seats: RoomSeat[], you: number) {
     this.you = you;
     this.seats = new Map(seats.map((s) => [s.id, s]));
-    this.snaps = []; this.pending = []; this.self = null; this.pred = null; this.watch = null; this.tracers = [];
+    this.snaps = []; this.pending = []; this.self = null; this.pred = null; this.watch = null; this.tracers = []; this.nukes = [];
     for (const a of this.avatars.values()) { this.ink.scene.remove(a.root); a.tag.remove(); }
     this.avatars.clear();
-    if (this.world?.seed !== seed) this.buildWorld(new World(seed));
+    for (const l of this.loot.values()) this.ink.scene.remove(l.g);
+    for (const c of this.cases.values()) this.ink.scene.remove(c.root);
+    for (const f of this.fx.values()) this.ink.scene.remove(f.g);
+    for (const b of this.builds.values()) for (const m of b.meshes) this.ink.scene.remove(m);
+    for (const b of this.booms) this.ink.scene.remove(b.m);
+    this.loot.clear(); this.cases.clear(); this.fx.clear(); this.builds.clear(); this.booms = [];
+    this.buildWorld(new World(seed)); // always fresh: forts from the last match must not linger
   }
 
   private buildWorld(w: World) {
     this.world = w;
     this.worldGroup.clear();
     const ink = this.ink;
-    // every solid box, one instanced draw call
     const boxGeo = new THREE.BoxGeometry(1, 1, 1);
     const instanced = (geo: THREE.BufferGeometry, items: { m: THREE.Matrix4; ink: number }[]) => {
+      if (!items.length) return;
       const g = geo.clone();
       g.setAttribute('aInk', new THREE.InstancedBufferAttribute(new Float32Array(items.map((i) => i.ink)), 1));
       const mesh = new THREE.InstancedMesh(g, ink.material(0), items.length);
@@ -94,42 +117,61 @@ export class Game3D {
     };
     const m4 = (x: number, y: number, z: number, sx: number, sy: number, sz: number) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz));
     instanced(boxGeo, w.boxes.map((b) => ({ m: m4((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2, b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0), ink: b.ink })));
-    // windows and doors: thin visual-only panels on the building faces, for the doodle detail
-    const panels: { m: THREE.Matrix4; ink: number }[] = [];
-    for (const r of w.roofs) {
-      const floors = Math.round(r.y / 3.5);
-      for (let f = 0; f < floors; f++) {
-        const y = f * 3.5 + 1.9;
-        for (let x = r.x0 + 2; x < r.x1 - 1.5; x += 3) { panels.push({ m: m4(x, y, r.z0 - 0.04, 1.3, 1.5, 0.08), ink: 0 }); panels.push({ m: m4(x, y, r.z1 + 0.04, 1.3, 1.5, 0.08), ink: 0 }); }
-      }
-      panels.push({ m: m4((r.x0 + r.x1) / 2, 1.1, r.z1 + 0.05, 1.4, 2.2, 0.1), ink: 6 });
-    }
-    if (panels.length) instanced(boxGeo, panels);
-    // tree crowns: scribbly green blobs
-    const crown = new THREE.IcosahedronGeometry(1, 1);
-    instanced(crown, w.trees.map((t) => ({ m: m4(t.x, t.h * 0.6 + t.r * 0.7, t.z, t.r, t.r * 0.9, t.r), ink: 4 })));
-    // doodle clouds drifting over the island
+    instanced(new THREE.IcosahedronGeometry(1, 1), w.trees.map((t) => ({ m: m4(t.x, t.h * 0.6 + t.r * 0.7, t.z, t.r, t.r * 0.9, t.r), ink: 4 })));
+    // clouds and the mountain ring
     const puffs: { m: THREE.Matrix4; ink: number }[] = [];
     for (let i = 0; i < 26; i++) {
-      const cx = Math.sin(i * 12.9898 + w.seed) * 230, cz = Math.cos(i * 78.233 + w.seed) * 230, cy = 95 + (i % 5) * 9, sz = 6 + (i % 4) * 2;
+      const cx = Math.sin(i * 12.9898 + w.seed) * 230, cz = Math.cos(i * 78.233 + w.seed) * 230, cy = 105 + (i % 5) * 9, sz = 6 + (i % 4) * 2;
       for (let k = 0; k < 4; k++) puffs.push({ m: m4(cx + (k - 1.5) * sz * 0.9, cy + (k % 2) * sz * 0.35, cz + (k % 3) * 2, sz, sz * 0.6, sz * 0.8), ink: 0 });
     }
     instanced(new THREE.IcosahedronGeometry(1, 1), puffs);
-    // mountains ringing the island (scenery beyond the edge, not walkable)
     const peaks: { m: THREE.Matrix4; ink: number }[] = [];
     for (let i = 0; i < 46; i++) {
-      const a = (i / 46) * Math.PI * 2 + Math.sin(i * 3.7 + w.seed) * 0.05, d = 280 + ((i * 37) % 9) * 14;
-      const h = 45 + ((i * 53 + w.seed) % 70), rad = 38 + ((i * 29) % 30);
+      const a = (i / 46) * Math.PI * 2, d = 285 + ((i * 37) % 9) * 14, h = 45 + ((i * 53 + w.seed) % 70), rad = 38 + ((i * 29) % 30);
       peaks.push({ m: m4(Math.cos(a) * d, h / 2 - 1, Math.sin(a) * d, rad, h, rad), ink: i % 3 === 0 ? 6 : 4 });
     }
     instanced(new THREE.ConeGeometry(1, 1, 7, 1), peaks);
-    // ground: paper, only contact lines get drawn
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2), ink.material(INK_IDS.PAPER));
+    // lakes: a flat disc with ripple rings
+    for (const l of w.lakes) {
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(l.r, l.r, 0.2, 40), ink.material(INK_IDS.BLUE));
+      disc.position.set(l.x, 0.1, l.z);
+      this.worldGroup.add(disc);
+      for (let k = 1; k <= 3; k++) { const ring = new THREE.Mesh(new THREE.TorusGeometry(l.r * (0.25 + k * 0.18), 0.05, 4, 40).rotateX(Math.PI / 2), ink.material(INK_IDS.BLUE)); ring.position.set(l.x, 0.22, l.z); this.worldGroup.add(ring); }
+    }
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400).rotateX(-Math.PI / 2), ink.material(INK_IDS.PAPER));
     this.worldGroup.add(ground);
-    // the island edge
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(400.6, 0.3, 400.6), ink.material(INK_IDS.GRAPHITE));
-    edge.position.y = -0.16;
+    // the island's edge sits well below the ground plane: coplanar surfaces shimmer from high up
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(400.6, 2, 400.6), ink.material(INK_IDS.GRAPHITE));
+    edge.position.y = -1.6;
     this.worldGroup.add(edge);
+  }
+
+  // forts are added and removed mid-match: they change collision for prediction too
+  onBuild(id: number, boxes: Box[]) {
+    if (!this.world || this.builds.has(id)) return;
+    const idx = this.world.addBoxes(boxes.map((b) => ({ ...b })));
+    const meshes = boxes.map((b) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0), this.ink.material(INK_IDS.BROWN));
+      m.position.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
+      m.scale.y = 0.01;
+      this.ink.scene.add(m);
+      return m;
+    });
+    this.builds.set(id, { idx, meshes });
+  }
+  onUnbuild(id: number) {
+    const b = this.builds.get(id);
+    if (!b || !this.world) return;
+    this.world.killBoxes(b.idx);
+    for (const m of b.meshes) this.ink.scene.remove(m);
+    this.builds.delete(id);
+  }
+  onBoom(x: number, y: number, z: number, r: number, nuke: boolean) {
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), this.ink.material(nuke ? INK_IDS.RED : INK_IDS.ORANGE));
+    m.position.set(x, y + (nuke ? 0 : 0.5), z);
+    m.scale.setScalar(0.1);
+    this.ink.scene.add(m);
+    this.booms.push({ m, t: 0, r: nuke ? r * 0.8 : r * 0.6, life: nuke ? 1.4 : 0.4 });
   }
 
   // ---------------- avatars ----------------
@@ -147,15 +189,13 @@ export class Game3D {
     return a;
   }
 
-  // ---------------- first-person guns ----------------
   private buildGuns() {
     const mats = { body: this.ink.material(INK_IDS.BLUE, true), dark: this.ink.material(INK_IDS.GRAPHITE, true), accent: this.ink.material(INK_IDS.ORANGE, true) };
-    for (const id of WEAPON_ORDER) {
+    for (const id of WEAPON_IDS) {
       const g = buildGun(id, mats);
       g.scale.setScalar(0.62); g.position.set(0.2, -0.2, -0.5); g.visible = false;
       this.ink.viewScene.add(g); this.guns.set(id, g);
     }
-    // the canopy edge you see overhead while gliding
     const chute = new THREE.Group();
     const dome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2.6), this.ink.material(INK_IDS.RED, true));
     dome.position.set(0, 1.6, 0);
@@ -165,22 +205,87 @@ export class Game3D {
     this.viewChute = chute;
   }
 
+  // ---------------- loot / cases / fx from snapshots ----------------
+  private syncLoot(list: SnapLoot[]) {
+    const keep = new Set(list.map((l) => l[0]));
+    for (const [id, v] of this.loot) if (!keep.has(id)) { this.ink.scene.remove(v.g); this.loot.delete(id); }
+    const gunMats = { body: this.ink.material(INK_IDS.BLUE), dark: this.ink.material(INK_IDS.GRAPHITE), accent: this.ink.material(INK_IDS.ORANGE) };
+    for (const d of list) {
+      let v = this.loot.get(d[0]);
+      if (!v) {
+        const g = new THREE.Group();
+        const rar = lootRarity(d[4], d[5]);
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.04, 16), this.ink.material(RARITY_INK[rar]));
+        base.position.y = 0.02;
+        const item = d[4] === 0 ? buildGun(d[5] as WeaponId, gunMats) : buildItem(d[5], this.ink);
+        if (d[4] === 0) { item.rotation.set(0, Math.PI / 2, Math.PI / 2.3); item.position.y = 0.35; }
+        item.name = 'item';
+        g.add(base, item);
+        this.ink.scene.add(g);
+        v = { g, d, phase: Math.random() * 6 };
+        this.loot.set(d[0], v);
+      }
+      v.d = d;
+      v.g.position.set(d[1], d[2], d[3]);
+    }
+  }
+
+  private syncCases(list: SnapCase[]) {
+    const keep = new Set(list.map((c) => c[0]));
+    for (const [id, v] of this.cases) if (!keep.has(id)) { this.ink.scene.remove(v.root); this.cases.delete(id); }
+    for (const d of list) {
+      let v = this.cases.get(d[0]);
+      if (!v) {
+        const { root, lid } = buildCase(this.ink, !!d[4]);
+        root.position.set(d[1], d[2], d[3]);
+        root.rotation.y = (d[0] * 1.7) % Math.PI;
+        this.ink.scene.add(root);
+        v = { root, lid, d, open: d[5] ? 1 : 0 };
+        this.cases.set(d[0], v);
+      }
+      v.d = d;
+    }
+  }
+
+  private syncFx(list: Snap['fx']) {
+    const keep = new Set(list.map((f) => f[1]));
+    for (const [id, v] of this.fx) if (!keep.has(id)) { this.ink.scene.remove(v.g); this.fx.delete(id); }
+    this.nukes = [];
+    for (const f of list) {
+      const [kind, id, x, y, z, t] = f;
+      let v = this.fx.get(id);
+      if (!v) {
+        const g = kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink) : kind === 'pad' ? buildPad(this.ink) : buildNukeMarker(this.ink);
+        this.ink.scene.add(g);
+        v = { g, kind };
+        this.fx.set(id, v);
+      }
+      v.g.position.set(x, y, z);
+      if (kind === 'nuke') {
+        this.nukes.push({ x, z, t });
+        const missile = v.g.getObjectByName('missile');
+        if (missile) missile.position.y = 6 + (t / NUKE.delay) * 180;
+      }
+    }
+  }
+
   // ---------------- network ----------------
   onSnap(s: Snap) {
     this.snaps.push({ s, at: performance.now() / 1000 });
     if (this.snaps.length > 30) this.snaps.shift();
-    this.ring = s.ring;
-    this.alive = s.alive;
-    this.leader = s.leader;
+    this.ring = s.ring; this.alive = s.alive; this.leader = s.leader;
+    if (s.loot) this.syncLoot(s.loot);
+    if (s.cases) this.syncCases(s.cases);
+    this.syncFx(s.fx);
     const heard = new Set<number>();
     for (const sh of s.shots) {
       if (sh[6] === this.you) continue; // our own shots were already drawn when we pulled the trigger
       this.tracers.push({ start: new THREE.Vector3(sh[0], sh[1] - 0.15, sh[2]), end: new THREE.Vector3(sh[3], sh[4], sh[5]), life: 0.12, mine: false });
-      if (!heard.has(sh[6])) { // one sound per shooter per snapshot (shotgun pellets are one bang)
+      if (!heard.has(sh[6])) { // one bang per shooter per snapshot (shotgun pellets are one shot)
         heard.add(sh[6]);
         const o = s.others.find((p) => p[0] === sh[6]);
         const cam = this.ink.camera.position;
-        sfx.shot(WEAPON_ORDER[o?.[8] ?? 0] ?? 'rifle', Math.max(1, Math.hypot(sh[0] - cam.x, sh[2] - cam.z)));
+        sfx.shot(WEAPON_IDS[o?.[8] ?? 4] ?? 'ar', Math.max(1, Math.hypot(sh[0] - cam.x, sh[2] - cam.z)));
       }
     }
     if (!s.self) return;
@@ -191,7 +296,7 @@ export class Game3D {
     const old = this.pred ? new THREE.Vector3(this.pred.x, this.pred.y, this.pred.z) : null;
     const base = { ...s.self } as Body;
     this.pending = this.pending.filter((i) => i.seq > s.self!.ack);
-    for (const i of this.pending) moveStep(this.world, base, i, DT);
+    for (const i of this.pending) moveStep(this.world, base, i, DT, !!s.self.use);
     if (!this.pred) { this.pred = base; this.prevPos.set(base.x, base.y, base.z); }
     else copyBody(base, this.pred);
     if (old) {
@@ -200,40 +305,44 @@ export class Game3D {
     }
   }
 
-  // which server tick the other players are being drawn at (for lag-compensated shots)
   private viewTick = 0;
+  get weapon(): WeaponId | null { return this.self ? this.self.slots[this.self.cur] : null; }
 
-  // called at 30 Hz with sampled controls; returns the message to send (or null)
-  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number }): Input | null {
+  // called at 30 Hz with sampled controls; returns the input to send (or null)
+  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean }): Input | null {
     if (!this.world || !this.self || !this.self.alive || !this.pred) return null;
     let slot = c.slot;
-    if (slot < 0) { // wheel: cycle
-      const i = WEAPON_ORDER.indexOf(this.self.weapon), n = WEAPON_ORDER.length;
-      slot = ((i + (slot === -1 ? 1 : -1) + n) % n) + 1;
+    if (slot < 0) { // wheel: cycle through filled slots
+      const filled = this.self.slots.map((w, i) => (w ? i : -1)).filter((i) => i >= 0);
+      const at = filled.indexOf(this.self.cur), n = filled.length;
+      slot = filled[(at + (slot === -1 ? 1 : -1) + n) % n] + 1;
     }
-    if (c.jump && this.pred && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
+    if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
     if (c.reload && this.self.reloadT === 0) sfx.reload();
-    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick };
+    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
-    moveStep(this.world, this.pred, inp, DT);
+    moveStep(this.world, this.pred, inp, DT, !!this.self.use);
     this.lastTickAt = performance.now() / 1000;
     this.pending.push(inp);
     if (this.pending.length > 90) this.pending.shift();
     // cosmetic: kick the gun and draw our tracer right away
     this.localCd = Math.max(0, this.localCd - DT);
-    const w = this.self.weapon, wi = WEAPON_ORDER.indexOf(w), def = WEAPONS[w];
-    if (c.fire && this.localCd === 0 && this.self.mag[wi] > 0 && this.self.reloadT === 0 && !this.pred.gliding) {
-      this.localCd = def.cd;
-      this.gunKick = 1;
-      sfx.shot(w);
-      const spread = spreadFor(this.pred, w, c.aim);
-      const ox = this.pred.x, oy = this.pred.y + EYE_H, oz = this.pred.z;
-      for (let i = 0; i < Math.min(def.pellets, 5); i++) {
-        const yaw = c.yaw + (Math.random() - 0.5) * 2 * spread, pitch = c.pitch + (Math.random() - 0.5) * 2 * spread;
-        const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
-        const t = this.world.raycast(ox, oy, oz, dx, dy, dz, def.range);
-        const start = new THREE.Vector3(0.22, -0.18, -0.6).applyEuler(new THREE.Euler(c.pitch, c.yaw, 0, 'YXZ')).add(new THREE.Vector3(ox, oy, oz));
-        this.tracers.push({ start, end: new THREE.Vector3(ox + dx * t, oy + dy * t, oz + dz * t), life: 0.08, mine: true });
+    const w = this.weapon;
+    if (w && c.fire && this.localCd === 0 && this.self.mags[this.self.cur] > 0 && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use) {
+      const def = WEAPONS[w];
+      if (!def.spinUp || this.self.spin >= def.spinUp - 0.05) {
+        this.localCd = def.burst ? def.cd + 0.15 : def.cd;
+        this.gunKick = 1;
+        sfx.shot(w);
+        const spread = spreadFor(this.pred, w, c.aim);
+        const ox = this.pred.x, oy = this.pred.y + EYE_H, oz = this.pred.z;
+        for (let i = 0; i < Math.min(def.pellets, 5); i++) {
+          const yaw = c.yaw + (Math.random() - 0.5) * 2 * spread, pitch = c.pitch + (Math.random() - 0.5) * 2 * spread;
+          const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
+          const t = this.world.raycast(ox, oy, oz, dx, dy, dz, def.range);
+          const start = new THREE.Vector3(0.22, -0.18, -0.6).applyEuler(new THREE.Euler(c.pitch, c.yaw, 0, 'YXZ')).add(new THREE.Vector3(ox, oy, oz));
+          this.tracers.push({ start, end: new THREE.Vector3(ox + dx * t, oy + dy * t, oz + dz * t), life: 0.08, mine: true });
+        }
       }
     }
     return inp;
@@ -258,6 +367,28 @@ export class Game3D {
     return { others: out, tick: Math.round(a.s.tick + (b.s.tick - a.s.tick) * k) };
   }
 
+  private updatePrompt() {
+    this.prompt = '';
+    const p = this.pred, me = this.self;
+    if (!p || !me?.alive || p.gliding) return;
+    let best = INTERACT_R, text = '';
+    for (const c of this.cases.values()) {
+      if (c.d[5] || Math.abs(c.d[2] - p.y) > 1.6) continue;
+      const d = Math.hypot(c.d[1] - p.x, c.d[3] - p.z);
+      if (d < best) { best = d; text = c.d[4] ? 'E · open the GOLDEN pencil case' : 'E · open pencil case'; }
+    }
+    if (!text) for (const l of this.loot.values()) {
+      if (l.d[4] !== 0 || Math.abs(l.d[2] - p.y) > 1.6) continue;
+      const d = Math.hypot(l.d[1] - p.x, l.d[3] - p.z);
+      if (d < best) {
+        best = d;
+        const full = !me.slots.includes(null);
+        text = `E · ${full ? 'swap for' : 'pick up'} ${WEAPONS[l.d[5] as WeaponId].name} <i style="color:${RARITY_CSS[WEAPONS[l.d[5] as WeaponId].rarity]}">${WEAPONS[l.d[5] as WeaponId].rarity}</i>`;
+      }
+    }
+    this.prompt = text;
+  }
+
   // ---------------- frame ----------------
   frame(dt: number, look: { yaw: number; pitch: number; aim: boolean }) {
     if (!this.world) return;
@@ -267,34 +398,30 @@ export class Game3D {
     this.viewTick = tick;
     this.offset.multiplyScalar(Math.exp(-dt * 12));
 
-    // camera: our predicted eye, or a chase cam on whoever we're watching
     const me = this.self;
-    let eye: THREE.Vector3;
     if (me && me.alive && this.pred) {
       const k = Math.min(1, (performance.now() / 1000 - this.lastTickAt) / DT);
       const pos = this.prevPos.clone().lerp(new THREE.Vector3(this.pred.x, this.pred.y, this.pred.z), k).add(this.offset);
       const crouch = this.pred.slideT > 0 ? -0.6 : 0;
       const speed = Math.hypot(this.pred.vx, this.pred.vz);
       if (this.pred.grounded && speed > 1) this.bob += dt * speed * 1.6;
-      eye = pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * 0.04, 0));
-      cam.position.copy(eye);
+      cam.position.copy(pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * 0.04, 0)));
       cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : 0, 'YXZ');
-      const zoom = look.aim ? WEAPONS[me.weapon].zoom : 1;
+      const w = this.weapon;
+      const zoom = look.aim && w ? WEAPONS[w].zoom : 1;
       const fov = 78 / zoom + (this.pred.dashT > 0 || this.pred.hook ? 6 : 0);
       if (Math.abs(cam.fov - fov) > 0.05) { cam.fov += (fov - cam.fov) * Math.min(1, dt * 14); cam.updateProjectionMatrix(); }
     } else {
       const target = (this.watch !== null && others.get(this.watch)) || [...others.values()][0];
       if (target) {
         const back = new THREE.Vector3(Math.sin(target[4]) * 4.5, 2.4, Math.cos(target[4]) * 4.5);
-        eye = new THREE.Vector3(target[1], target[2], target[3]).add(back);
-        cam.position.lerp(eye, Math.min(1, dt * 6));
+        cam.position.lerp(new THREE.Vector3(target[1], target[2], target[3]).add(back), Math.min(1, dt * 6));
         cam.lookAt(target[1], target[2] + 1.4, target[3]);
       }
-      eye = cam.position.clone();
       if (cam.fov !== 78) { cam.fov = 78; cam.updateProjectionMatrix(); }
     }
 
-    // other players
+    // players
     const seen = new Set<number>();
     const v = new THREE.Vector3();
     for (const o of others.values()) {
@@ -302,8 +429,7 @@ export class Game3D {
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
-      poseFigure(a, o[1], o[2], o[3], o[4], o[5], WEAPON_ORDER[o[8]] ?? 'rifle', !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt);
-      // number tag over nearby heads
+      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt);
       const d = a.root.position.distanceTo(cam.position);
       v.set(o[1], o[2] + 2.5, o[3]).project(cam);
       if (d < 50 && v.z < 1) {
@@ -313,7 +439,40 @@ export class Game3D {
     }
     for (const [id, a] of this.avatars) if (!seen.has(id)) { a.root.visible = false; a.tag.style.display = 'none'; }
 
-    // grapple ropes: ours from the gun, others' from their hand
+    // loot bobs and spins; a rarity-coloured beam marks it from afar
+    const bp = this.beamGeo.getAttribute('position') as THREE.BufferAttribute, bc = this.beamGeo.getAttribute('color') as THREE.BufferAttribute;
+    let bn = 0;
+    for (const l of this.loot.values()) {
+      const item = l.g.getObjectByName('item');
+      if (item) { item.rotation.y += dt * 1.2; item.position.y = (l.d[4] === 0 ? 0.35 : 0.1) + Math.sin(this.time * 2.5 + l.phase) * 0.06; }
+      const rar = lootRarity(l.d[4], l.d[5]);
+      if (bn < 400 && (rar !== 'common' || l.d[4] !== 0)) {
+        const c = RARITY_RGB[rar], h = rar === 'legendary' ? 6 : rar === 'epic' ? 4 : 2.2;
+        bp.setXYZ(bn * 2, l.d[1], l.d[2] + 0.1, l.d[3]); bp.setXYZ(bn * 2 + 1, l.d[1], l.d[2] + h, l.d[3]);
+        bc.setXYZ(bn * 2, c[0], c[1], c[2]); bc.setXYZ(bn * 2 + 1, c[0], c[1], c[2]);
+        bn++;
+      }
+    }
+    bp.needsUpdate = true; bc.needsUpdate = true;
+    this.beamGeo.setDrawRange(0, bn * 2);
+    for (const c of this.cases.values()) {
+      const target = c.d[5] ? 1 : 0;
+      c.open += (target - c.open) * Math.min(1, dt * 6);
+      c.lid.rotation.x = -c.open * 1.9;
+      const star = c.root.getObjectByName('star');
+      if (star) { star.rotation.y += dt * 2; star.visible = !c.d[5]; star.position.y = 0.95 + Math.sin(this.time * 3) * 0.08; }
+    }
+    for (const f of this.fx.values()) if (f.kind === 'grenade') f.g.rotation.x += dt * 8;
+    for (const b of this.builds.values()) for (const m of b.meshes) m.scale.y = Math.min(1, m.scale.y + dt * 5);
+    this.booms = this.booms.filter((b) => {
+      b.t += dt;
+      const k = b.t / b.life;
+      b.m.scale.setScalar(Math.max(0.1, b.r * Math.min(1, k * 2.5)) * (k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1));
+      if (k >= 1) { this.ink.scene.remove(b.m); return false; }
+      return true;
+    });
+
+    // ropes and tracers
     const rp = this.ropeGeo.getAttribute('position') as THREE.BufferAttribute;
     let rn = 0;
     const rope = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => { if (rn < 200) { rp.setXYZ(rn * 2, x0, y0, z0); rp.setXYZ(rn * 2 + 1, x1, y1, z1); rn++; } };
@@ -321,8 +480,6 @@ export class Game3D {
     for (const o of others.values()) if (o[7] & OTHER_HOOK && o.length >= 12) rope(o[1], o[2] + 1.3, o[3], o[9], o[10], o[11]);
     rp.needsUpdate = true;
     this.ropeGeo.setDrawRange(0, rn * 2);
-
-    // tracers
     const tp = this.tracerGeo.getAttribute('position') as THREE.BufferAttribute, tc = this.tracerGeo.getAttribute('color') as THREE.BufferAttribute;
     let tn = 0;
     this.tracers = this.tracers.filter((t) => (t.life -= dt) > 0);
@@ -336,26 +493,30 @@ export class Game3D {
     tp.needsUpdate = true; tc.needsUpdate = true;
     this.tracerGeo.setDrawRange(0, tn * 2);
 
-    // first-person gun: sway, bob, recoil, reload dip, hidden while scoped with the sniper
+    // first-person gun: sway, bob, recoil, reload dip; hidden while scoped with a sniper, gliding or healing
     const gliding = !!this.pred?.gliding && !!me?.alive;
-    for (const [id, g] of this.guns) g.visible = !!me?.alive && me.weapon === id && !(look.aim && id === 'sniper') && !gliding;
+    const w = this.weapon;
+    const scoped = look.aim && (w === 'heavy' || w === 'hunting');
+    for (const [id, g] of this.guns) g.visible = !!me?.alive && w === id && !scoped && !gliding && !me.use;
     if (this.viewChute) { this.viewChute.visible = gliding; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
-    const g = me ? this.guns.get(me.weapon) : null;
-    if (g && me) {
+    const g = w ? this.guns.get(w) : null;
+    if (g && me && w) {
       this.gunKick = Math.max(0, this.gunKick - dt * 9);
-      const reload = me.reloadT > 0 ? Math.sin(Math.min(1, me.reloadT / WEAPONS[me.weapon].reload) * Math.PI) : 0;
+      const reload = me.reloadT > 0 ? Math.sin(Math.min(1, me.reloadT / WEAPONS[w].reload) * Math.PI) : 0;
       const ads = look.aim ? 1 : 0;
       g.position.set(0.2 * (1 - ads), -0.2 + ads * 0.1 - reload * 0.22 + Math.sin(this.bob) * 0.012, -0.5 + this.gunKick * 0.06 + ads * 0.08);
-      g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, 0);
+      g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, w === 'minigun' ? 0 : 0);
     }
 
+    this.updatePrompt();
+    // the nearest incoming nuke paints its target on the ground
+    const n = this.nukes.sort((a, b) => a.t - b.t)[0];
+    this.ink.setDanger(n ? n.x : 0, n ? n.z : 0, n ? NUKE.radius : 0, n ? 0.6 + 0.4 * Math.sin(this.time * 12) : 0);
     this.ink.setStorm(this.ring.x, this.ring.y, this.ring.r, this.ring.nx, this.ring.ny, this.ring.nr);
     this.ink.render(this.time);
   }
 
-  // where on screen a world point is (for damage direction indicators)
   bearingTo(x: number, z: number, yaw: number) { if (!this.pred) return 0; return Math.atan2(x - this.pred.x, z - this.pred.z) - yaw + Math.PI; }
-  // where a player's head or chest is on screen right now (for damage numbers)
   screenOf(id: number, head: boolean): { x: number; y: number } | null {
     const a = this.avatars.get(id);
     if (!a || !a.root.visible) return null;

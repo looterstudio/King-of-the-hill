@@ -1,11 +1,11 @@
 // Offline demo transport: plays the server's role inside the browser with bots and a simulated
 // fee stream. Same Sim, same snapshots, same input queue semantics, so the UI under test is real.
 import {
-  COUNTDOWN_MS, EYE_H, HEAD_Y, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, WEAPON_ORDER, epochEnd, epochOf, playerNumber,
+  COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type WeaponId,
 } from '../../shared/src/constants.ts';
 import type { ClientMsg, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, emptyInput, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
-import { frame, snapFor } from '../../shared/src/snap.ts';
+import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 
 type Handler = (m: ServerMsg) => void;
 const NAMES = ['degen.sol', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl'];
@@ -24,9 +24,10 @@ export class LocalNet {
   private myWallet = fakeWallet();
   private queue: Input[] = [];
   private last: Input = emptyInput();
-  private room: { id: string; seed: number; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
+  room: { id: string; seed: number; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
   private loop = 0;
   private killer: number | null = null;
+  private viewer: Viewer = { lootVer: -1, lootAt: -9 };
 
   constructor() { for (let i = 0; i < 6; i++) this.tickets.set(fakeWallet(), { name: NAMES[i], wins: 6 - i + Math.floor(Math.random() * 3) }); }
 
@@ -93,7 +94,7 @@ export class LocalNet {
     const r = this.room!;
     r.sim = new Sim(r.seed);
     r.sim.spawn(r.seats.map((s) => s.id));
-    this.queue = []; this.last = emptyInput(); this.killer = null;
+    this.queue = []; this.last = emptyInput(); this.killer = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
@@ -122,28 +123,62 @@ export class LocalNet {
     const tgt = b.target !== null ? sim.players.get(b.target) : null;
     const inNext = Math.hypot(self.x - g.nx, self.z - g.ny) < g.nr * 0.8;
     const inRing = Math.hypot(self.x - g.x, self.z - g.y) < g.r * 0.92;
+    const rank = (w: WeaponId | null) => (w ? RARITY_ORDER.indexOf(WEAPONS[w].rarity) : -1);
+    const fighting = !!(tgt && tgt.alive && b.los);
 
-    if (!inRing || ((g.closing || g.nextAt - sim.t < 12) && !inNext)) { inp.yaw = yawTo(g.nx, g.ny); inp.fwd = 1; inp.sprint = true; }
-    else if (tgt && tgt.alive && b.los) {
+    if (self.use) { inp.fwd = 0; inp.strafe = b.strafe * 0.3; return inp; } // stand still and finish healing
+    if (!fighting && self.shield < 60 && (self.items.big || self.items.mini) && Math.random() < 0.2) inp.item = 1;
+    else if (!fighting && self.hp < 60 && self.items.med && Math.random() < 0.2) inp.item = 2;
+
+    if (!inRing || ((g.closing || g.nextAt - sim.t < 12) && !inNext)) {
+      inp.yaw = yawTo(g.nx, g.ny); inp.fwd = 1; inp.sprint = true;
+      if (self.perk?.kind === 'launch' && Math.hypot(self.x - g.nx, self.z - g.ny) > g.nr + 40) inp.perk = true; // pad, then run onto it
+    } else if (fighting && tgt) {
       const d = Math.hypot(tgt.x - self.x, tgt.z - self.z);
-      const want = d < 14 ? 'shotgun' : d > 70 ? 'sniper' : 'rifle';
-      if (self.weapon !== want) inp.slot = WEAPON_ORDER.indexOf(want) + 1;
+      // pick the right gun for the range from what we carry
+      const has = self.slots.map((w, i) => ({ w, i })).filter((x) => x.w) as { w: WeaponId; i: number }[];
+      const shotgun = has.find((x) => x.w === 'pump' || x.w === 'tac'), sniper = has.find((x) => x.w === 'heavy' || x.w === 'hunting');
+      const rifle = has.filter((x) => !['pump', 'tac', 'heavy', 'hunting'].includes(x.w)).sort((a, z) => rank(z.w) - rank(a.w))[0];
+      const want = d < 12 && shotgun ? shotgun : d > 70 && sniper ? sniper : rifle ?? has[0];
+      if (want && want.i !== self.cur) inp.slot = want.i + 1;
       if (b.reaction <= 0) { b.aimErr = (Math.random() - 0.5) * (1 - b.skill) * 0.12; b.reaction = 0.3 + Math.random() * 0.4; if (Math.random() < 0.15) b.strafe *= -1; }
       b.reaction -= 1 / TICK_HZ;
       const ty = tgt.y + HEAD_Y - 0.45 - (self.y + EYE_H);
       inp.yaw = yawTo(tgt.x, tgt.z) + b.aimErr;
       inp.pitch = Math.atan2(ty, d) + b.aimErr * 0.5;
       inp.strafe = b.strafe; inp.fwd = d > 25 ? 0.6 : d < 8 ? -0.5 : 0;
-      inp.fire = Math.random() < 0.3 + b.skill * 0.5 && (WEAPONS[self.weapon].auto || Math.random() < 0.4);
+      const w = self.slots[self.cur];
+      inp.fire = Math.random() < 0.3 + b.skill * 0.5 && (!w || WEAPONS[w].auto || Math.random() < 0.4);
       inp.aim = d > 30;
-    } else {
-      if (Math.hypot(b.wp.x - self.x, b.wp.z - self.z) < 4 || Math.random() < 0.004) {
-        const a = Math.random() * Math.PI * 2, rr = Math.random() * g.r * 0.7;
-        b.wp = { x: g.x + Math.cos(a) * rr, z: g.y + Math.sin(a) * rr };
+      if (self.perk) {
+        const k = self.perk.kind;
+        if (k === 'grenade' && d > 8 && d < 24 && Math.random() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
+        if ((k === 'smoke' || k === 'fort') && self.hp < 45 && Math.random() < 0.08) inp.perk = true;
+        if (k === 'nuke' && d > 40 && Math.random() < 0.05) inp.perk = true;
       }
-      inp.yaw = yawTo(b.wp.x, b.wp.z); inp.fwd = 1; inp.sprint = true;
-      if (tgt && !b.los) inp.yaw = yawTo(tgt.x, tgt.z);
-      if (self.mag[self.weapon] < WEAPONS[self.weapon].mag / 2) inp.reload = true;
+    } else {
+      // loot run: open the nearest case, or grab a better gun
+      let goal: { x: number; y: number; z: number } | null = null, gd = 45, open = false;
+      for (const c of sim.cases) { if (c.open || Math.abs(c.y - self.y) > 3) continue; const d = Math.hypot(c.x - self.x, c.z - self.z); if (d < gd) { gd = d; goal = c; open = true; } }
+      const worst = self.slots.includes(null) ? -1 : Math.min(...self.slots.map(rank));
+      for (const l of sim.loot) {
+        if (Math.abs(l.y - self.y) > 3) continue;
+        const d = Math.hypot(l.x - self.x, l.z - self.z);
+        const useful = l.kind === 'weapon' ? rank(l.what as WeaponId) > worst && !self.slots.includes(l.what as WeaponId) : l.kind === 'item' ? true : !self.perk;
+        if (useful && d < gd * 0.8) { gd = d; goal = l; open = l.kind === 'weapon' && !self.slots.includes(null); }
+      }
+      if (goal && gd < INTERACT_R && open) inp.interact = true;
+      if (goal) { inp.yaw = yawTo(goal.x, goal.z); inp.fwd = gd > 0.6 ? 1 : 0; inp.sprint = gd > 6; }
+      else {
+        if (Math.hypot(b.wp.x - self.x, b.wp.z - self.z) < 4 || Math.random() < 0.004) {
+          const a = Math.random() * Math.PI * 2, rr = Math.random() * g.r * 0.7;
+          b.wp = { x: g.x + Math.cos(a) * rr, z: g.y + Math.sin(a) * rr };
+        }
+        inp.yaw = yawTo(b.wp.x, b.wp.z); inp.fwd = 1; inp.sprint = true;
+        if (tgt && !b.los) inp.yaw = yawTo(tgt.x, tgt.z);
+      }
+      const w = self.slots[self.cur];
+      if (w && self.mags[self.cur] < WEAPONS[w].mag / 2) inp.reload = true;
     }
     // stuck against something: hop it, or swing round it
     const sp = Math.hypot(self.vx, self.vz);
@@ -165,7 +200,8 @@ export class LocalNet {
       if (e.kind === 'elim') {
         if (e.victim === 1) this.killer = e.by;
         this.emit({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: sim.alive, head: e.head });
-      } else if (e.kind === 'hit' && (e.victim === 1 || e.by === 1)) this.emit({ t: 'event', kind: 'hit', victim: e.victim, by: e.by, dmg: e.dmg, head: e.head });
+      } else if (e.kind === 'hit') { if (e.victim === 1 || e.by === 1) this.emit({ t: 'event', ...e }); }
+      else this.emit({ t: 'event', ...e } as ServerMsg);
     }
     if (sim.tick % SNAP_EVERY === 0) {
       let watch = 1;
@@ -173,7 +209,7 @@ export class LocalNet {
         if (this.killer === null || !sim.players.get(this.killer)?.alive) this.killer = [...sim.players.values()].find((p) => p.alive)?.id ?? 1;
         watch = this.killer;
       }
-      this.emit(snapFor(frame(sim), 1, watch));
+      this.emit(snapFor(frame(sim), 1, watch, this.viewer));
     }
     if (sim.alive <= 1) this.finish();
   }

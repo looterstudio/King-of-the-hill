@@ -7,7 +7,7 @@ import {
 } from '../../shared/src/constants.ts';
 import type { RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
-import { frame, snapFor } from '../../shared/src/snap.ts';
+import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 
 const SOFT_BUFFER = 256 * 1024;      // skip snapshots to a client this far behind
 const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
@@ -110,9 +110,9 @@ export class Room {
         this.broadcast({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: this.sim.alive, head: e.head });
       } else if (e.kind === 'hit') {
         // hit feedback only matters to the two people involved
-        const s = JSON.stringify({ t: 'event', kind: 'hit', victim: e.victim, by: e.by, dmg: e.dmg, head: e.head });
+        const s = JSON.stringify({ t: 'event', ...e });
         for (const c of this.seats) if (c.id === e.victim || c.id === e.by) c.sendRaw(s);
-      }
+      } else this.broadcast({ t: 'event', ...e } as ServerMsg); // booms, forts, nukes, opened cases: everyone needs them
     }
   }
 
@@ -159,6 +159,7 @@ export class Room {
 
   // dead players keep watching whoever eliminated them (or anyone still standing)
   private watching = new Map<number, number>();
+  private viewers = new Map<number, Viewer>();
   private snapshot() {
     const f = frame(this.sim!);
     for (const c of this.seats) {
@@ -170,7 +171,9 @@ export class Room {
         if (w === undefined || !this.sim!.players.get(w)?.alive) { w = [...this.sim!.players.values()].find((p) => p.alive)?.id ?? c.id; this.watching.set(c.id, w); }
         watch = w;
       }
-      c.sendRaw(JSON.stringify(snapFor(f, c.id, watch)), true);
+      let v = this.viewers.get(c.id);
+      if (!v) { v = { lootVer: -1, lootAt: -9 }; this.viewers.set(c.id, v); }
+      c.sendRaw(JSON.stringify(snapFor(f, c.id, watch, v)), true);
     }
   }
 

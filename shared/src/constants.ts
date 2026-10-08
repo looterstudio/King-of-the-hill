@@ -23,8 +23,6 @@ export const JUMP_V = 7.6;
 export const STEP_H = 0.55;             // stairs and curbs are climbed without jumping
 export const PLAYER_HP = 100;
 export const HEADSHOT_MULT = 1.8;
-export const REGEN_DELAY = 5;           // seconds without taking damage before health comes back
-export const REGEN_RATE = 12;           // hp per second
 export const REWIND_MAX_TICKS = 9;      // lag compensation looks back at most 300 ms
 export const VIEW_RANGE = 170;          // players farther than this are not sent to you
 
@@ -40,16 +38,51 @@ export const RING_PHASES: RingPhase[] = [
 ];
 export const RING_DPS_START = 1;
 
-// everyone drops with the same four guns: the better player wins, not the luckier looter
-export type WeaponId = 'rifle' | 'shotgun' | 'sniper' | 'pistol';
-export const WEAPON_ORDER: WeaponId[] = ['rifle', 'shotgun', 'sniper', 'pistol'];
-export interface WeaponDef { name: string; dmg: number; cd: number; range: number; pellets: number; spread: number; mag: number; reload: number; zoom: number; auto: boolean }
+// ---- loot ----
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+
+export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy';
+export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy'];
+export interface WeaponDef {
+  name: string; rarity: Rarity; dmg: number; cd: number; range: number; pellets: number; spread: number;
+  mag: number; reload: number; zoom: number; auto: boolean; burst?: number; spinUp?: number; headMult?: number;
+}
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
-  rifle: { name: 'rifle', dmg: 14, cd: 0.105, range: 140, pellets: 1, spread: 0.02, mag: 30, reload: 1.7, zoom: 1.6, auto: true },
-  shotgun: { name: 'shotgun', dmg: 10, cd: 0.85, range: 28, pellets: 9, spread: 0.075, mag: 6, reload: 2.1, zoom: 1.15, auto: false },
-  sniper: { name: 'sniper', dmg: 82, cd: 1.35, range: 400, pellets: 1, spread: 0.04, mag: 5, reload: 2.5, zoom: 4, auto: false },
-  pistol: { name: 'pistol', dmg: 20, cd: 0.26, range: 90, pellets: 1, spread: 0.014, mag: 12, reload: 1.1, zoom: 1.2, auto: false },
+  pistol: { name: 'Pistol', rarity: 'common', dmg: 22, cd: 0.22, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.2, auto: false },
+  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.25, auto: true },
+  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 9, cd: 0.6, range: 22, pellets: 8, spread: 0.085, mag: 8, reload: 2.6, zoom: 1.1, auto: false },
+  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 12, cd: 1.0, range: 26, pellets: 9, spread: 0.065, mag: 5, reload: 2.8, zoom: 1.1, auto: false },
+  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.6, auto: true },
+  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.7, auto: false, burst: 3 },
+  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, auto: false, headMult: 2 },
+  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.2, auto: true, spinUp: 0.7 },
+  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.75, auto: true },
+  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 210, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
 };
+export const SLOTS = 4;
+
+export type ItemId = 'mini' | 'big' | 'med';
+export const ITEMS: Record<ItemId, { name: string; rarity: Rarity; use: number; max: number; shield?: number; shieldCap?: number; heal?: number }> = {
+  mini: { name: 'Mini Shield', rarity: 'uncommon', use: 1.0, max: 6, shield: 25, shieldCap: 50 },
+  big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 50, shieldCap: 100 },
+  med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 100 },
+};
+export type PerkId = 'grenade' | 'smoke' | 'launch' | 'fort' | 'nuke';
+export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number }> = {
+  grenade: { name: 'Grenades', rarity: 'uncommon', count: 3 },
+  smoke: { name: 'Smoke', rarity: 'uncommon', count: 2 },
+  launch: { name: 'Launch Pad', rarity: 'rare', count: 1 },
+  fort: { name: 'Instant Fort', rarity: 'epic', count: 1 },
+  nuke: { name: 'Atomic Bomb', rarity: 'legendary', count: 1 },
+};
+export const SHIELD_MAX = 100;
+export const GRENADE = { fuse: 2.2, radius: 7, dmg: 105, speed: 19 };
+export const SMOKE = { radius: 7, life: 12 };
+export const PAD = { life: 30, launch: 24 };
+export const FORT = { life: 30, size: 2.2, height: 1.8 };
+export const NUKE = { delay: 6, radius: 26, dmg: 400, range: 450 };
+export const INTERACT_R = 2.3;
 
 // economy
 export const EPOCH_MS = 6 * 60 * 60 * 1000; // pot draws every 6h, aligned to 00/06/12/18 UTC

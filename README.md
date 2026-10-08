@@ -1,13 +1,15 @@
-# Pot Royale
+# King of the Hill Royale
 
 A first-person battle royale drawn in ballpoint on graph paper, for up to 100 players per match.
-Everyone glides in from the sky with the same four guns (rifle, shotgun, sniper, pistol) and the
-same movement kit: sprint, slide, double jump, wall jump, air dash and a grapple. The storm closes
-in five phases; the last player standing wins the match and a ticket. The token's trading fees
-fill one shared pot, and every 6 hours (00/06/12/18 UTC) it pays out to the wallets that won.
+Glide in, loot guns, shields and perks off the floor and out of pencil cases, and fight your way to
+the King's Tower in the middle of the island: the final circle always closes on it. Ten guns from
+common to legendary (the SCAR and a one-shot Heavy Sniper are the prizes), shields and medkits, and
+five perks: grenades, smoke, launch pads, instant forts and, for the luckiest, an atomic bomb you
+can drop anywhere on the map. The last player standing wins the match and a ticket; the token's
+trading fees fill one shared pot that pays out to the winners every 6 hours (00/06/12/18 UTC).
 
-The look and feel follow the ballpoint-shooter genre (ink outlines, hatching, notebook paper);
-all code here is original.
+The look and feel follow the ballpoint-shooter and classic battle-royale genres; all code here is
+original, and every place name and item is our own.
 
 ## Run it locally
 

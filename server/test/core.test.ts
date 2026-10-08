@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
-import { Sim, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input } from '../../shared/src/sim.ts';
+import { Sim, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
-import { EPOCH_MS, TICK_HZ } from '../../shared/src/constants.ts';
+import { EPOCH_MS, TICK_HZ, WEAPONS, type WeaponId } from '../../shared/src/constants.ts';
 import { computePayouts } from '../src/payout.ts';
 import { buildTree, leafHash, verify } from '../src/merkle.ts';
 import { Epochs } from '../src/epoch.ts';
@@ -23,7 +23,7 @@ const DT = 1 / TICK_HZ;
 function arena(ids: number[]) {
   const sim = new Sim(1, World.custom([]));
   sim.spawn(ids);
-  for (const p of sim.players.values()) { p.y = 0; p.gliding = false; p.grounded = true; p.fireCd = 0; p.pitch = 0; }
+  for (const p of sim.players.values()) { p.y = 0; p.gliding = false; p.grounded = true; p.fireCd = 0; p.pitch = 0; p.slots = ['ar', 'pistol', null, null]; p.mags = [30, 16, 0, 0]; p.cur = 0; }
   return sim;
 }
 
@@ -129,32 +129,134 @@ test('each storm circle sits inside the previous one', () => {
   }
 });
 
-test('everyone has all four guns; magazines empty and reload', () => {
+const give = (p: PlayerState, w: WeaponId) => { p.slots[0] = w; p.mags[0] = WEAPONS[w].mag; p.cur = 0; p.fireCd = 0; };
+
+test('walking over loot picks it up; F swaps your gun when the slots are full', () => {
   const sim = arena([1]);
   const p = sim.players.get(1)!;
-  assert.equal(p.weapon, 'rifle');
-  sim.step(DT, new Map([[1, inp({ slot: 2 })]]));
-  assert.equal(p.weapon, 'shotgun');
-  p.fireCd = 0;
-  sim.step(DT, new Map([[1, inp({ fire: true })]]));
-  assert.equal(sim.shots.length, 9);
-  assert.equal(p.mag.shotgun, 5);
-  for (let i = 0; i < 400 && p.mag.shotgun > 0; i++) { p.fireCd = 0; sim.step(DT, new Map([[1, inp({ fire: true })]])); }
-  assert.equal(p.mag.shotgun, 0);
-  sim.step(DT, new Map([[1, inp({ fire: true })]])); // trigger on empty starts the reload
-  assert.ok(p.reloadT > 0);
-  for (let i = 0; i < TICK_HZ * 3; i++) sim.step(DT, new Map());
-  assert.equal(p.mag.shotgun, 6);
+  sim.drop(p.x, 0, p.z, 'item', 'big', 2);
+  sim.drop(p.x, 0, p.z, 'weapon', 'pump');
+  sim.step(DT, new Map());
+  assert.equal(p.items.big, 2);
+  assert.deepEqual(p.slots, ['ar', 'pistol', 'pump', null]);
+  p.slots = ['ar', 'pistol', 'pump', 'smg'];
+  sim.drop(p.x, 0, p.z, 'weapon', 'scar');
+  sim.step(DT, new Map());
+  assert.ok(sim.loot.some((l) => l.what === 'scar'), 'no free slot: it stays on the floor');
+  sim.step(DT, new Map([[1, inp({ interact: true })]]));
+  assert.equal(p.slots[p.cur], 'scar');
+  assert.ok(sim.loot.some((l) => l.what === 'ar'), 'the old gun is dropped');
 });
 
-test('health comes back after a few seconds out of combat', () => {
+test('pencil cases open with F and spill loot', () => {
   const sim = arena([1]);
   const p = sim.players.get(1)!;
-  p.hp = 40; p.sinceHurt = 0;
-  for (let i = 0; i < TICK_HZ * 4; i++) sim.step(DT, new Map());
-  assert.equal(Math.round(p.hp), 40);
-  for (let i = 0; i < TICK_HZ * 6; i++) sim.step(DT, new Map());
-  assert.equal(p.hp, 100);
+  sim.cases.push({ id: 999, x: p.x + 1, y: 0, z: p.z, golden: true, open: false });
+  const before = sim.loot.length;
+  const ev = sim.step(DT, new Map([[1, inp({ interact: true })]]));
+  assert.ok(ev.some((e) => e.kind === 'open'));
+  assert.ok(sim.cases.find((c) => c.id === 999)!.open);
+  assert.ok(sim.loot.length - before >= 3, 'golden case: gun, shield, potion (+ maybe a perk)');
+  const gun = sim.loot.find((l) => l.kind === 'weapon');
+  assert.ok(gun && ['rare', 'epic', 'legendary'].includes(WEAPONS[gun.what as WeaponId].rarity));
+});
+
+test('shields soak bullets first; the storm goes straight to health', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -10; b.shield = 50;
+  const [hit] = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.08, fire: true })]])).filter((e) => e.kind === 'hit');
+  assert.ok(hit && hit.kind === 'hit' && hit.shield);
+  assert.equal(b.hp, 100);
+  assert.ok(b.shield < 50);
+});
+
+test('a shield potion takes 3 s and caps at 100; damage interrupts it', () => {
+  const sim = arena([1]);
+  const p = sim.players.get(1)!;
+  p.items.big = 2; p.shield = 70;
+  sim.step(DT, new Map([[1, inp({ item: 1 })]]));
+  assert.equal(p.use?.item, 'big');
+  for (let i = 0; i < TICK_HZ * 2; i++) sim.step(DT, new Map());
+  assert.equal(p.shield, 70, 'not done yet');
+  for (let i = 0; i < TICK_HZ * 1.2; i++) sim.step(DT, new Map());
+  assert.equal(p.shield, 100);
+  assert.equal(p.items.big, 1);
+});
+
+test('burst rifle fires three; minigun has to spin up', () => {
+  const sim = arena([1]);
+  const p = sim.players.get(1)!;
+  give(p, 'burst');
+  for (let i = 0; i < 10; i++) sim.step(DT, new Map([[1, inp({ fire: i === 0 })]]));
+  assert.equal(sim.shots.length, 3);
+  sim.shots.length = 0;
+  give(p, 'minigun');
+  for (let i = 0; i < Math.floor(TICK_HZ * 0.5); i++) sim.step(DT, new Map([[1, inp({ fire: true })]]));
+  assert.equal(sim.shots.length, 0, 'still spinning');
+  for (let i = 0; i < TICK_HZ; i++) sim.step(DT, new Map([[1, inp({ fire: true })]]));
+  assert.ok(sim.shots.length > 5);
+});
+
+test('the heavy sniper one-shots a full shield and full health', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -60; b.shield = 100;
+  give(a, 'heavy');
+  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.012, fire: true, aim: true })]]));
+  assert.equal(b.alive, false);
+});
+
+test('grenades bounce, blow up, and walls block the blast', () => {
+  const sim = new Sim(1, World.custom([{ x0: -5, y0: 0, z0: -8.2, x1: 5, y1: 4, z1: -7.8, ink: 2, kind: 'wall' }]));
+  sim.spawn([1, 2, 3]);
+  const [a, b, c] = [1, 2, 3].map((i) => sim.players.get(i)!);
+  for (const p of [a, b, c]) { p.y = 0; p.gliding = false; p.grounded = true; }
+  a.x = 0; a.z = 0; b.x = 1.5; b.z = -4; c.x = 0; c.z = -10; // c is behind the wall
+  a.perk = { kind: 'grenade', n: 3 };
+  sim.step(DT, new Map([[1, inp({ perk: true, yaw: 0, pitch: -0.9 })]]));
+  assert.equal(a.perk.n, 2);
+  let boom = false;
+  for (let i = 0; i < TICK_HZ * 3; i++) if (sim.step(DT, new Map()).some((e) => e.kind === 'boom')) boom = true;
+  assert.ok(boom);
+  assert.ok(b.hp < 100, 'near the blast: hurt');
+  assert.equal(c.hp, 100, 'behind the wall: safe');
+});
+
+test('instant fort walls you in for a while, then disappears', () => {
+  const sim = arena([1]);
+  const p = sim.players.get(1)!;
+  p.perk = { kind: 'fort', n: 1 };
+  const ev = sim.step(DT, new Map([[1, inp({ perk: true })]]));
+  const build = ev.find((e) => e.kind === 'build');
+  assert.ok(build && build.kind === 'build' && build.boxes.length === 4);
+  assert.ok(sim.world.raycast(p.x, p.y + 1, p.z, 1, 0, 0, 10) < 3, 'a wall right next to you');
+  for (let i = 0; i < TICK_HZ * 31; i++) sim.step(DT, new Map());
+  assert.equal(sim.world.raycast(p.x, p.y + 1, p.z, 1, 0, 0, 10), 10, 'gone');
+});
+
+test('the atomic bomb lands where you look and wipes out the area', () => {
+  const sim = arena([1, 2, 3]);
+  const [a, b, c] = [1, 2, 3].map((i) => sim.players.get(i)!);
+  a.x = 0; a.z = 0; b.x = 0; b.z = -80; b.shield = 100; c.x = 0; c.z = -150;
+  a.perk = { kind: 'nuke', n: 1 };
+  const ev = sim.step(DT, new Map([[1, inp({ perk: true, yaw: 0, pitch: Math.atan2(-1.62, 80) })]]));
+  const n = ev.find((e) => e.kind === 'nuke');
+  assert.ok(n && n.kind === 'nuke' && Math.abs(n.z + 80) < 3, 'target where the crosshair meets the ground');
+  for (let i = 0; i < TICK_HZ * 7; i++) sim.step(DT, new Map());
+  assert.equal(b.alive, false, 'inside the blast');
+  assert.equal(c.alive, true, 'far away');
+  assert.equal(a.kills, 1);
+});
+
+test('the fallen drop everything they carried', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  b.items.mini = 3; b.perk = { kind: 'smoke', n: 2 }; b.slots = ['scar', 'pump', 'pistol', null];
+  const before = sim.loot.length;
+  sim.eliminate(b.id, a.id, 'shot', []);
+  const dropped = sim.loot.slice(before).map((l) => l.what).sort();
+  assert.deepEqual(dropped, ['mini', 'pump', 'scar', 'smoke']);
 });
 
 test('movement kit: double jump, air dash, slide, wall jump, grapple', () => {
@@ -193,15 +295,11 @@ test('movement kit: double jump, air dash, slide, wall jump, grapple', () => {
   assert.ok(g.x > 1.2 && top > 0.8, `grapple pulls up to the wall (x=${g.x.toFixed(2)}, top=${top.toFixed(2)})`);
 });
 
-test('the generated island: every rooftop is reachable by its stairs', () => {
+test("the King's Tower: every floor has stairs up, and the roof too", () => {
   const w = new World(1234);
-  assert.ok(w.roofs.length > 20);
-  for (const roof of w.roofs) {
-    const touches = (b: { x0: number; x1: number; z0: number; z1: number }) =>
-      Math.abs(b.x1 - roof.x0) < 1e-6 || Math.abs(b.x0 - roof.x1) < 1e-6 || Math.abs(b.z1 - roof.z0) < 1e-6 || Math.abs(b.z0 - roof.z1) < 1e-6;
-    const top = w.boxes.filter((b) => b.kind === 'stair').some((b) => Math.abs(b.y1 - roof.y) < 1e-6 && touches(b));
-    assert.ok(top, `roof at ${roof.x0},${roof.z0} has a top step`);
-  }
+  for (let f = 0; f < 6; f++) assert.ok(w.boxes.some((b) => b.kind === 'stair' && Math.abs(b.y0 - f * 4) < 1e-6 && Math.abs(b.x0) < 17 && Math.abs(b.z0) < 17), `floor ${f}`);
+  assert.ok(w.pois.length >= 8);
+  assert.ok(w.caseSpots.filter((c) => c.golden).length >= 4);
 });
 
 test('prorata never pays more than the pot and keeps dust in rollover', () => {

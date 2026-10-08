@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Pot Royale</title>
+<title>King of the Hill Royale</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Shantell+Sans:ital,wght@0,400;0,600;0,800;1,400&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="./src/style.css" />
@@ -17,7 +17,7 @@
     <header class="topbar">
       <div class="logo">
         <svg class="syms" viewBox="0 0 96 30" aria-hidden="true"><circle cx="14" cy="15" r="10.5"/><path d="M38 25 L48 5 L58 25 Z"/><rect x="72" y="5" width="20" height="20" rx="1"/></svg>
-        <span class="word">Pot Royale</span>
+        <span class="word">King of the Hill <em>Royale</em></span>
       </div>
       <div class="live"><span class="dot"></span><b id="online">0</b> playing <span class="sep">·</span> <b id="rooms">0</b> rooms</div>
     </header>
@@ -26,7 +26,6 @@
       <section class="hero">
         <div class="jar-wrap">
           <canvas id="jar"></canvas>
-          <div class="note note-fees">token fees<br />drop in here</div>
           <div class="note note-draw">paid out<br />every 6 hours</div>
         </div>
         <div class="prize">
@@ -34,7 +33,6 @@
           <div id="potAmount" class="amount">◎ 0.000</div>
           <svg class="scribble" viewBox="0 0 400 18" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 80 4, 160 16, 240 8 S 360 6, 396 11"/><path d="M30 15 C 120 9, 220 17, 380 12"/></svg>
           <div class="draw-row">next payout in <b id="countdown">--:--:--</b></div>
-          <div id="pigPct" class="pig-pct"></div>
           <div id="inflowToast" class="toast" aria-live="polite"></div>
         </div>
       </section>
@@ -44,8 +42,8 @@
         <h2>How to play</h2>
         <ol class="steps">
           <li><b>Connect a wallet</b> holding <span id="holdReq" class="hl">$50 of the token</span></li>
-          <li><b>Drop into a battle royale of up to 100.</b> Everyone gets the same four guns.</li>
-          <li><b>Last one standing</b> wins 1 ticket.</li>
+          <li><b>Drop into a battle royale of up to 100.</b> Loot guns, shields and perks from the floor and from pencil cases.</li>
+          <li><b>Last one standing</b> wins 1 ticket. The final circle always closes on the King's Tower.</li>
           <li><b>Every 6 hours</b> the pot is split by tickets.</li>
         </ol>
 
@@ -112,14 +110,20 @@
   <div id="dmg" class="dmg"></div>
   <div id="feed" class="feed"></div>
   <div class="hud-bl">
+    <div class="hp-row shield-row"><span>SH</span><div class="bar sh"><div id="shFill"></div></div><b id="shNum">0</b></div>
     <div class="hp-row"><span>HP</span><div class="bar hp"><div id="hpFill"></div></div><b id="hpNum">100</b></div>
-    <div class="ammo-row"><b id="ammo">30</b><span id="ammoMax">/30</span><em id="reloading" class="hidden">reloading…</em></div>
+    <div class="ammo-row"><b id="ammo">16</b><span id="ammoMax">/16</span><em id="reloading" class="hidden">reloading…</em></div>
     <div id="magTally" class="tally"></div>
+    <div id="items" class="items"></div>
   </div>
   <div class="hud-br">
     <ol id="weapons" class="weapons"></ol>
-    <div id="weapon" class="weapon">rifle</div>
+    <div id="weapon" class="weapon">Pistol</div>
   </div>
+  <div id="prompt" class="prompt"></div>
+  <div id="useBar" class="use-bar hidden"><span id="useLabel"></span><div><i id="useFill"></i></div></div>
+  <div id="nukeWarn" class="nuke-warn hidden"></div>
+  <div id="flash" class="flash"></div>
   <div id="hint" class="hint"></div>
   <div id="banner" class="banner hidden"></div>
 </section>
@@ -135,8 +139,10 @@
         <p><kbd>LMB</kbd> fire · <kbd>RMB</kbd> aim down sights</p>
         <p><kbd>Space</kbd> jump · again in the air = double jump · on a wall = wall jump</p>
         <p><kbd>C</kbd>/<kbd>Ctrl</kbd> slide on the ground · air dash in the air</p>
-        <p><kbd>Q</kbd>/<kbd>E</kbd> hold to grapple and reel in</p>
-        <p><kbd>R</kbd> reload · <kbd>1-4</kbd>/<kbd>wheel</kbd> rifle · shotgun · sniper · pistol</p>
+        <p><kbd>Q</kbd> hold to grapple and reel in</p>
+        <p><kbd>E</kbd>/<kbd>F</kbd> open pencil cases · pick up or swap guns</p>
+        <p><kbd>5</kbd> drink a shield · <kbd>6</kbd> use a medkit · <kbd>G</kbd> use your perk</p>
+        <p><kbd>R</kbd> reload · <kbd>1-4</kbd>/<kbd>wheel</kbd> switch weapon</p>
         <p><kbd>Esc</kbd> pause</p>
       </div>
     </div>

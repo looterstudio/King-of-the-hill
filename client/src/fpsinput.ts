@@ -3,7 +3,7 @@
 // between 30 Hz input frames.
 export class FpsInput {
   private keys = new Set<string>();
-  private latched = { jump: false, slide: false, reload: false, slot: 0 };
+  private latched = { jump: false, slide: false, reload: false, slot: 0, interact: false, perk: false, item: 0 };
   yaw = 0;
   pitch = 0;
   fire = false;
@@ -25,6 +25,10 @@ export class FpsInput {
       if (e.code === 'KeyC' || e.code === 'ControlLeft') this.latched.slide = true;
       if (e.code === 'KeyR') this.latched.reload = true;
       const n = /^Digit([1-4])$/.exec(e.code); if (n) this.latched.slot = Number(n[1]);
+      if (e.code === 'KeyE' || e.code === 'KeyF') this.latched.interact = true;
+      if (e.code === 'KeyG') this.latched.perk = true;
+      if (e.code === 'Digit5') this.latched.item = 1;
+      if (e.code === 'Digit6') this.latched.item = 2;
       if (['Space', 'Tab', 'KeyC', 'ControlLeft'].includes(e.code)) e.preventDefault();
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -83,11 +87,12 @@ export class FpsInput {
       fwd: k('KeyW') + k('ArrowUp') * arrows - k('KeyS') - k('ArrowDown') * arrows,
       strafe: k('KeyD') + k('ArrowRight') * arrows - k('KeyA') - k('ArrowLeft') * arrows,
       sprint: !!(k('ShiftLeft') || k('ShiftRight')),
-      grapple: !!(k('KeyQ') || k('KeyE')),
+      grapple: !!k('KeyQ'),
       jump: this.latched.jump, slide: this.latched.slide, reload: this.latched.reload, slot: this.latched.slot,
+      interact: this.latched.interact, perk: this.latched.perk, item: this.latched.item,
       fire: this.fire, aim: this.aim, yaw: this.yaw, pitch: this.pitch,
     };
-    this.latched = { jump: false, slide: false, reload: false, slot: 0 };
+    this.latched = { jump: false, slide: false, reload: false, slot: 0, interact: false, perk: false, item: 0 };
     return out;
   }
 }

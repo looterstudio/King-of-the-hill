@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { MAP_HALF, PLAYER_HP, RESULT_MS, ROOM_MAX, TICK_HZ, WEAPONS, WEAPON_ORDER } from '../../shared/src/constants.ts';
+import { ITEMS, MAP_HALF, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, WEAPONS } from '../../shared/src/constants.ts';
 import { loginMessage, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
-import { Game3D } from './game3d.ts';
+import { Game3D, RARITY_CSS } from './game3d.ts';
 import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
 
@@ -21,13 +21,13 @@ const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidde
 // `vite build --mode demo` runs the whole game in the browser with bots; otherwise talk to the server
 const DEMO = import.meta.env.MODE === 'demo';
 const net: Net | LocalNet = DEMO ? new LocalNet() : new Net();
-const jar = new PotJar($<HTMLCanvasElement>('jar'));
+const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: false });
 const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false });
 const canvas = $<HTMLCanvasElement>('arena');
 const game = new Game3D(canvas, $<HTMLDivElement>('tags'));
 const input = new FpsInput(canvas);
 // headless test runs can't take pointer lock; #autotest pretends it was granted (demo build only)
-if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; }
+if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input }; }
 
 type Screen = 'lobby' | 'waiting' | 'game';
 const state = {
@@ -94,7 +94,6 @@ const marks = (n: number) => '<i></i>'.repeat(Math.min(n, 15));
 function renderPot(p: PotView) {
   state.pot = p;
   jar.setSol(sol(p.lamports)); miniJar.setSol(sol(p.lamports));
-  $('pigPct').innerHTML = `the pig is <b>${jar.percent}%</b> full`;
   $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
   $('tickets').innerHTML = p.tickets.length
@@ -140,17 +139,17 @@ function hint(text: string, ms = 2500) {
   clearTimeout(hintTimer); hintTimer = window.setTimeout(() => el.classList.remove('on'), ms);
 }
 // Fortnite-style damage numbers: pellets that land together add up into one number
-const pendingHits = new Map<number, { dmg: number; head: boolean; t: number }>();
-function damageNumber(victim: number, dmg: number, head: boolean) {
+const pendingHits = new Map<number, { dmg: number; head: boolean; shield: boolean; t: number }>();
+function damageNumber(victim: number, dmg: number, head: boolean, shield = false) {
   const cur = pendingHits.get(victim);
-  if (cur) { cur.dmg += dmg; cur.head ||= head; return; }
-  const entry = { dmg, head, t: 0 };
+  if (cur) { cur.dmg += dmg; cur.head ||= head; cur.shield ||= shield; return; }
+  const entry = { dmg, head, shield, t: 0 };
   pendingHits.set(victim, entry);
   entry.t = window.setTimeout(() => {
     pendingHits.delete(victim);
     const at = game.screenOf(victim, entry.head) ?? { x: innerWidth / 2 + 40, y: innerHeight / 2 - 40 };
     const el = document.createElement('div');
-    el.className = `dmgnum ${entry.head ? 'head' : ''} ${entry.dmg >= 60 ? 'big' : ''}`;
+    el.className = `dmgnum ${entry.head ? 'head' : entry.shield ? 'shield' : ''} ${entry.dmg >= 60 ? 'big' : ''}`;
     el.textContent = String(entry.dmg);
     el.style.left = `${at.x + (Math.random() - 0.5) * 30}px`; el.style.top = `${at.y}px`;
     $('tags').appendChild(el);
@@ -261,10 +260,21 @@ net.on((m: ServerMsg) => {
       break;
     case 'event': {
       if (m.kind === 'hit') {
-        if (m.by === state.you) { hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head); sfx.hit(m.head); }
+        if (m.by === state.you) { hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head); }
         if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); }
         break;
       }
+      if (m.kind === 'boom') {
+        game.onBoom(m.x, m.y, m.z, m.r, m.nuke);
+        const cam = game.ink.camera.position, d = Math.hypot(m.x - cam.x, m.z - cam.z);
+        sfx.boom(m.nuke, d);
+        if (m.nuke && d < 220) { const f = $('flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 60); }
+        break;
+      }
+      if (m.kind === 'build') { game.onBuild(m.id, m.boxes); break; }
+      if (m.kind === 'unbuild') { game.onUnbuild(m.id); break; }
+      if (m.kind === 'nuke') { sfx.siren(); feed(`<b style="color:var(--red)">☢ ${esc(label(m.by))} launched an atomic bomb</b>`, m.by === state.you); break; }
+      if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
       if (m.by === state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); }
       const mine = m.victim === state.you || m.by === state.you;
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : label(m.by);
@@ -315,26 +325,41 @@ function frame(now: number) {
     game.frame(dt, { yaw: input.yaw, pitch: input.pitch, aim: input.aim });
     const me = game.self;
     if (me) {
-      const wi = WEAPON_ORDER.indexOf(me.weapon), def = WEAPONS[me.weapon], mag = me.mag[wi];
+      const w = me.slots[me.cur], def = w ? WEAPONS[w] : null, mag = me.mags[me.cur] ?? 0;
       $('hpFill').style.width = `${(me.hp / PLAYER_HP) * 100}%`;
       $('hpNum').textContent = String(me.hp);
+      $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
+      $('shNum').textContent = String(me.shield);
       document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 30);
       for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
-      $('ammo').textContent = String(mag);
-      $('ammoMax').textContent = `/${def.mag}`;
+      $('ammo').textContent = def ? String(mag) : '–';
+      $('ammoMax').textContent = def ? `/${def.mag}` : '';
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
-      $('magTally').innerHTML = Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('');
-      $('weapon').textContent = def.name;
-      $('weapons').innerHTML = WEAPON_ORDER.map((w, i) => `<li class="${w === me.weapon ? 'on' : ''}"><span>${WEAPONS[w].name}</span><em>${me.mag[i]}/${WEAPONS[w].mag}</em></li>`).join('');
+      $('magTally').innerHTML = def ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '';
+      $('weapon').textContent = def ? def.name : 'unarmed';
+      $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
+      $('weapons').innerHTML = me.slots.map((s, i) => s
+        ? `<li class="${i === me.cur ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
+        : `<li class="empty"><span>empty</span><em></em></li>`).join('');
+      const shields = me.items.big + me.items.mini;
+      $('items').innerHTML = `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
+        + `<span class="${me.items.med ? '' : 'empty'}"><kbd>6</kbd> medkit ×${me.items.med}</span>`
+        + `<span class="${me.perk ? '' : 'empty'}" style="${me.perk ? `color:${RARITY_CSS[PERKS[me.perk.kind].rarity]}` : ''}"><kbd>G</kbd> ${me.perk ? `${PERKS[me.perk.kind].name} ×${me.perk.n}` : 'no perk'}</span>`;
+      $('useBar').classList.toggle('hidden', !me.use);
+      if (me.use) { const total = ITEMS[me.use.item].use; $('useLabel').textContent = ITEMS[me.use.item].name; $('useFill').style.width = `${(1 - me.use.t / total) * 100}%`; }
+      $('prompt').innerHTML = game.prompt;
       $('killCount').textContent = String(me.kills);
-      // crosshair opens with movement and closes when aiming
       const body = game.me;
-      const spread = body ? spreadFor(body, me.weapon, input.aim) : def.spread;
+      const scoped = input.aim && (w === 'heavy' || w === 'hunting') && me.alive;
+      const spread = body && w ? spreadFor(body, w, input.aim) : 0.02;
       $('crosshair').style.setProperty('--s', `${Math.round(6 + spread * 900)}px`);
-      $('crosshair').style.visibility = me.alive && !(input.aim && me.weapon === 'sniper') ? 'visible' : 'hidden';
-      $('scope').classList.toggle('hidden', !(input.aim && me.weapon === 'sniper' && me.alive));
-      if (body?.gliding && me.alive) hint('gliding · steer with the mouse, land anywhere', 400);
+      $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
+      $('scope').classList.toggle('hidden', !scoped);
+      if (body?.gliding && me.alive) hint('gliding · look down to dive, look up to float', 400);
     }
+    const nk = game.nukes[0];
+    $('nukeWarn').classList.toggle('hidden', !nk);
+    if (nk) $('nukeWarn').textContent = `☢ ATOMIC BOMB INCOMING · ${Math.ceil(nk.t)}s · get out of the red zone`;
     $('aliveCount').textContent = String(game.alive);
     const L = game.leader;
     $('leader').innerHTML = L ? `<span class="crown">♛</span> kill leader <b>${L[0] === state.you ? 'you' : esc(label(L[0]))}</b> · ${L[1]}` : '';
