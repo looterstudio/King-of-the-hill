@@ -10,12 +10,14 @@ export class FpsInput {
   aim = false;
   sens = 1;
   invert = false;
-  locked = false;
+  locked = false;   // playing: mouse captured, or free mode below
+  free = false;     // pointer lock refused (some embeds/apps): look with the mouse and arrow keys, cursor stays visible
   onLockChange: ((locked: boolean) => void) | null = null;
 
   constructor(private el: HTMLElement) {
     try { this.sens = Number(localStorage.getItem('pr_sens') ?? 1) || 1; this.invert = localStorage.getItem('pr_invert') === '1'; } catch { /* storage blocked */ }
     addEventListener('keydown', (e) => {
+      if (this.free && e.code === 'Escape') { this.stop(); return; }
       if (!this.locked) return;
       if (e.repeat) { this.keys.add(e.code); return; }
       this.keys.add(e.code);
@@ -43,23 +45,43 @@ export class FpsInput {
       this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
     });
     document.addEventListener('pointerlockchange', () => {
+      if (this.free) return;
       this.locked = document.pointerLockElement === this.el;
       if (!this.locked) { this.keys.clear(); this.fire = false; this.aim = false; }
       this.onLockChange?.(this.locked);
     });
   }
 
-  lock() { const r = this.el.requestPointerLock?.() as unknown as Promise<void> | undefined; r?.catch?.(() => { /* user gesture needed */ }); }
-  unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
+  // call from a click. If the browser refuses pointer lock (or never answers), fall back to free mode
+  lock() {
+    if (this.locked) return;
+    let answered = false;
+    const onChange = () => { answered = true; };
+    document.addEventListener('pointerlockchange', onChange, { once: true });
+    const fallback = () => { if (!answered && !this.locked) { this.free = true; this.locked = true; this.el.style.cursor = 'crosshair'; this.onLockChange?.(true); } };
+    try {
+      const r = this.el.requestPointerLock?.() as unknown as Promise<void> | undefined;
+      if (!this.el.requestPointerLock) return fallback();
+      r?.catch?.(() => fallback());
+    } catch { return fallback(); }
+    setTimeout(fallback, 500);
+  }
+  private stop() { this.free = false; this.locked = false; this.keys.clear(); this.fire = false; this.aim = false; this.el.style.cursor = ''; this.onLockChange?.(false); }
+  unlock() { if (this.free) this.stop(); else if (document.pointerLockElement) document.exitPointerLock(); }
   setSens(v: number) { this.sens = v; try { localStorage.setItem('pr_sens', String(v)); } catch { /* storage blocked */ } }
   setInvert(v: boolean) { this.invert = v; try { localStorage.setItem('pr_invert', v ? '1' : '0'); } catch { /* storage blocked */ } }
 
   // one tick of input; slot -1/-2 = next/previous (wheel), resolved by the caller
   sample() {
     const k = (c: string) => (this.keys.has(c) ? 1 : 0);
+    if (this.free) { // arrows turn when the mouse can't be captured
+      this.yaw += (k('ArrowLeft') - k('ArrowRight')) * 2.6 * this.sens / 30;
+      this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + (k('ArrowUp') - k('ArrowDown')) * 1.8 * this.sens / 30));
+    }
+    const arrows = this.free ? 0 : 1;
     const out = {
-      fwd: k('KeyW') + k('ArrowUp') - k('KeyS') - k('ArrowDown'),
-      strafe: k('KeyD') + k('ArrowRight') - k('KeyA') - k('ArrowLeft'),
+      fwd: k('KeyW') + k('ArrowUp') * arrows - k('KeyS') - k('ArrowDown') * arrows,
+      strafe: k('KeyD') + k('ArrowRight') * arrows - k('KeyA') - k('ArrowLeft') * arrows,
       sprint: !!(k('ShiftLeft') || k('ShiftRight')),
       grapple: !!(k('KeyQ') || k('KeyE')),
       jump: this.latched.jump, slide: this.latched.slide, reload: this.latched.reload, slot: this.latched.slot,

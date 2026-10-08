@@ -160,6 +160,7 @@ $('quitBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); };
 input.onLockChange = (locked) => {
   if (state.screen !== 'game' || state.over) return;
   $('pause').classList.toggle('hidden', locked);
+  if (locked && input.free) hint('mouse capture is blocked here: look with the mouse + arrow keys, Esc to pause', 4500);
   $('pauseTitle').textContent = game.self ? 'Paused' : 'Click to drop in';
 };
 
@@ -229,8 +230,7 @@ net.on((m: ServerMsg) => {
         input.yaw = 0; input.pitch = -0.5;
         $('pause').classList.remove('hidden');
         $('pauseTitle').textContent = 'Click to drop in';
-        input.lock();
-        if (input.locked) $('pause').classList.add('hidden');
+        if (input.locked) $('pause').classList.add('hidden'); // the Play button takes the mouse (needs a click)
       }
       break;
     }
