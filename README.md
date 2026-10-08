@@ -18,8 +18,27 @@ every 6 hours (00/06/12/18 UTC).
   back at 75 health. When nobody on the team is left standing, the knocked are out. A kill board
   shows the top teams by kills all match.
 
-- **The island.** 800 × 800 m, 23 named places, a snowfield across the north and a desert in the
-  south-east. New: The Spire (a 30-floor skyscraper with a helipad), Mount Doodle, Snowpeak and
+- **Everything breaks.** Every building is a structure of blocks. Rockets, grenades, C4, tank shells
+  and crashes break the boxes they reach into 2 m blocks and knock them out (wood, brick and metal
+  take more or fewer hits); enough damage and the whole building comes down at once, rubble hurting
+  whoever is inside, loot and cases dropping to what is left. A plane flown into a tower can bring
+  it down (a few planes for the tallest). Ground, hills and mountains never break. The server
+  decides and sends only what changed; clients apply the same changes to their own world, so
+  movement prediction stays exact (a test replays every change on a mirror and compares).
+- **The axe.** `X` takes it out: chop walls, cars and people; every broken block gives building
+  material, and right click places a 1 m block where you look, Minecraft style.
+- **The Needle.** An 80-floor megatower: an updraft in its core carries you up (step out at any
+  floor), rare loot on every floor, golden cases every tenth floor and on the roof. Fall from high up
+  anywhere and your glider opens by itself.
+- **Tanks and motorbikes.** Tanks are slow and armoured (the crew can't be shot), their cannon flattens
+  houses and their tracks drive through walls. Motorbikes are the fastest thing on wheels, with a seat
+  for a friend.
+- **Characters, radio, voice.** Five characters to pick in the lobby (looks only). In a vehicle the
+  radio comes on: three 80s stations composed live in the browser (synthwave, disco, darkwave) with a
+  DJ; `N` next station, `M` off. In duos and squads, hold `V` to talk to your team (WebRTC between
+  teammates; the server only relays the handshake, and only between teammates).
+- **The island.** 800 × 800 m, 24 named places, a snowfield across the north and a desert in the
+  south-east. The Needle (80 floors), The Spire (a 30-floor skyscraper with a helipad), Mount Doodle, Snowpeak and
   Eraser Ridge (terraced mountains to climb), Frost Lodge (ski lodge, chalets, chairlift), Dune
   Town, Dust Fort, the Ink Pyramid and an Oasis. The classics, around downtown Crown City and the
   King's Tower, joined by a ring road: Scribble Suburbs (house grid, mansion, sports park), Castle Crayon (walls, corner

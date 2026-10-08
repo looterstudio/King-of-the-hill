@@ -276,6 +276,9 @@ body.knocked #hud::after { content: ''; position: absolute; inset: 0; pointer-ev
 .tally i:nth-child(5n) { margin-right: 8px; }
 .hud-br { position: absolute; right: max(16px, 3vw); bottom: max(14px, 3vh); text-align: right; display: grid; justify-items: end; gap: 4px; }
 .weapons { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; counter-reset: w; }
+.weapons li.axe { counter-increment: none; font-size: 15px; }
+.weapons li.axe::before { content: '⛏'; border: 0; font-size: 15px; }
+.weapons li.axe kbd { font-size: 11px; }
 .weapons li { counter-increment: w; display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; font-size: 18px; font-weight: 600; color: var(--ink-soft); min-width: 230px; }
 .weapons li.empty { opacity: .3; }
 .weapons li::before { content: counter(w); display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; border: 2px solid currentColor; border-radius: var(--wobble); }
@@ -515,7 +518,7 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .weapons .stars { color: #e8a317; margin-left: 4px; font-size: 13px; letter-spacing: -1px; }
 
 /* ---------- lobby, round 5: stats strip and the feature wall ---------- */
-.stats-strip { margin-top: 34px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; padding: 14px 12px; background: var(--ink); color: var(--card); border-radius: 10px 14px 9px 13px; box-shadow: 6px 6px 0 var(--red); rotate: -0.4deg; }
+.stats-strip { margin-top: 34px; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px; padding: 14px 12px; background: var(--ink); color: var(--card); border-radius: 10px 14px 9px 13px; box-shadow: 6px 6px 0 var(--red); rotate: -0.4deg; }
 .stats-strip div { display: grid; justify-items: center; text-align: center; }
 .stats-strip b { font-size: clamp(26px, 3.2vw, 42px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--hl); }
 .stats-strip span { font-family: var(--f-note); font-size: 19px; line-height: 1.05; opacity: .9; }
@@ -539,3 +542,37 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .pot-sol { font-family: var(--f-note); font-size: 22px; color: var(--graphite); margin-top: -4px; text-align: center; }
 .candle { font-size: 13px; color: var(--graphite); text-align: center; margin-top: 4px; letter-spacing: .02em; }
 .candle.hot { color: var(--red); font-weight: 700; animation: bleed 1s ease-in-out infinite; }
+
+/* the arsenal: every gun, perk and vehicle with a picture */
+.arsenal { margin-top: 34px; }
+.arm-row { margin-top: 14px; }
+.arm-row h4 { margin: 0 0 8px; font-family: var(--f-note); font-size: 26px; color: var(--ink); }
+.arm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.arm-card { position: relative; background: var(--card); border: 2px solid var(--ink); border-radius: 8px 11px 7px 12px; padding: 6px 8px 8px; box-shadow: 3px 3px 0 var(--ink); transition: transform .18s cubic-bezier(.2,1.4,.4,1); }
+.arm-card:hover { transform: translateY(-4px) rotate(-1deg); }
+.arm-card img { display: block; width: 100%; aspect-ratio: 1.6; object-fit: contain; }
+.arm-card b { display: block; font-size: 16px; font-weight: 800; line-height: 1.1; }
+.arm-card em { position: absolute; top: 6px; right: 6px; font-style: normal; font-size: 10px; font-weight: 800; color: #fff; padding: 1px 6px; border-radius: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.arm-card small { display: block; font-size: 12px; color: var(--ink-soft); line-height: 1.25; margin-top: 2px; }
+/* flyover: the name of the place on screen right now */
+.fly-caption { position: absolute; left: 22px; top: 18px; font-family: var(--f-hand); font-weight: 800; font-size: 30px; color: var(--ink); background: rgba(246,242,228,.88); border: 2.5px solid var(--ink); padding: 2px 12px; border-radius: 8px 12px 9px 11px; box-shadow: 4px 4px 0 var(--red); transition: opacity .3s; pointer-events: none; }
+.fly-caption:empty { opacity: 0; }
+
+/* character picker */
+.skins { margin: 10px 0 4px; }
+.skins-label { font-family: var(--f-note); font-size: 20px; color: var(--ink-soft); }
+.skins-label small { font-size: 14px; opacity: .7; margin-left: 6px; }
+.skin-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
+.skin { background: var(--card); border: 2px solid var(--line, #c9cbe0); border-radius: 8px 10px 7px 11px; padding: 2px 2px 4px; cursor: pointer; transition: transform .15s, border-color .15s; font: inherit; }
+.skin img { display: block; width: 100%; aspect-ratio: 0.8; object-fit: contain; }
+.skin span { display: block; font-size: 10.5px; font-weight: 700; color: var(--ink-soft); line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.skin:hover { transform: translateY(-2px); }
+.skin.on { border-color: var(--ink); box-shadow: 3px 3px 0 var(--red); }
+.skin.on span { color: var(--ink); }
+
+.radio-btn { margin-left: 12px; font: inherit; font-weight: 700; font-size: 14px; color: var(--ink); background: var(--card); border: 2px solid var(--ink); border-radius: 14px 10px 13px 9px; padding: 3px 10px; cursor: pointer; box-shadow: 2px 2px 0 var(--pink, #e64980); }
+.radio-btn span { font-family: var(--f-note); font-size: 17px; }
+.radio-btn:hover { transform: rotate(-2deg); }
+
+.squad-panel .mic { font-size: 13px; color: var(--ink-soft); margin-top: 3px; }
+.squad-panel .mic.on { color: var(--red); font-weight: 800; }

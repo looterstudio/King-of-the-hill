@@ -7,6 +7,7 @@ class Sfx {
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   enabled = true;
+  get context() { return this.ctx; }
 
   unlock() {
     if (this.ctx) { void this.ctx.resume(); return; }
@@ -31,7 +32,7 @@ class Sfx {
       osc.connect(lp); sub.connect(lp); lp.connect(gain); gain.connect(this.master); osc.start(); sub.start();
       this.eng = { osc, sub, gain };
     }
-    const base = ride === 1 ? 45 : ride === 2 ? 28 : 70, t = c.currentTime;
+    const base = ride === 1 ? 45 : ride === 2 ? 28 : ride === 4 ? 90 : ride === 5 ? 24 : 70, t = c.currentTime;
     this.eng.osc.frequency.setTargetAtTime(base + speed * (ride === 3 ? 3 : 4), t, 0.08);
     this.eng.sub.frequency.setTargetAtTime((base + speed * 2) / 2 + (ride === 2 ? Math.sin(t * 40) * 6 : 0), t, 0.05);
     this.eng.gain.gain.setTargetAtTime(ride === 2 ? 0.06 : 0.045, t, 0.15);
@@ -90,6 +91,14 @@ class Sfx {
   open(golden: boolean) { if (!this.ctx || !this.enabled) return; this.burst(3000, 2, 0.2, 0.15, 'bandpass'); this.tone(golden ? 880 : 660, golden ? 1760 : 990, 0.2, 0.35, 'triangle', 0.05); }
   shieldBreak() { if (this.ctx && this.enabled) { this.burst(4000, 1.5, 0.35, 0.18, 'highpass'); this.tone(1400, 500, 0.2, 0.2, 'triangle'); } }
   jump() { if (this.ctx && this.enabled) this.tone(300, 520, 0.08, 0.12, 'sine'); }
+  swing() { if (this.ctx && this.enabled) this.burst(900, 0.8, 0.12, 0.12, 'bandpass'); }
+  chop(broke: boolean) { if (!this.ctx || !this.enabled) return; this.burst(broke ? 500 : 1800, 2, broke ? 0.35 : 0.25, broke ? 0.3 : 0.08); if (broke) this.tone(160, 60, 0.18, 0.3, 'triangle'); }
+  // a building coming down: a long low rumble
+  crumble(distance: number) {
+    if (!this.ctx || !this.enabled) return;
+    const v = Math.max(0.15, 1 - distance / 500);
+    this.burst(120, 0.7, 0.9 * v, 2.4); this.burst(300, 1, 0.5 * v, 1.6); this.tone(70, 30, 0.4 * v, 2.2, 'sawtooth');
+  }
 }
 
 export const sfx = new Sfx();

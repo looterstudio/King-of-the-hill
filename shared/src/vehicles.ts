@@ -1,7 +1,8 @@
 // Vehicle physics, shared by the server and the driver's client prediction (exactly like walking):
 // the driver's own body carries the vehicle state (ride, heading, pitch, speed), so the client
 // replays unacknowledged inputs through the same code and driving feels instant.
-//  - car: throttle and steer, boost with Shift, hop with Space, climbs curbs and stairs
+//  - car / motorbike / tank: throttle and steer, boost with Shift, hop with Space (not the tank),
+//    climbs curbs and stairs; the bike turns sharp, the tank is slow and climbs higher
 //  - helicopter: turns toward where you look, strafes, Space / C (or Ctrl) to climb and descend
 //  - plane: always moving; mouse sets heading and pitch, W / S throttle, Shift afterburner
 // Returns the speed at which it hit something this step (0 if nothing), for crash damage.
@@ -18,15 +19,17 @@ const TAKEOFF = 19;
 export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravity: number, manned = true): number {
   const kind = kindOf(p.ride), def = VEHICLES[kind];
   let impact = 0;
-  if (kind === 'car') {
-    const top = inp.sprint ? def.boost : def.top;
+  const ground = kind === 'car' || kind === 'moto' || kind === 'tank';
+  if (ground) {
+    const top = inp.sprint ? def.boost : def.top, turn = kind === 'moto' ? 2.9 : kind === 'tank' ? 1.3 : 2.3;
     if (inp.fwd > 0) p.spd = Math.min(top, p.spd + def.accel * (p.spd < 0 ? 2 : 1) * inp.fwd * dt);
     else if (inp.fwd < 0) p.spd = Math.max(-9, p.spd + (p.spd > 0 ? -30 : -def.accel) * -inp.fwd * dt);
     else p.spd *= Math.max(0, 1 - dt * (p.grounded ? 1.1 : 0.2));
     if (p.spd > top) p.spd = Math.max(top, p.spd - 20 * dt);
     // steering bites harder at low speed, flips when reversing
-    p.head += -inp.strafe * 2.3 * dt * clamp(p.spd / 7, -1, 1) * (1 - Math.min(0.45, Math.abs(p.spd) / 80));
-    if (inp.jump && p.grounded) { p.vy = 6.5; p.grounded = false; }
+    // (a tank turns on the spot)
+    p.head += -inp.strafe * turn * dt * (kind === 'tank' ? 1 : clamp(p.spd / 7, -1, 1)) * (1 - Math.min(0.45, Math.abs(p.spd) / 80));
+    if (inp.jump && p.grounded && kind !== 'tank') { p.vy = 6.5; p.grounded = false; }
     p.vx = -Math.sin(p.head) * p.spd; p.vz = -Math.cos(p.head) * p.spd;
     p.vy -= gravity * dt;
     p.vpitch += (clamp(-p.vy * 0.03, -0.35, 0.35) - p.vpitch) * Math.min(1, dt * 6);
@@ -37,9 +40,9 @@ export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravi
       const b = w.hitBox(nx, p.y, nz, def.r, def.h);
       if (!b) { p.x = nx; p.z = nz; continue; }
       const rise = b.y1 - p.y;
-      if (p.grounded && rise > 0 && rise <= CAR_STEP && !w.hitBox(nx, b.y1 + 1e-3, nz, def.r, def.h)) { p.x = nx; p.z = nz; p.y = b.y1; continue; }
-      impact = Math.max(impact, Math.abs(p.spd));
-      p.spd *= -0.25;
+      if (p.grounded && rise > 0 && rise <= (kind === 'tank' ? 1.1 : CAR_STEP) && !w.hitBox(nx, b.y1 + 1e-3, nz, def.r, def.h)) { p.x = nx; p.z = nz; p.y = b.y1; continue; }
+      impact = Math.max(impact, Math.abs(p.spd), kind === 'tank' && inp.fwd ? 3 : 0); // a tank leans on what it hits
+      p.spd *= kind === 'tank' ? 0 : -0.25;
     }
   } else if (kind === 'heli') {
     if (manned) {
@@ -80,8 +83,8 @@ export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravi
   const lim = MAP_HALF - def.r;
   p.x = clamp(p.x, -lim, lim); p.z = clamp(p.z, -lim, lim);
   if (p.y > 160) { p.y = 160; if (p.vy > 0) p.vy = 0; }
-  // vertical for the car (the others move in 3D in move3)
-  if (kind === 'car') {
+  // vertical for ground vehicles (aircraft move in 3D in move3)
+  if (ground) {
     const wasUp = !p.grounded;
     p.grounded = false;
     p.y += p.vy * dt;

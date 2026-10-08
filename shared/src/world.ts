@@ -7,7 +7,21 @@ import { generate, type Poi, type Spot } from './mapgen.ts';
 
 export { INK } from './mapgen.ts';
 
-export interface Box { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; ink: number; kind: 'building' | 'stair' | 'crate' | 'wall' | 'trunk' | 'floor' | 'car' | 'container' | 'fort'; dead?: boolean }
+export interface Box {
+  x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; ink: number;
+  kind: 'building' | 'stair' | 'crate' | 'wall' | 'trunk' | 'floor' | 'car' | 'container' | 'fort'; dead?: boolean;
+  hard?: boolean; // ground, hills and mountains: nothing breaks them
+  sid?: number;   // the building (structure) it belongs to; 0 / missing = freestanding
+  root?: number;  // a broken-off block: index of the original box it came from
+  hp?: number;    // block health once something has hit it (server only)
+}
+// a building: every box that touches another, from the ground up. Enough damage and the whole
+// thing comes down at once.
+export interface Structure { id: number; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; hp: number; dmg: number; down: boolean; boxes: number[] }
+// big boxes break into blocks about this size where they are hit; a box never breaks into more than
+// MAX_SHARDS pieces at once
+export const BLOCK = 2, MAX_SHARDS = 64;
+const STRUCT_KINDS = new Set<Box['kind']>(['building', 'wall', 'floor', 'stair']);
 export interface Tree { x: number; z: number; h: number; r: number; ink?: number }
 // ground regions with their own look: sand dunes, snowfields
 export interface Biome { kind: 'desert' | 'snow'; x0: number; z0: number; x1: number; z1: number }
@@ -30,11 +44,14 @@ export class World {
   vehicleSpots: { kind: VehicleKind; x: number; y: number; z: number; head: number }[] = [];
   biomes: Biome[] = [];
   upgrades: { x: number; y: number; z: number }[] = []; // weapon upgrade benches
+  structures: Structure[] = [];                          // structures[sid - 1]
+  updrafts: { x: number; z: number; r: number; y0: number; y1: number }[] = []; // walk in, float up
   private grid: number[][] = Array.from({ length: GRID * GRID }, () => []);
 
   constructor(public seed: number, boxes?: Box[]) {
     if (boxes) this.boxes = boxes; else generate(this, seed);
     this.index();
+    this.findStructures();
     // every pencil case and loot spot rests on a real surface with room around it
     const cases: Spot[] = [];
     for (const c of this.caseSpots) {
@@ -45,7 +62,7 @@ export class World {
     const loot: Spot[] = [];
     for (const l of this.lootSpots) {
       const s = this.settle(l.x, l.y, l.z);
-      if (s && !cases.some((o) => Math.abs(o.y - s.y) < 1 && Math.hypot(o.x - s.x, o.z - s.z) < 1.1)) loot.push(s);
+      if (s && !cases.some((o) => Math.abs(o.y - s.y) < 1 && Math.hypot(o.x - s.x, o.z - s.z) < 1.1)) loot.push(l.rich ? { ...s, rich: true } : s);
     }
     this.lootSpots = loot;
     // vehicles park where they fit (nudged off anything they would overlap) and nowhere else
@@ -95,11 +112,87 @@ export class World {
     const [cx0, cz0] = this.cell(b.x0, b.z0), [cx1, cz1] = this.cell(b.x1, b.z1);
     for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) this.grid[cz * GRID + cx].push(i);
   }
-  // structures built mid-match (instant forts); returns their indices so they can be torn down
+  // boxes added mid-match (forts, broken-off blocks, placed blocks); returns their indices
   addBoxes(list: Box[]): number[] {
-    return list.map((b) => { const i = this.boxes.length; this.boxes.push(b); this.indexBox(b, i); return i; });
+    return list.map((b) => {
+      const i = this.boxes.length; this.boxes.push(b); this.indexBox(b, i);
+      if (b.sid) this.structures[b.sid - 1]?.boxes.push(i);
+      return i;
+    });
+  }
+
+  // group touching building boxes into structures (union-find over the grid)
+  private findStructures() {
+    const n = this.boxes.length, up = new Int32Array(n).map((_, i) => i);
+    const find = (i: number): number => { while (up[i] !== i) { up[i] = up[up[i]]; i = up[i]; } return i; };
+    const ok = (b: Box) => !b.hard && STRUCT_KINDS.has(b.kind);
+    // a 3D hash (8 m cells, 4 m tall): towers stack dozens of floors in the same ground cell
+    const e = 0.06, H = new Map<number, number[]>();
+    const keys = (b: Box, f: (k: number) => void) => {
+      for (let x = Math.floor((b.x0 - e + 512) / 8); x <= Math.floor((b.x1 + e + 512) / 8); x++)
+        for (let z = Math.floor((b.z0 - e + 512) / 8); z <= Math.floor((b.z1 + e + 512) / 8); z++)
+          for (let y = Math.floor((b.y0 - e) / 4); y <= Math.floor((b.y1 + e) / 4); y++) f((x * 128 + z) * 256 + y);
+    };
+    for (let i = 0; i < n; i++) if (ok(this.boxes[i])) keys(this.boxes[i], (k) => { const l = H.get(k); if (l) l.push(i); else H.set(k, [i]); });
+    for (const list of H.values()) {
+      for (let p = 0; p < list.length; p++) {
+        const i = list[p], a = this.boxes[i];
+        for (let q = p + 1; q < list.length; q++) {
+          const j = list[q], b = this.boxes[j];
+          if (a.x0 <= b.x1 + e && b.x0 <= a.x1 + e && a.z0 <= b.z1 + e && b.z0 <= a.z1 + e && a.y0 <= b.y1 + e && b.y0 <= a.y1 + e) { const ri = find(i), rj = find(j); if (ri !== rj) up[ri] = rj; }
+        }
+      }
+    }
+    const byRoot = new Map<number, Structure>();
+    for (let i = 0; i < n; i++) {
+      const b = this.boxes[i];
+      if (!ok(b)) continue;
+      const r = find(i);
+      let s = byRoot.get(r);
+      if (!s) { s = { id: this.structures.length + 1, x0: b.x0, y0: b.y0, z0: b.z0, x1: b.x1, y1: b.y1, z1: b.z1, hp: 0, dmg: 0, down: false, boxes: [] }; byRoot.set(r, s); this.structures.push(s); }
+      s.x0 = Math.min(s.x0, b.x0); s.y0 = Math.min(s.y0, b.y0); s.z0 = Math.min(s.z0, b.z0);
+      s.x1 = Math.max(s.x1, b.x1); s.y1 = Math.max(s.y1, b.y1); s.z1 = Math.max(s.z1, b.z1);
+      s.boxes.push(i); b.sid = s.id;
+    }
+    // a one-storey house takes a few rockets; a 30-floor tower a few plane crashes
+    for (const s of this.structures) s.hp = 500 + 550 * Math.max(1, Math.round((s.y1 - s.y0) / 3.4));
+  }
+
+  // the blocks a box breaks into (not added yet): about BLOCK on a side, never more than MAX_SHARDS
+  shards(i: number): Box[] {
+    const b = this.boxes[i], dx = b.x1 - b.x0, dy = b.y1 - b.y0, dz = b.z1 - b.z0;
+    let nx = Math.max(1, Math.ceil(dx / BLOCK - 0.01)), ny = Math.max(1, Math.ceil(dy / BLOCK - 0.01)), nz = Math.max(1, Math.ceil(dz / BLOCK - 0.01));
+    const k = Math.cbrt((nx * ny * nz) / MAX_SHARDS);
+    if (k > 1) { nx = Math.max(1, Math.floor(nx / k)); ny = Math.max(1, Math.floor(ny / k)); nz = Math.max(1, Math.floor(nz / k)); }
+    const out: Box[] = [], root = b.root ?? i;
+    for (let ix = 0; ix < nx; ix++) for (let iy = 0; iy < ny; iy++) for (let iz = 0; iz < nz; iz++) {
+      out.push({
+        x0: b.x0 + (dx * ix) / nx, x1: b.x0 + (dx * (ix + 1)) / nx, y0: b.y0 + (dy * iy) / ny, y1: b.y0 + (dy * (iy + 1)) / ny,
+        z0: b.z0 + (dz * iz) / nz, z1: b.z0 + (dz * (iz + 1)) / nz, ink: b.ink, kind: b.kind, sid: b.sid, root,
+      });
+    }
+    return out;
+  }
+  static isBlock(b: Box) { return b.x1 - b.x0 <= BLOCK + 0.35 && b.y1 - b.y0 <= BLOCK + 0.35 && b.z1 - b.z0 <= BLOCK + 0.35; }
+
+  // the first box a ray hits, with its index (-1: none, or only the ground)
+  raycastBox(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number): { t: number; i: number } {
+    let best = maxT, bi = -1;
+    for (const i of this.near(Math.min(ox, ox + dx * maxT), Math.min(oz, oz + dz * maxT), Math.max(ox, ox + dx * maxT), Math.max(oz, oz + dz * maxT))) {
+      const b = this.boxes[i];
+      if (b.dead) continue;
+      const h = rayBox(ox, oy, oz, dx, dy, dz, b);
+      if (h >= 0 && h < best) { best = h; bi = i; }
+    }
+    return { t: best, i: bi };
   }
   killBoxes(ids: number[]) { for (const i of ids) if (this.boxes[i]) this.boxes[i].dead = true; }
+  // these boxes plus every block that broke off them
+  withShards(ids: number[]): number[] {
+    const set = new Set(ids), out = [...ids];
+    for (let i = 0; i < this.boxes.length; i++) { const r = this.boxes[i].root; if (r !== undefined && set.has(r)) out.push(i); }
+    return out;
+  }
   cell(x: number, z: number): [number, number] {
     const c = (v: number) => Math.max(0, Math.min(GRID - 1, Math.floor((v + MAP_HALF) / CELL)));
     return [c(x), c(z)];
@@ -217,6 +310,7 @@ const WALL_GRACE = 0.2, WALL_PUSH = 7.5;
 export const HOOK_RANGE = 48;
 const HOOK_PULL = 40, HOOK_MAX = 24, HOOK_CD = 0.6;
 const EYE = 1.62;
+const UPDRAFT_SPEED = 13;
 const scratch: number[] = [];
 
 export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity: number, walk: number, sprint: number, jumpV: number) {
@@ -282,6 +376,14 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
     }
     if (p.gliding) { const cap = GLIDE_FALL + (GLIDE_DIVE_FALL - GLIDE_FALL) * dive; p.vy += (cap - p.vy) * Math.min(1, dt * 4); }
     else p.vy -= gravity * dt;
+  }
+  // falling from high up (off a tower, out of a window): the glider opens by itself
+  if (!p.gliding && !p.hook && !p.ride && !p.down && p.vy < -16 && p.y - w.groundAt(p.x, p.z, p.y) > 14) p.gliding = true;
+  // updrafts: a column of air that carries you up while you stand in it
+  for (const u of w.updrafts) {
+    if (p.y < u.y0 - 0.5 || p.y > u.y1 || Math.hypot(p.x - u.x, p.z - u.z) > u.r) continue;
+    p.vy = Math.min(UPDRAFT_SPEED, Math.max(p.vy, 0) + gravity * 2.2 * dt); p.gliding = false; p.grounded = false;
+    break;
   }
 
   const wasGrounded = p.grounded;

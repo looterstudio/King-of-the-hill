@@ -7,7 +7,8 @@ import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { Sim, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
-import { EPOCH_MS, KNOCK, PLAYER_HP, SHIELD_MAX, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
+import { EPOCH_MS, KNOCK, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
+const SLOTS_AXE = SLOTS + 1;
 import { computePayouts } from '../src/payout.ts';
 import { buildTree, leafHash, verify } from '../src/merkle.ts';
 import { Epochs } from '../src/epoch.ts';
@@ -30,7 +31,7 @@ function arena(ids: number[]) {
 test('sanitizeInput clamps hostile input', () => {
   const i = sanitizeInput({ fwd: 50, strafe: -9, pitch: 99, yaw: NaN, fire: 'yes' as unknown as boolean, slot: 77 });
   assert.equal(i.fwd, 1); assert.equal(i.strafe, -1); assert.equal(i.pitch, 1.5); assert.equal(i.yaw, 0);
-  assert.equal(i.fire, false); assert.equal(i.slot, 4);
+  assert.equal(i.fire, false); assert.equal(i.slot, SLOTS_AXE);
 });
 
 test('rays hit boxes and tell heads from bodies', () => {
@@ -859,4 +860,116 @@ test('a helicopter flown fast into a wall gets dented', () => {
   const v = sim.vehicles[0], hp = v.hp;
   for (let i = 0; i < TICK_HZ * 10 && sim.vehicles.includes(v) && v.hp === hp; i++) sim.step(DT, new Map([[1, inp({ fwd: 1, sprint: true, yaw: 0, up: p.y < 8 ? 1 : 0, seq: i + 2 })]]));
   assert.ok(!sim.vehicles.includes(v) || v.hp < hp, `no damage (z=${p.z.toFixed(0)})`);
+});
+
+// ---------- destruction ----------
+const wallBox = (x0: number, z0: number, x1: number, z1: number, y1 = 4, y0 = 0) => ({ x0, y0, z0, x1, y1, z1, ink: 1, kind: 'wall' as const });
+// a mirror of the world as a client keeps it: applies only the events it is sent
+const mirror = (boxes: import('../../shared/src/world.ts').Box[]) => World.custom(boxes.map((b) => ({ ...b })));
+const applyWreck = (w: World, ev: ReturnType<Sim['step']>) => { for (const e of ev) if (e.kind === 'wreck') { w.addBoxes(e.add.map((b) => ({ ...b, hp: undefined }))); w.killBoxes(e.kill); } };
+
+test('a rocket blows a hole in a wall: blocks break off, and a client mirror stays identical', () => {
+  const boxes = [wallBox(-10, -20.3, 10, -20, 6, 0.6)];
+  const sim = new Sim(1, World.custom(boxes.map((b) => ({ ...b }))));
+  const client = mirror(boxes);
+  sim.spawn([1]);
+  const a = sim.players.get(1)!; a.y = 0; a.gliding = false; a.grounded = true; a.x = 0; a.z = 0;
+  give(a, 'rocket');
+  let ev = sim.step(DT, new Map([[1, inp({ fire: true, yaw: 0, pitch: Math.atan2(2, 20), seq: 1 })]]));
+  applyWreck(client, ev);
+  for (let i = 0; i < TICK_HZ * 2; i++) { ev = sim.step(DT, new Map()); applyWreck(client, ev); }
+  const dead = sim.world.boxes.filter((b) => b.dead).length;
+  assert.ok(sim.world.boxes[0].dead, 'the big wall broke into blocks');
+  assert.ok(sim.world.boxes.length > 5, 'blocks were added');
+  assert.ok(dead >= 2, 'and some of them broke');
+  assert.equal(client.boxes.length, sim.world.boxes.length);
+  client.boxes.forEach((b, i) => { const s = sim.world.boxes[i]; assert.equal(!!b.dead, !!s.dead, `box ${i}`); assert.equal(b.x0, s.x0); assert.equal(b.y1, s.y1); });
+  // there is a hole now: a ray through the middle of the blast goes through
+  assert.ok(sim.world.raycast(0, 2, 0, 0, 0, -1, 30) > 20.5, 'you can see through the hole');
+});
+
+test('enough damage brings a whole building down; terrain never breaks', () => {
+  // a 10-storey tower (four walls and a floor every 3.4 m) on an unbreakable hill
+  const boxes: import('../../shared/src/world.ts').Box[] = [{ ...wallBox(-30, -30, 30, 30, 2), kind: 'building', hard: true }];
+  for (let f = 0; f < 10; f++) {
+    const y0 = 2 + f * 3.4, y1 = y0 + 3.4;
+    boxes.push(wallBox(-6, -6, 6, -5.7, y1, y0), wallBox(-6, 5.7, 6, 6, y1, y0), wallBox(-6, -5.7, -5.7, 5.7, y1, y0), wallBox(5.7, -5.7, 6, 5.7, y1, y0));
+    boxes.push({ x0: -6, y0: y1 - 0.3, z0: -6, x1: 6, y1, z1: 6, ink: 1, kind: 'floor' });
+  }
+  const sim = new Sim(1, World.custom(boxes));
+  sim.spawn([1]);
+  const s = sim.world.structures.find((x) => x.boxes.length >= 50)!;
+  assert.ok(s, 'the tower is one structure');
+  assert.equal(sim.world.boxes[0].sid, undefined, 'the hill is not part of it');
+  let fell = false;
+  for (let k = 0; k < 40 && !fell; k++) {
+    sim.damageWorld(6, 10, 0, 4, 300, 450, 1);
+    const ev = sim.step(DT, new Map());
+    fell = ev.some((e) => e.kind === 'wreck' && e.falls.length > 0);
+  }
+  assert.ok(fell, 'it came down');
+  assert.ok(s.boxes.every((i) => sim.world.boxes[i].dead), 'every box of it is gone');
+  assert.ok(!sim.world.boxes[0].dead, 'the hill is still there');
+  sim.damageWorld(0, 1, 0, 30, 9999, 9999, 1, true);
+  assert.ok(!sim.world.boxes[0].dead, 'not even a nuke breaks terrain');
+});
+
+test('the axe chops blocks for material; right click places a 1 m block with it', () => {
+  const sim = new Sim(1, World.custom([wallBox(-4, -2.3, 4, -2, 3)]));
+  sim.spawn([1]);
+  const a = sim.players.get(1)!; a.y = 0; a.gliding = false; a.grounded = true; a.x = 0; a.z = 0;
+  const mats0 = a.mats;
+  tickN(sim, 1, { slot: SLOTS_AXE });
+  assert.ok(a.axe, 'axe out');
+  let broke = false;
+  for (let i = 0; i < TICK_HZ * 4 && !broke; i++) broke = sim.step(DT, new Map([[1, inp({ fire: true, yaw: 0, pitch: 0, seq: i + 2 })]])).some((e) => e.kind === 'chop' && e.broke);
+  assert.ok(broke, 'a block broke');
+  assert.ok(a.mats > mats0, 'and gave material');
+  // build: aim at the floor in front and place a block
+  const before = sim.world.boxes.length, m = a.mats;
+  for (let i = 0; i < 20; i++) sim.step(DT, new Map([[1, inp({ aim: true, yaw: Math.PI, pitch: -0.6, seq: 100 + i })]]));
+  assert.ok(sim.world.boxes.length > before, 'a block was placed');
+  const b = sim.world.boxes.at(-1)!;
+  assert.equal(b.x1 - b.x0, 1); assert.equal(b.y0, 0);
+  assert.ok(a.mats < m, 'it cost material');
+});
+
+test('a plane flown into a tower at full speed wrecks the plane and smashes the wall', () => {
+  const tower = wallBox(-12, -262, 12, -250, 60, 0.6);
+  const sim = garage('plane', [tower]), p = sim.players.get(1)!;
+  tickN(sim, 1, { interact: true });
+  for (let i = 0; i < TICK_HZ * 14 && sim.vehicles.length; i++) sim.step(DT, new Map([[1, inp({ fwd: 1, sprint: true, yaw: 0, pitch: p.y > 14 ? -0.05 : 0.3, seq: i + 2 })]]));
+  assert.equal(sim.vehicles.length, 0, 'plane wrecked');
+  assert.ok(sim.world.boxes[0].dead, 'the tower wall broke up');
+});
+
+test('a motorbike rides fast; a tank drives through a wall and its cannon blows up a car', () => {
+  const sim = garage('car');
+  sim.vehicles = [];
+  const add = (kind: 'moto' | 'tank', x: number, z: number) => { const b = { ...newBody(x, 0, z), ride: kind === 'moto' ? 4 : 5, grounded: true }; const v = { id: 900 + sim.vehicles.length, kind, hp: kind === 'moto' ? 260 : 2200, driver: 0, last: 0, body: b, gunCd: 0, bombCd: 0, seats: [] as number[] }; sim.vehicles.push(v); return v; };
+  const moto = add('moto', 0, 0), a = sim.players.get(1)!;
+  a.x = 0; a.z = 0;
+  tickN(sim, 1, { interact: true });
+  assert.equal(a.ride, 4);
+  tickN(sim, 90, { fwd: 1, sprint: true, yaw: 0 });
+  assert.ok(a.z < -40, `the bike covered ground (z=${a.z.toFixed(0)})`);
+  void moto;
+  // tank vs a wall
+  const s2 = garage('car', [wallBox(-6, -12.3, 6, -12, 4, 0.6)]);
+  s2.vehicles = [];
+  const tb = { ...newBody(0, 0, 0), ride: 5, grounded: true };
+  s2.vehicles.push({ id: 950, kind: 'tank', hp: 2200, driver: 0, last: 0, body: tb, gunCd: 0, bombCd: 0, seats: [] });
+  const car = { ...newBody(0, 0, 40), ride: 1, grounded: true };
+  s2.vehicles.push({ id: 951, kind: 'car', hp: 500, driver: 0, last: 0, body: car, gunCd: 0, bombCd: 0, seats: [] });
+  const t = s2.players.get(1)!; t.x = 0; t.z = 0;
+  tickN(s2, 1, { interact: true });
+  assert.equal(t.ride, 5);
+  tickN(s2, TICK_HZ * 5, { fwd: 1, yaw: 0 });
+  assert.ok(t.z < -13, `drove through the wall (z=${t.z.toFixed(1)})`);
+  assert.ok(s2.vehicles.find((v) => v.id === 950)!.hp === 2200, 'and the tank is fine');
+  // turn the turret around and shoot the car behind
+  t.x = 0; t.z = 0; t.y = 0;
+  for (let i = 0; i < TICK_HZ * 3 && s2.vehicles.some((v) => v.id === 951); i++) s2.step(DT, new Map([[1, inp({ fire: true, yaw: Math.PI, pitch: -0.03, seq: 500 + i })]]));
+  const c = s2.vehicles.find((v) => v.id === 951);
+  assert.ok(!c || c.hp < 500, 'the shell hit the car');
 });

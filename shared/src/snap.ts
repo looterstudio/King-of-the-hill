@@ -2,7 +2,7 @@
 // recipient (rounding, packing) happens once per tick; each recipient then only gets their own
 // full state plus what is near them. Loot and cases go out at most a few times a second.
 import { VEHICLES, VEHICLE_KINDS, VIEW_RANGE, WEAPON_IDS } from './constants.ts';
-import { OTHER_ALIVE, OTHER_DOWN, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
 import type { PlayerState, Sim } from './sim.ts';
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -23,8 +23,8 @@ export function frame(sim: Sim): Frame {
   for (const p of sim.players.values()) {
     if (p.kills > 0 && p.alive && (!leader || p.kills > leader[1])) leader = [p.id, p.kills];
     if (!p.alive) continue;
-    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0) | (p.down > 0 ? OTHER_DOWN : 0);
-    const w = p.slots[p.cur];
+    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0) | (p.down > 0 ? OTHER_DOWN : 0) | (p.axe ? OTHER_AXE : 0);
+    const w = p.axe ? null : p.slots[p.cur];
     const o = [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), Math.ceil(p.hp), flags, w ? WEAPON_IDS.indexOf(w) : -1];
     if (p.hook) o.push(r1(p.gx), r1(p.gy), r1(p.gz));
     others.set(p.id, o);
@@ -58,7 +58,7 @@ function selfOf(p: PlayerState, sim: Sim): SnapSelf {
   let reviving = 0;
   if (p.down === 0) for (const q of sim.players.values()) if (q.reviver === p.id && q.down > 0) { reviving = r2(q.reviveT); break; }
   return {
-    down: r2(p.down), reviveT: r2(p.reviveT), reviving,
+    down: r2(p.down), reviveT: r2(p.reviveT), reviving, axe: p.axe, mats: p.mats,
     ride: p.ride, head: p.head, vpitch: p.vpitch, spd: p.spd, seat: p.seat, rideV: p.rideV, vhp: v ? Math.max(0, Math.round(v.hp)) : 0,
     x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, grounded: p.grounded, gliding: p.gliding,
     airJumps: p.airJumps, wallX: p.wallX, wallZ: p.wallZ, wallT: Math.min(p.wallT, 9), slideT: p.slideT, dashT: p.dashT, dashX: p.dashX, dashZ: p.dashZ,

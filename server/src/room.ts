@@ -26,6 +26,7 @@ export class Client {
   party = '';          // friends who type the same code land on the same team
   wantRoom = '';       // a room picked from the lobby list
   team = 0;
+  skin = 0;            // character picked in the lobby (looks only)
   constructor(public id: number, public ws: WebSocket, public num: string, public nonce: string, private rate: number) { this.tokens = rate; }
 
   send(msg: ServerMsg) { this.sendRaw(JSON.stringify(msg)); }
@@ -75,7 +76,7 @@ export class Room {
     for (const c of this.seats) if (c.room === this) c.sendRaw(s, droppable);
   }
 
-  private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team })); }
+  private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team, skin: c.skin })); }
   private announce() {
     const seats = this.seatList();
     for (const c of this.seats) c.send({ t: 'room', roomId: this.id, you: c.id, seats, state: this.phase, startsAt: this.startsAt, seed: this.seed, mode: this.mode });

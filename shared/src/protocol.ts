@@ -40,11 +40,12 @@ export interface SnapSelf extends Body {
   reloadT: number; spin: number; ack: number; kills: number; vhp: number; rideV: number; // vhp: your vehicle's health, 0 on foot
   reviveT: number;   // knocked: how far a teammate has got picking you up (s)
   reviving: number;  // you are picking up a teammate: progress (s), 0 when not
+  axe: boolean; mats: number; // axe in hand; building material
 }
 // everyone else within VIEW_RANGE, compact: [id, x, y, z, yaw, pitch, hp, flags, weaponIdx, gx?, gy?, gz?]
 // flags: 1 alive, 2 sliding, 4 grappling (anchor appended), 8 gliding, 16 healing; weaponIdx into WEAPON_IDS, -1 none
 export type SnapOther = number[];
-export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64;
+export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64, OTHER_AXE = 128;
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
 export type SnapVehicle = number[];
 // loot on the floor near you: [id, x, y, z, kind (0 weapon, 1 item, 2 perk), what, n]
@@ -57,7 +58,7 @@ export type SnapFx = [string, number, number, number, number, number];
 export interface SnapRing { x: number; y: number; r: number; nx: number; ny: number; nr: number; closing: boolean; nextIn: number; phase: number }
 
 // team: who you drop and win with (0 until the match starts; in solo everyone is their own team)
-export interface RoomSeat { id: number; num: string; name: string; verified: boolean; team: number }
+export interface RoomSeat { id: number; num: string; name: string; verified: boolean; team: number; skin?: number }
 // rooms filling or playing right now, for the lobby's room list
 export interface LobbyRoom { id: string; mode: Mode; n: number; state: RoomPhase; startsIn: number | null }
 
@@ -75,6 +76,8 @@ export type ServerMsg =
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom' | 'ram'; left: number; head: boolean }
   | { t: 'event'; kind: 'vhit'; vehicle: number; by: number; dmg: number }
   | { t: 'event'; kind: 'knock'; victim: number; by: number | null; head: boolean }
+  | { t: 'event'; kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[] }
+  | { t: 'event'; kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean }
   | { t: 'event'; kind: 'revive'; victim: number; by: number }
   | { t: 'event'; kind: 'drop'; x: number; z: number; landed: boolean }
   | { t: 'event'; kind: 'upgrade'; by: number; level: number }
@@ -84,6 +87,7 @@ export type ServerMsg =
   | { t: 'event'; kind: 'unbuild'; id: number }
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { t: 'event'; kind: 'open'; caseId: number; by: number; golden: boolean }
+  | { t: 'rtc'; from: number; data: unknown } // squad voice: WebRTC signalling relayed from a teammate
   | { t: 'result'; winner: number | null; winners: number[]; points: Record<number, number>; awarded: boolean; epoch: number }; // points: what each player scored
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
@@ -91,9 +95,10 @@ export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
 export type ClientMsg =
   | { t: 'auth'; wallet: string; sig: string }
   | { t: 'guest'; name: string }
-  | { t: 'queue'; mode?: Mode; party?: string; room?: string }   // party: friends typing the same code drop on one team
+  | { t: 'queue'; mode?: Mode; party?: string; room?: string; skin?: number }   // party: friends typing the same code drop on one team
   | { t: 'spec'; dir?: 1 | -1; target?: number; at?: [number, number] | null } // dead: switch who you watch, or fly a free camera
   | { t: 'leave' }
+  | { t: 'rtc'; to: number; data: unknown }   // squad voice signalling, only ever relayed to a teammate in your match
   | ({ t: 'in' } & Input);
 
 export const loginMessage = (nonce: string) => `Pot Royale login\nnonce: ${nonce}`;

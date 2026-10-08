@@ -5,11 +5,11 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  BOMB, C4, CRASH, KNOCK, LIFE_SCALE, HELI_GUN, MAP_HALF, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AXE, BOMB, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle } from './vehicles.ts';
 import { rng } from './rng.ts';
-import { World, moveBody, newBody, rayBox, type Body, type Box } from './world.ts';
+import { INK, World, moveBody, newBody, rayBox, type Body, type Box, type Structure } from './world.ts';
 
 export { rng };
 
@@ -30,6 +30,7 @@ export interface PlayerState extends Body {
   reloadT: number; fireCd: number; spin: number; burstLeft: number; burstT: number;
   kills: number; ack: number; team: number; rideV: number; // id of the vehicle you are in, 0 on foot
   downBy: number | null; reviveT: number; reviver: number; // knocked: who did it, revive progress, by whom
+  axe: boolean; axeCd: number; mats: number; // axe out (instead of a gun), its swing cooldown, building material
 }
 export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
@@ -44,6 +45,9 @@ export interface Shot { ox: number; oy: number; oz: number; ex: number; ey: numb
 export type ElimCause = 'shot' | 'ring' | 'left' | 'boom' | 'ram';
 export type SimEvent =
   | { kind: 'knock'; victim: number; by: number | null; head: boolean }
+  // the world changed: blocks broken off / placed (append in order), boxes gone, buildings coming down
+  | { kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[] }
+  | { kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean }
   | { kind: 'revive'; victim: number; by: number }
   | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { kind: 'elim'; victim: number; by: number | null; cause: ElimCause; head: boolean }
@@ -68,7 +72,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
     yaw: finite(raw?.yaw), pitch: clamp(finite(raw?.pitch), -1.5, 1.5),
     jump: raw?.jump === true, sprint: raw?.sprint === true, slide: raw?.slide === true, grapple: raw?.grapple === true,
     fire: raw?.fire === true, aim: raw?.aim === true, reload: raw?.reload === true,
-    slot: clamp(Math.floor(finite(raw?.slot)), 0, SLOTS), view: Math.floor(finite(raw?.view)),
+    slot: clamp(Math.floor(finite(raw?.slot)), 0, SLOTS + 1), view: Math.floor(finite(raw?.view)), // slot SLOTS + 1 = the axe
     interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 2), perk: raw?.perk === true,
     up: clamp(finite(raw?.up), -1, 1), hold: raw?.hold === true,
   };
@@ -137,6 +141,14 @@ export class Sim {
   private rams = new Map<number, number>(); // vehicle*65536+player -> time of the last hit
   private pendingDrop = false;
   private benchUsed = new Set<string>();
+  // destruction this tick, sent as one 'wreck' event; where things may need to fall
+  private wreckAdd: Box[] = [];
+  private wreckKill: number[] = [];
+  private wreckFalls: { sid: number; x: number; y: number; z: number }[] = [];
+  private dirty: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null = null;
+  private baseBoxes: number;
+  private placed = 0;
+  private structBy = new Map<number, number>(); // structure -> who last damaged it
   ring: Ring;
   shots: Shot[] = [];   // drained by whoever encodes snapshots
   lootVer = 0;
@@ -150,6 +162,7 @@ export class Sim {
 
   constructor(public seed: number, world?: World) {
     this.world = world ?? new World(seed);
+    this.baseBoxes = this.world.boxes.length;
     this.rand = rng(seed ^ 0x9e3779b9);
     const first = RING_PHASES[0], c = this.nextCircle(0, 0, 0, RING_START_R - 220, first.radius);
     this.ring = { x: 0, y: 0, r: RING_START_R, nx: c.x, ny: c.y, nr: first.radius, phase: 0, closing: false, dps: RING_DPS_START, nextAt: first.wait };
@@ -162,7 +175,7 @@ export class Sim {
     for (const s of this.world.caseSpots) this.cases.push({ id: this.nextId++, x: s.x, y: s.y, z: s.z, golden: !!s.golden, open: false });
     for (const s of this.world.lootSpots) {
       const roll = lr();
-      if (roll < 0.6) this.drop(s.x, s.y, s.z, 'weapon', this.rollWeapon(lr, FLOOR_RARITY));
+      if (roll < 0.6 || (s.rich && roll < 0.8)) this.drop(s.x, s.y, s.z, 'weapon', this.rollWeapon(lr, s.rich ? CASE_RARITY : FLOOR_RARITY));
       else if (roll < 0.9) this.drop(s.x, s.y, s.z, 'item', weighted(lr, ITEM_TABLE));
       else this.drop(s.x, s.y, s.z, 'perk', weighted(lr, PERK_TABLE));
     }
@@ -210,7 +223,7 @@ export class Sim {
         slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
-        downBy: null, reviveT: 0, reviver: 0,
+        downBy: null, reviveT: 0, reviver: 0, axe: false, axeCd: 0, mats: BUILD.startMats,
       });
     });
   }
@@ -321,7 +334,7 @@ export class Sim {
       if (def.proj === 'missile') { // lock onto the aircraft closest to the crosshair
         let best = MISSILE.cone;
         for (const v of this.vehicles) {
-          if (v.kind === 'car') continue;
+          if (!isAir(VEHICLE_KINDS.indexOf(v.kind) + 1)) continue;
           const d = v.driver ? this.players.get(v.driver) : null;
           if (d && d.team === p.team) continue;
           const tx = v.body.x - p.x, ty = v.body.y + 1 - (p.y + EYE_H), tz = v.body.z - p.z, dist = Math.hypot(tx, ty, tz);
@@ -354,7 +367,7 @@ export class Sim {
     let hit: { head: boolean; q: PlayerState } | null = null, vhit: Vehicle | null = null;
     for (const q of this.players.values()) {
       // no friendly fire; pilots sit inside their aircraft (shoot the aircraft); drivers are exposed
-      if (!q.alive || q.id === p.id || q.team === p.team || (q.ride >= 2 && !q.seat)) continue;
+      if (!q.alive || q.id === p.id || q.team === p.team || (covered(q.ride) && !q.seat)) continue;
       const at = past?.get(q.id) ?? q;
       if (Math.abs(at.x - ox) > range || Math.abs(at.z - oz) > range) continue;
       const h = rayPlayer(ox, oy, oz, dx, dy, dz, at.x, at.y, at.z);
@@ -450,7 +463,17 @@ export class Sim {
   // guns on aircraft: the helicopter aims where you look, the plane fires along its nose
   private vehicleGuns(p: PlayerState, inp: Input, ev: SimEvent[]) {
     const v = this.vehicles.find((x) => x.id === p.rideV);
-    if (!v || p.ride < 2) return;
+    if (!v || !covered(p.ride)) return;
+    if (v.kind === 'tank') { // the cannon fires where you look
+      if (inp.fire && v.gunCd <= 0) {
+        v.gunCd = TANK.cd;
+        const cp = Math.cos(inp.pitch), dx = -Math.sin(inp.yaw) * cp, dy = Math.sin(inp.pitch), dz = -Math.cos(inp.yaw) * cp;
+        const ox = p.x + dx * 3.2, oy = p.y + 2.1 + dy * 3.2, oz = p.z + dz * 3.2;
+        this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg });
+        this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
+      }
+      return;
+    }
     const heli = p.ride === 2, g = heli ? HELI_GUN : PLANE_GUN;
     if (inp.fire && v.gunCd <= 0) {
       v.gunCd = g.cd;
@@ -481,9 +504,10 @@ export class Sim {
     for (const v of this.vehicles) for (let i = 0; i < v.seats.length; i++) {
       const q = this.players.get(v.seats[i]);
       if (!q || !q.alive) continue;
-      const b = v.body, side = i % 2 ? -1 : 1, back = v.kind === 'car' ? (i ? 1.2 : 0) : 0.8 + i * 0.4, lat = v.kind === 'plane' ? 0 : side * (v.kind === 'heli' ? 1.6 : 0.5);
+      const b = v.body, side = i % 2 ? -1 : 1, back = v.kind === 'car' ? (i ? 1.2 : 0) : v.kind === 'moto' ? 0.7 : v.kind === 'tank' ? 0.6 : 0.8 + i * 0.4;
+      const lat = v.kind === 'plane' || v.kind === 'moto' || v.kind === 'tank' ? 0 : side * (v.kind === 'heli' ? 1.6 : 0.5);
       const fx = -Math.sin(b.head), fz = -Math.cos(b.head), rx = Math.cos(b.head), rz = -Math.sin(b.head);
-      q.x = b.x + rx * lat - fx * back; q.z = b.z + rz * lat - fz * back; q.y = b.y + (v.kind === 'car' ? 0.3 : 0.2);
+      q.x = b.x + rx * lat - fx * back; q.z = b.z + rz * lat - fz * back; q.y = b.y + (v.kind === 'tank' ? 2.3 : v.kind === 'car' || v.kind === 'moto' ? 0.3 : 0.2);
       q.vx = b.vx; q.vy = b.vy; q.vz = b.vz; q.grounded = b.grounded; q.head = b.head; q.vpitch = b.vpitch; q.spd = b.spd;
     }
     // running people over: anything moving fast enough hurts whoever it touches
@@ -528,7 +552,7 @@ export class Sim {
       if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * (1.3 / LIFE_SCALE) * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
     }
     for (const q of this.players.values()) {
-      if (!q.alive || (q.id !== owner && q.team === team) || (q.ride >= 2 && !q.seat)) continue; // pilots: the aircraft takes it
+      if (!q.alive || (q.id !== owner && q.team === team) || (covered(q.ride) && !q.seat)) continue; // pilots and tank crews: the vehicle takes it
       const dx = q.x - x, dy = q.y + 1 - y, dz = q.z - z, d = Math.hypot(dx, dy, dz);
       if (d > radius) continue;
       if (!nuke) { // walls stop grenade blasts
@@ -540,6 +564,163 @@ export class Sim {
       if (owner !== q.id) ev.push({ kind: 'hit', victim: q.id, by: owner, dmg: amount, head: false, ...h });
       if (q.hp <= 0) this.fall(q, owner, 'boom', ev);
     }
+    // and the walls around it: blocks break, buildings take structural damage
+    this.damageWorld(x, y, z, nuke ? radius * 0.8 : radius * 0.85, dmg * 1.15, dmg * (nuke ? 30 : 1.5), owner, nuke);
+  }
+
+  // a vehicle slamming into something breaks it: a car punches through a wall, a plane can bring
+  // a tower down
+  private crashWorld(p: PlayerState, v: Vehicle, impact: number) {
+    const def = VEHICLES[v.kind], fx = -Math.sin(p.head) * Math.cos(p.vpitch), fy = Math.sin(p.vpitch), fz = -Math.cos(p.head) * Math.cos(p.vpitch);
+    const reach = def.r + 0.6, r = v.kind === 'plane' ? 5 : v.kind === 'heli' ? 3.5 : v.kind === 'tank' ? 2.6 : 2.2;
+    const k = v.kind === 'plane' ? 130 : v.kind === 'heli' ? 60 : v.kind === 'tank' ? 20 : 15;
+    this.damageWorld(p.x + fx * reach, p.y + def.h / 2 + fy * reach, p.z + fz * reach, r, v.kind === 'tank' ? 45 : impact * 8, impact * k, p.id);
+  }
+
+  // ---------------- destruction ----------------
+  private material(b: Box) {
+    if (b.kind === 'crate' || b.kind === 'trunk' || b.kind === 'fort' || b.ink === INK.BROWN) return MATERIAL.wood;
+    if (b.kind === 'container' || b.kind === 'car' || b.ink === INK.GRAPHITE) return MATERIAL.metal;
+    return MATERIAL.brick;
+  }
+  private markDirty(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
+    const d = this.dirty;
+    if (!d) { this.dirty = { x0, y0, z0, x1, y1, z1 }; return; }
+    d.x0 = Math.min(d.x0, x0); d.y0 = Math.min(d.y0, y0); d.z0 = Math.min(d.z0, z0); d.x1 = Math.max(d.x1, x1); d.y1 = Math.max(d.y1, y1); d.z1 = Math.max(d.z1, z1);
+  }
+  private killBox(i: number) {
+    const b = this.world.boxes[i];
+    if (!b || b.dead) return;
+    b.dead = true; this.wreckKill.push(i);
+    this.markDirty(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1);
+  }
+  // break a big box into blocks where it was hit; returns the new blocks' indices
+  private shatter(i: number): number[] {
+    if (this.world.boxes.length - this.baseBoxes > WRECK_BUDGET) return [];
+    const kids = this.world.shards(i);
+    this.killBox(i);
+    this.wreckAdd.push(...kids);
+    return this.world.addBoxes(kids);
+  }
+  // damage one block; true if it broke
+  private hitBlock(i: number, dmg: number): boolean {
+    const b = this.world.boxes[i];
+    if (!b || b.dead || b.hard) return false;
+    b.hp = (b.hp ?? this.material(b).hp) - dmg;
+    if (b.hp > 0) return false;
+    this.killBox(i);
+    return true;
+  }
+  private boxDist(b: Box, x: number, y: number, z: number) {
+    const dx = Math.max(b.x0 - x, 0, x - b.x1), dy = Math.max(b.y0 - y, 0, y - b.y1), dz = Math.max(b.z0 - z, 0, z - b.z1);
+    return Math.hypot(dx, dy, dz);
+  }
+  // a blast, a crash, a nuke: blocks near it break, and the buildings it reaches take structural
+  // damage; enough of that and the whole building comes down
+  damageWorld(x: number, y: number, z: number, r: number, blockDmg: number, structDmg: number, by: number, nuke = false) {
+    for (const i of this.world.near(x - r, z - r, x + r, z + r, [])) {
+      const b = this.world.boxes[i];
+      if (b.dead || b.hard || this.boxDist(b, x, y, z) >= r) continue;
+      if (nuke) { this.killBox(i); continue; } // vaporised whole, no rubble to track
+      const parts = World.isBlock(b) ? [i] : this.shatter(i);
+      for (const k of parts) {
+        const d = this.boxDist(this.world.boxes[k], x, y, z);
+        if (d < r) this.hitBlock(k, blockDmg * (1 - (d / r) * 0.7));
+      }
+    }
+    if (structDmg > 0) for (const s of this.world.structures) {
+      if (s.down || x + r < s.x0 || x - r > s.x1 || z + r < s.z0 || z - r > s.z1 || y + r < s.y0 || y - r > s.y1) continue;
+      s.dmg += structDmg; this.structBy.set(s.id, by);
+      if (s.dmg >= s.hp) this.collapse(s);
+    }
+  }
+  private collapsed: Structure[] = [];
+  private collapse(s: Structure) {
+    s.down = true;
+    this.wreckFalls.push({ sid: s.id, x: (s.x0 + s.x1) / 2, y: s.y1, z: (s.z0 + s.z1) / 2 });
+    for (const i of s.boxes) this.killBox(i);
+    this.collapsed.push(s);
+  }
+  // falling rubble hurts whoever was inside; loot, cases and parked vehicles drop to what is left
+  private settleWreck(ev: SimEvent[]) {
+    for (const s of this.collapsed) {
+      const by = this.structBy.get(s.id) ?? null;
+      for (const q of this.players.values()) {
+        if (!q.alive || q.x < s.x0 - 1 || q.x > s.x1 + 1 || q.z < s.z0 - 1 || q.z > s.z1 + 1 || q.y > s.y1 + 1) continue;
+        const dmg = 120, h = this.hurt(q, dmg);
+        if (by !== null && by !== q.id) ev.push({ kind: 'hit', victim: q.id, by, dmg, head: false, ...h });
+        if (q.hp <= 0) this.fall(q, by !== q.id ? by : null, 'boom', ev);
+      }
+    }
+    this.collapsed = [];
+    const d = this.dirty;
+    if (!d) return;
+    this.dirty = null;
+    const inside = (x: number, y: number, z: number) => x > d.x0 - 1 && x < d.x1 + 1 && z > d.z0 - 1 && z < d.z1 + 1 && y > d.y0 - 1 && y < d.y1 + 2;
+    for (const l of this.loot) if (inside(l.x, l.y, l.z)) { const g = this.world.groundAt(l.x, l.z, l.y + 0.05); if (g < l.y - 0.05) { l.y = g; this.lootVer++; } }
+    for (const c of this.cases) if (inside(c.x, c.y, c.z)) { const g = this.world.groundAt(c.x, c.z, c.y + 0.05); if (g < c.y - 0.05) { c.y = g; this.lootVer++; } }
+    for (const v of this.vehicles) if (!v.driver && inside(v.body.x, v.body.y, v.body.z)) v.body.grounded = false;
+  }
+
+  // the axe: hit whatever is in front of you
+  private swing(p: PlayerState, ev: SimEvent[]) {
+    const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
+    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    let best = AXE.reach, hitP: { q: PlayerState; head: boolean } | null = null, hitV: Vehicle | null = null;
+    for (const q of this.players.values()) {
+      if (!q.alive || q.id === p.id || q.team === p.team || Math.abs(q.x - ox) > 4 || Math.abs(q.z - oz) > 4) continue;
+      const h = rayPlayer(ox, oy, oz, dx, dy, dz, q.x, q.y, q.z);
+      if (h && h.t < best) { best = h.t; hitP = { q, head: h.head }; }
+    }
+    for (const v of this.vehicles) {
+      const b = v.body, r = VEHICLES[v.kind].r, hv = VEHICLES[v.kind].h;
+      if (Math.abs(b.x - ox) > 6 || Math.abs(b.z - oz) > 6) continue;
+      const t = rayBox(ox, oy, oz, dx, dy, dz, { x0: b.x - r, y0: b.y, z0: b.z - r, x1: b.x + r, y1: b.y + hv, z1: b.z + r });
+      if (t >= 0 && t < best) { best = t; hitV = v; hitP = null; }
+    }
+    const wb = this.world.raycastBox(ox, oy, oz, dx, dy, dz, AXE.reach);
+    if (wb.i >= 0 && wb.t < best) {
+      const hx = ox + dx * (wb.t + 0.05), hy = oy + dy * (wb.t + 0.05), hz = oz + dz * (wb.t + 0.05);
+      let i = wb.i, broke = false;
+      const b = this.world.boxes[i];
+      if (!b.hard) {
+        if (!World.isBlock(b)) i = this.shatter(i).find((k) => { const c = this.world.boxes[k]; return hx >= c.x0 - 0.01 && hx <= c.x1 + 0.01 && hy >= c.y0 - 0.01 && hy <= c.y1 + 0.01 && hz >= c.z0 - 0.01 && hz <= c.z1 + 0.01; }) ?? -1;
+        if (i >= 0) {
+          const mat = this.material(this.world.boxes[i]);
+          broke = this.hitBlock(i, AXE.block);
+          if (broke) p.mats = Math.min(BUILD.maxMats, p.mats + mat.yield);
+          const s = b.sid ? this.world.structures[b.sid - 1] : null;
+          if (s && !s.down) { s.dmg += 8; this.structBy.set(s.id, p.id); if (s.dmg >= s.hp) this.collapse(s); }
+        }
+      }
+      ev.push({ kind: 'chop', by: p.id, x: hx, y: hy, z: hz, broke });
+      return;
+    }
+    if (hitV) { this.damageVehicle(hitV, AXE.vehicle, p.id, ev); return; }
+    if (hitP) {
+      const dmg = Math.round(AXE.player * (hitP.head ? 1.5 : 1)), h = this.hurt(hitP.q, dmg);
+      ev.push({ kind: 'hit', victim: hitP.q.id, by: p.id, dmg, head: hitP.head, ...h });
+      if (hitP.q.hp <= 0) this.fall(hitP.q, p.id, 'shot', ev, hitP.head);
+    }
+  }
+
+  // right click with the axe: a 1 m block where you look (on the face you aimed at, or the ground)
+  private place(p: PlayerState) {
+    if (p.mats < BUILD.cost || this.placed >= BUILD.cap) return;
+    const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
+    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    const hit = this.world.raycastBox(ox, oy, oz, dx, dy, dz, BUILD.reach);
+    let t = hit.i >= 0 ? hit.t : BUILD.reach;
+    if (dy < 0) t = Math.min(t, -oy / dy);
+    if (t >= BUILD.reach) return;
+    const qx = ox + dx * (t - 0.05), qy = oy + dy * (t - 0.05), qz = oz + dz * (t - 0.05);
+    const cx = Math.floor(qx), cy = Math.max(0, Math.floor(qy + 1e-3)), cz = Math.floor(qz);
+    const b: Box = { x0: cx, y0: cy, z0: cz, x1: cx + 1, y1: cy + 1, z1: cz + 1, ink: INK.BROWN, kind: 'fort' };
+    if (this.world.hitBox(cx + 0.5, cy + 0.01, cz + 0.5, 0.49, 0.98)) return;
+    for (const q of this.players.values()) if (q.alive && q.x + PLAYER_R > b.x0 && q.x - PLAYER_R < b.x1 && q.z + PLAYER_R > b.z0 && q.z - PLAYER_R < b.z1 && q.y < b.y1 && q.y + 1.8 > b.y0) return;
+    for (const v of this.vehicles) { const r = VEHICLES[v.kind].r; if (v.body.x + r > b.x0 && v.body.x - r < b.x1 && v.body.z + r > b.z0 && v.body.z - r < b.z1 && v.body.y < b.y1 && v.body.y + VEHICLES[v.kind].h > b.y0) return; }
+    this.world.addBoxes([b]); this.wreckAdd.push(b);
+    p.mats -= BUILD.cost; this.placed++;
   }
 
   private usePerk(p: PlayerState, ev: SimEvent[]) {
@@ -775,7 +956,7 @@ export class Sim {
       if (e.kind === 'fire' && this.tick % 10 === 0) { // burns whoever stands in it (its thrower included)
         const owner = this.players.get(e.owner);
         for (const q of this.players.values()) {
-          if (!q.alive || (q.ride >= 2 && !q.seat) || (owner && q.id !== owner.id && q.team === owner.team)) continue;
+          if (!q.alive || (covered(q.ride) && !q.seat) || (owner && q.id !== owner.id && q.team === owner.team)) continue;
           if (Math.hypot(q.x - e.x, q.z - e.z) > MOLOTOV.radius || Math.abs(q.y - e.y) > 2.5) continue;
           const dmg = Math.round(MOLOTOV.dps / 3), h = this.hurt(q, dmg);
           if (q.id !== e.owner) ev.push({ kind: 'hit', victim: q.id, by: e.owner, dmg, head: false, ...h });
@@ -790,7 +971,7 @@ export class Sim {
     }
     this.effects = keep;
     for (const b of this.builds) b.t -= dt;
-    for (const b of this.builds.filter((x) => x.t <= 0)) { this.world.killBoxes(b.idx); ev.push({ kind: 'unbuild', id: b.id }); }
+    for (const b of this.builds.filter((x) => x.t <= 0)) { this.world.killBoxes(this.world.withShards(b.idx)); ev.push({ kind: 'unbuild', id: b.id }); }
     this.builds = this.builds.filter((x) => x.t > 0);
   }
 
@@ -817,9 +998,10 @@ export class Sim {
         continue;
       }
 
-      if (inp.slot >= 1 && inp.slot <= SLOTS && p.slots[inp.slot - 1] && inp.slot - 1 !== p.cur) {
-        p.cur = inp.slot - 1; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.fireCd = Math.max(p.fireCd, 0.25);
-      }
+      p.axeCd = Math.max(0, p.axeCd - dt);
+      if (inp.slot >= 1 && inp.slot <= SLOTS && p.slots[inp.slot - 1] && (inp.slot - 1 !== p.cur || p.axe)) {
+        p.cur = inp.slot - 1; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.fireCd = Math.max(p.fireCd, 0.25); p.axe = false;
+      } else if (inp.slot === SLOTS + 1 && !p.axe) { p.axe = true; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.axeCd = 0.2; }
       if (inp.interact && !p.gliding) this.interact(p, ev);
       if (inp.perk && !p.gliding && (!p.ride || p.seat > 0)) this.usePerk(p, ev); // passengers can throw things too
 
@@ -840,7 +1022,7 @@ export class Sim {
         }
       }
 
-      const w = this.weaponOf(p);
+      const w = p.axe ? null : this.weaponOf(p);
       if (w) {
         const def = WEAPONS[w];
         if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) { p.reloadT = 0; p.mags[p.cur] = def.mag; } }
@@ -851,13 +1033,19 @@ export class Sim {
       if (p.rideV) {
         // crashes dent the vehicle; aircraft guns and bombs
         const v = this.vehicles.find((x) => x.id === p.rideV);
-        if (v && impact > CRASH.minSpeed) this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), p.id, ev);
-        if (p.ride >= 2 && !p.seat) this.vehicleGuns(p, inp, ev);
+        if (v && v.kind === 'tank') { if (impact > 0) this.crashWorld(p, v, impact); } // tracks plough through walls, no damage to the tank
+        else if (v && impact > CRASH.minSpeed) { this.crashWorld(p, v, impact); this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), p.id, ev); }
+        if (covered(p.ride) && !p.seat) this.vehicleGuns(p, inp, ev);
       } else this.autoPickup(p);
       if (!p.alive) continue;
 
+      // the axe: left click swings, right click places a block
+      if (p.axe && !p.gliding && !p.ride && !p.use && !this.reviving.has(p.id) && p.axeCd === 0) {
+        if (inp.fire) { p.axeCd = AXE.cd; this.swing(p, ev); }
+        else if (inp.aim) { p.axeCd = BUILD.cd; this.place(p); }
+      }
       // on foot, or leaning out of a car window (drive-by); never from inside an aircraft
-      if (w && !p.gliding && p.reloadT === 0 && !p.use && !this.reviving.has(p.id) && (p.ride <= 1 || p.seat > 0)) {
+      if (w && !p.gliding && p.reloadT === 0 && !p.use && !this.reviving.has(p.id) && (!covered(p.ride) || p.seat > 0)) {
         const def = WEAPONS[w];
         if (def.spinUp) p.spin = inp.fire ? Math.min(def.spinUp, p.spin + dt) : Math.max(0, p.spin - dt * 2);
         const spunUp = !def.spinUp || p.spin >= def.spinUp;
@@ -879,6 +1067,11 @@ export class Sim {
     this.stepVehicles(dt, ev);
     this.stepProjectiles(dt, ev);
     this.stepEffects(dt, ev);
+    if (this.wreckAdd.length || this.wreckKill.length) {
+      ev.push({ kind: 'wreck', add: this.wreckAdd, kill: this.wreckKill, falls: this.wreckFalls });
+      this.wreckAdd = []; this.wreckKill = []; this.wreckFalls = [];
+    }
+    this.settleWreck(ev);
 
     const pos = new Map<number, { x: number; y: number; z: number }>();
     for (const p of this.players.values()) if (p.alive) pos.set(p.id, { x: p.x, y: p.y, z: p.z });

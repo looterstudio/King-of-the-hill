@@ -89,6 +89,7 @@ export class LocalNet {
       }
       case 'queue': {
         if (!this.me || this.room) break;
+        this.me.skin = Math.max(0, Math.min(4, Math.floor(Number(m.skin)) || 0));
         const picked = this.fake.find((r) => r.id === m.room && r.state === 'waiting');
         this.openRoom(picked ? picked.mode : MODE_IDS.includes(m.mode as Mode) ? m.mode! : 'solo', picked?.id);
         if (picked) this.fake = this.fake.filter((r) => r !== picked);
@@ -117,7 +118,7 @@ export class LocalNet {
       delay += 40 + Math.random() * 90;
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
-        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0 });
+        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * 5) });
         room.bots.push({ id, skill: 0.3 + Math.random() * 0.55, strafe: Math.random() < 0.5 ? 1 : -1, aimErr: 0, reaction: 0, target: null, los: false, losT: 0, wp: { x: 0, z: 0 }, stuck: 0, seq: 0, dropX: (Math.random() - 0.5) * 640, dropZ: (Math.random() - 0.5) * 640 });
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }

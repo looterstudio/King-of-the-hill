@@ -11,7 +11,7 @@ import type { Box, World } from './world.ts';
 
 export const INK = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7 } as const;
 export interface Poi { name: string; x: number; z: number }
-export interface Spot { x: number; y: number; z: number; golden?: boolean }
+export interface Spot { x: number; y: number; z: number; golden?: boolean; rich?: boolean } // rich: floor loot rolls like a pencil case
 
 type Side = 'n' | 's' | 'e' | 'w';
 const SIDES: Side[] = ['n', 's', 'e', 'w'];
@@ -33,9 +33,12 @@ export function generate(w: World, seed: number) {
   const cellsOf = (x0: number, z0: number, x1: number, z1: number, f: (k: number) => void) => {
     for (let i = Math.floor(x0 / G); i <= Math.floor(x1 / G); i++) for (let j = Math.floor(z0 / G); j <= Math.floor(z1 / G); j++) f(i * 4096 + j);
   };
+  // terrain (hills, mountains, the mine, anything flat on the ground) can't be broken
+  let HARD = false;
   const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, ink: number, kind: Box['kind']) => {
     if (x1 - x0 < 0.01 || y1 - y0 < 0.01 || z1 - z0 < 0.01) return;
     const b: Box = { x0: x0 + OX, y0, z0: z0 + OZ, x1: x1 + OX, y1, z1: z1 + OZ, ink, kind };
+    if (HARD || y1 <= 0.6) b.hard = true;
     w.boxes.push(b);
     if (y0 < 0.5) cellsOf(b.x0, b.z0, b.x1, b.z1, (k) => { const l = ground.get(k); if (l) l.push(b); else ground.set(k, [b]); });
   };
@@ -48,7 +51,7 @@ export function generate(w: World, seed: number) {
     return ok;
   };
   const cases = (...s: Spot[]) => w.caseSpots.push(...s.map((c) => ({ ...c, x: c.x + OX, z: c.z + OZ })));
-  const loot = (x: number, y: number, z: number, n = 1, spread = 2) => { for (let i = 0; i < n; i++) w.lootSpots.push({ x: x + OX + (r() - 0.5) * spread, y, z: z + OZ + (r() - 0.5) * spread }); };
+  const loot = (x: number, y: number, z: number, n = 1, spread = 2, rich = false) => { for (let i = 0; i < n; i++) w.lootSpots.push({ x: x + OX + (r() - 0.5) * spread, y, z: z + OZ + (r() - 0.5) * spread, rich: rich || undefined }); };
   const roof = (q: { x0: number; z0: number; x1: number; z1: number; y: number }) => w.roofs.push({ ...q, x0: q.x0 + OX, x1: q.x1 + OX, z0: q.z0 + OZ, z1: q.z1 + OZ });
   const gab = (q: { x0: number; z0: number; x1: number; z1: number; y: number; h: number; alongX: boolean }) => w.gables.push({ ...q, x0: q.x0 + OX, x1: q.x1 + OX, z0: q.z0 + OZ, z1: q.z1 + OZ });
   const lake = (q: { x: number; z: number; r: number }) => w.lakes.push({ ...q, x: q.x + OX, z: q.z + OZ });
@@ -192,6 +195,7 @@ export function generate(w: World, seed: number) {
   const pillar = (x: number, z: number, h: number, s = 0.5, ink: number = INK.GRAPHITE, y0 = 0) => box(x - s / 2, y0, z - s / 2, x + s / 2, h, z + s / 2, ink, 'wall');
   // a flat-topped hill with stairs on the given sides
   const plateau = (cx: number, cz: number, sx: number, sz: number, h: number, ink: number, ups: Side[], base = 0) => {
+    const was = HARD; HARD = true;
     box(cx - sx / 2, base, cz - sz / 2, cx + sx / 2, base + h, cz + sz / 2, ink, 'building');
     roof({ x0: cx - sx / 2, z0: cz - sz / 2, x1: cx + sx / 2, z1: cz + sz / 2, y: base + h });
     for (const s of ups) {
@@ -200,6 +204,7 @@ export function generate(w: World, seed: number) {
       if (s === 'w') stairs(cx - sx / 2, cz, base, base + h, 'w', 4);
       if (s === 'e') stairs(cx + sx / 2, cz, base, base + h, 'e', 4);
     }
+    HARD = was;
   };
   const poi = (name: string, x: number, z: number) => w.pois.push({ name, x: x + OX, z: z + OZ });
   // heading: 0 faces -z (north), PI/2 faces -x (west), -PI/2 faces +x (east), PI faces +z
@@ -553,9 +558,11 @@ export function generate(w: World, seed: number) {
     poi('Graphite Mine', cx, cz);
     const xs = [cx - sx / 2, cx - cw / 2, cx + cw / 2, cx + sx / 2], zs = [cz - sz / 2, cz - cw / 2, cz + cw / 2, cz + sz / 2];
     // four rock blocks around two crossing tunnels, rock over each tunnel
+    HARD = true;
     for (const [a, b] of [[0, 2], [2, 0], [0, 0], [2, 2]]) box(xs[a], 0, zs[b], xs[a + 1], h, zs[b + 1], INK.GRAPHITE, 'building');
     box(xs[1], ch, zs[0], xs[2], h, zs[3], INK.GRAPHITE, 'building');
     box(xs[0], ch, zs[1], xs[3], h, zs[2], INK.GRAPHITE, 'building');
+    HARD = false;
     roof({ x0: xs[0], z0: zs[0], x1: xs[3], z1: zs[3], y: h });
     stairs(cx + 10, cz - sz / 2, 0, h, 'n', 3);
     stairs(cx + sx / 2, cz + 9, 0, h, 'e', 3);
@@ -593,6 +600,7 @@ export function generate(w: World, seed: number) {
   // a terraced mountain: each level a smaller block on the last, stairs up a different side each
   // time (all four sides with `grand`), boulders and cases on the terraces, a golden case on top
   const mountain = (cx: number, cz: number, r0: number, levels: number, lh: number, inks: number[], grand = false) => {
+    HARD = true;
     // every terrace must be deep enough for a flight of stairs plus room to step on and off it
     const step = Math.max((2 * r0) / (levels + 0.6), 2 * ((lh / RISE) * RUN + 1.6));
     levels = Math.max(1, Math.min(levels, Math.floor((2 * r0 - 10) / step) + 1));
@@ -616,6 +624,7 @@ export function generate(w: World, seed: number) {
         }
       }
     }
+    HARD = false;
     const top = levels * lh;
     cases({ x: cx, y: top, z: cz + 1.5, golden: true });
     loot(cx, top, cz, 2, 4);
@@ -656,6 +665,41 @@ export function generate(w: World, seed: number) {
     box(-1, top, -1, 1, top + 10, 1, INK.RED, 'wall'); // antenna
     vehicle('heli', -4, -4, N, top);
     for (const [x, z] of [[12, 12], [-12, 12], [12, -12]]) box(x - 0.7, 0, z - 0.7, x + 0.7, 0.9, z + 0.7, INK.GREEN, 'wall');
+  }
+
+  // =====================================================================================
+  // THE NEEDLE: an 80-floor megatower. An updraft in the core carries you up (step out at any
+  // floor); jump out of a window and your glider opens on the way down. Rich loot on every floor,
+  // golden cases every tenth floor and on the roof. A plane can bring it down, but it takes a few.
+  // =====================================================================================
+  {
+    at(-95, -35);
+    poi('The Needle', 0, 0);
+    const H = 11, FH = 3.4, FL = 80, C = 1.7;
+    for (let f = 0; f < FL; f++) {
+      const y0 = f * FH, y1 = y0 + FH, ink = f % 10 === 9 ? INK.ORANGE : f % 2 ? INK.BLUE : INK.PAPER;
+      for (const side of SIDES) {
+        const alongX = side === 'n' || side === 's', fixed = side === 'n' || side === 'w' ? -H : H;
+        const ops = f === 0 ? [{ a: -8, b: -5, lo: 0.9, hi: 2.8 }, { a: -2, b: 2, lo: 0, hi: 3.0 }, { a: 5, b: 8, lo: 0.9, hi: 2.8 }]
+          : [-8.5, -3.5, 1.5, 6.5].map((a) => ({ a, b: a + 2.2, lo: 0.9, hi: 2.8 }));
+        wall(alongX, fixed, -H, H, y0, y1, ops, ink);
+      }
+      // the floor above, with the updraft shaft through the middle
+      box(-H, y1 - SLAB, -H, H, y1, -C, ink, 'floor'); box(-H, y1 - SLAB, C, H, y1, H, ink, 'floor');
+      box(-H, y1 - SLAB, -C, -C, y1, C, ink, 'floor'); box(C, y1 - SLAB, -C, H, y1, C, ink, 'floor');
+      const sx = f % 2 ? 6.5 : -6.5, sz = f % 4 < 2 ? 6.5 : -6.5;
+      loot(-sx, y0, sz, 1, 2, true);
+      if (f % 10 === 9 || f > FL - 4) cases({ x: sx, y: y0, z: -sz, golden: true });
+      else if (f % 2 === 0) cases({ x: sx, y: y0, z: -sz });
+    }
+    const top = FL * FH;
+    w.updrafts.push({ x: OX, z: OZ, r: C - 0.2, y0: 0, y1: top + 2 });
+    for (const [x, z] of [[-6, -6], [6, 6], [-6, 6]]) cases({ x, y: top, z, golden: true });
+    loot(0, top, -7, 3, 6, true);
+    bench(5, -7, 40 * FH);
+    vehicle('heli', 5, 6, N, top);
+    crenel(true, -H, -H, H, top, INK.GRAPHITE); crenel(true, H, -H, H, top, INK.GRAPHITE);
+    box(-0.6, top, -9, 0.6, top + 34, -7.8, INK.RED, 'wall'); // the needle itself
   }
 
   // =====================================================================================
@@ -778,6 +822,11 @@ export function generate(w: World, seed: number) {
   vehicle('heli', 319, 12, W, 7);                                     // port warehouse roof
   vehicle('heli', 5, -313, S, 8);                                     // castle courtyard
   vehicle('heli', 231, 261, N, 10);                                   // factory roof
+  // motorbikes: fast, one passenger on the back; on the ring road and at the edge of town
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2 + 0.55; vehicle('moto', Math.cos(a) * 204, Math.sin(a) * 204, -a); }
+  vehicle('moto', 66, -26, N); vehicle('moto', -66, 26, S); vehicle('moto', 300, 180, W); vehicle('moto', -120, -300, E); vehicle('moto', -95, -8, E);
+  // tanks: slow, armoured, a cannon that levels buildings, tracks that go through walls
+  vehicle('tank', 0, -262, N); vehicle('tank', 160, 228, E); vehicle('tank', -110, 320, E); vehicle('tank', -70, -45, N);
 
   at(0, 0);
   // =====================================================================================

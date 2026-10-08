@@ -46,9 +46,26 @@ export function reachability(w: World) {
     const i = idx(x), j = idx(z), y = w.groundAt(pos(i), pos(j), 0.5);
     if (y === 0 && stand(pos(i), pos(j), 0)) { const k = key(i, j, 0); if (!seen.has(k)) { seen.add(k); queue.push(i, j, 0); } }
   }
+  // updrafts carry you up their column: from inside one you can step out onto any floor around it
+  const lifts = w.updrafts.map((u) => {
+    const exits: number[] = [];
+    for (let i = idx(u.x - u.r - 1.2); i <= idx(u.x + u.r + 1.2); i++) for (let j = idx(u.z - u.r - 1.2); j <= idx(u.z + u.r + 1.2); j++) {
+      const x = pos(i), z = pos(j);
+      if (Math.hypot(x - u.x, z - u.z) < u.r) continue;
+      const tops = new Set<number>();
+      for (const k of w.near(x, z, x, z)) { const b = w.boxes[k]; if (!b.dead && b.y1 >= u.y0 && b.y1 <= u.y1 && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) tops.add(b.y1); }
+      for (const h of tops) if (support(x, z, h + 1e-3) === h && stand(x, z, h)) exits.push(i, j, h);
+    }
+    return { u, exits, used: false };
+  });
   const D = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
   for (let q = 0; q < queue.length; q += 3) {
     const i = queue[q], j = queue[q + 1], y = queue[q + 2] / 100;
+    for (const l of lifts) {
+      if (l.used || Math.hypot(pos(i) - l.u.x, pos(j) - l.u.z) >= l.u.r || y > l.u.y1) continue;
+      l.used = true;
+      for (let k = 0; k < l.exits.length; k += 3) { const key2 = key(l.exits[k], l.exits[k + 1], l.exits[k + 2]); if (!seen.has(key2)) { seen.add(key2); queue.push(l.exits[k], l.exits[k + 1], Math.round(l.exits[k + 2] * 100)); } }
+    }
     for (const [di, dj] of D) {
       const ni = i + di, nj = j + dj;
       if (ni < 2 || nj < 2 || ni > N - 2 || nj > N - 2) continue;

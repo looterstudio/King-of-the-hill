@@ -25,6 +25,7 @@ export class FpsInput {
       if (e.code === 'KeyC' || e.code === 'ControlLeft') this.latched.slide = true;
       if (e.code === 'KeyR') this.latched.reload = true;
       const n = /^Digit([1-4])$/.exec(e.code); if (n) this.latched.slot = Number(n[1]);
+      if (e.code === 'KeyX') this.latched.slot = 5; // the axe
       if (e.code === 'KeyE' || e.code === 'KeyF') this.latched.interact = true;
       if (e.code === 'KeyG') this.latched.perk = true;
       if (e.code === 'Digit5') this.latched.item = 1;

@@ -6,7 +6,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
-import { playerNumber } from '../../shared/src/constants.ts';
+import { SKINS, playerNumber } from '../../shared/src/constants.ts';
 import { loginMessage, type ClientMsg, type PotView, type ServerMsg } from '../../shared/src/protocol.ts';
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
@@ -89,7 +89,7 @@ function handleHttp(req: IncomingMessage, res: ServerResponse) {
 }
 
 const http = createServer(handleHttp);
-const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 2048, perMessageDeflate: false });
+const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 16 * 1024, perMessageDeflate: false });
 
 // ---------- sockets ----------
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
@@ -142,6 +142,7 @@ async function onMessage(c: Client, msg: ClientMsg) {
       if (!c.authed) return c.send({ t: 'error', msg: 'sign in first' });
       if (c.room?.phase === 'over') c.room.remove(c);
       if (clients.size > config.maxConnections) return c.send({ t: 'error', msg: 'server full' });
+      c.skin = Math.max(0, Math.min(SKINS.length - 1, Math.floor(Number(msg.skin)) || 0));
       return mm.enqueue(c, { mode: msg.mode, party: msg.party, room: msg.room });
     }
     case 'spec': {
@@ -150,6 +151,17 @@ async function onMessage(c: Client, msg: ClientMsg) {
       return c.room?.spectate(c, r);
     }
     case 'leave': return mm.leave(c);
+    case 'rtc': {
+      // squad voice: relay offers, answers and ICE candidates to a teammate in the same live match,
+      // nobody else. Audio itself goes peer to peer and never touches the server.
+      const room = c.room, to = Number(msg.to);
+      if (!room || room.phase !== 'live' || room.mode === 'solo' || !Number.isInteger(to)) return;
+      const peer = room.seats.find((s) => s.id === to);
+      if (!peer || peer === c || peer.room !== room || peer.team !== c.team) return;
+      const body = JSON.stringify({ t: 'rtc', from: c.id, data: msg.data });
+      if (body.length > 12_000) return;
+      return peer.sendRaw(body);
+    }
   }
 }
 

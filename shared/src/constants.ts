@@ -20,6 +20,8 @@ export const topPlaces = (mode: Mode) => Math.ceil(10 / MODES[mode].size);
 export function matchPoints(mode: Mode, place: number, kills: number, won: boolean) {
   return (won ? POINTS.win[mode] : place > 0 && place <= topPlaces(mode) ? POINTS.top : 0) + Math.min(kills, POINTS.killCap) * POINTS.kill;
 }
+// characters to pick from before a match: looks only, every one plays the same
+export const SKINS = ['Scribble', 'Crayon Knight', 'Ink Ninja', 'Robo Pen', 'Captain Blot'];
 export const OPEN_ROOMS = 5;          // rooms filling at the same time, across modes
 export const ROOM_MIN = 2;            // a room starts with fewer than 10 once the fill timer runs out
 export const FILL_WAIT_MS = 45_000;   // how long a room waits for more players after the 2nd joins
@@ -98,6 +100,13 @@ export const UPGRADE = { max: 3, perLevel: 0.22, benchReach: 2.4 };
 export const MOLOTOV = { radius: 4.5, life: 7, dps: 38 };
 export const SHOCK = { radius: 7, push: 22, fuse: 1.4 };
 export const SLOTS = 4;
+// the axe: always in your pocket (X). Swing it at walls, cars and people; broken blocks give you
+// material, right click with the axe out places a 1 m block (Minecraft style)
+export const AXE = { reach: 2.9, cd: 0.42, player: 28, vehicle: 30, block: 34 };
+export const BUILD = { cost: 2, maxMats: 400, reach: 6, cd: 0.16, cap: 3000, startMats: 30 };
+// destruction: block health by material, and how much material a broken block gives back
+export const MATERIAL = { wood: { hp: 70, yield: 3 }, brick: { hp: 150, yield: 5 }, metal: { hp: 270, yield: 7 } };
+export const WRECK_BUDGET = 30000; // blocks a match may break off before big boxes stop shattering
 
 export type ItemId = 'mini' | 'big' | 'med';
 export const ITEMS: Record<ItemId, { name: string; rarity: Rarity; use: number; max: number; shield?: number; shieldCap?: number; heal?: number }> = {
@@ -132,15 +141,22 @@ export const C4 = { radius: 7, dmg: 250, speed: 15, core: 2.5 };
 export const SUPPLY = { height: 110, fall: 7 };
 
 // ---- vehicles ----
-// ride code on the body: 0 on foot, 1 car, 2 helicopter, 3 plane
-export type VehicleKind = 'car' | 'heli' | 'plane';
-export const VEHICLE_KINDS: VehicleKind[] = ['car', 'heli', 'plane'];
+// ride code on the body: 0 on foot, 1 car, 2 helicopter, 3 plane, 4 motorbike, 5 tank
+export type VehicleKind = 'car' | 'heli' | 'plane' | 'moto' | 'tank';
+export const VEHICLE_KINDS: VehicleKind[] = ['car', 'heli', 'plane', 'moto', 'tank'];
+export const isAir = (ride: number) => ride === 2 || ride === 3;
+// inside armour: bullets hit the vehicle, not the driver (aircraft pilots, tank crews)
+export const covered = (ride: number) => ride === 2 || ride === 3 || ride === 5;
 // seats: passengers besides the driver (teammates only); they can shoot out of any vehicle
 export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number; h: number; top: number; boost: number; accel: number; reach: number; seats: number }> = {
   car: { name: 'Car', hp: 500, r: 1.25, h: 1.7, top: 24, boost: 34, accel: 16, reach: 3.2, seats: 3 },
   heli: { name: 'Helicopter', hp: 650, r: 2.3, h: 2.6, top: 25, boost: 32, accel: 14, reach: 4.2, seats: 3 },
   plane: { name: 'Plane', hp: 350, r: 2.4, h: 1.8, top: 46, boost: 62, accel: 11, reach: 4.6, seats: 1 },
+  moto: { name: 'Motorbike', hp: 260, r: 0.75, h: 1.4, top: 30, boost: 44, accel: 24, reach: 2.4, seats: 1 },
+  tank: { name: 'Tank', hp: 2200, r: 2.1, h: 2.3, top: 8, boost: 11, accel: 6, reach: 3.8, seats: 1 },
 };
+// the tank's cannon: a shell that blows up buildings; its tracks plough through walls
+export const TANK = { dmg: 340, cd: 2.4, speed: 70, radius: 6.5 };
 export const RAM = { minSpeed: 7, dmgPerMs: 10.5, cooldown: 0.6 };      // running people over
 export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle
 export const VEH_BOOM = { radius: 7.5, dmg: 275 };                     // a wrecked vehicle explodes

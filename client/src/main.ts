@@ -7,6 +7,9 @@ import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Game3D, RARITY_CSS } from './game3d.ts';
+import { renderArsenal, renderSkins } from './arsenal.ts';
+import { STATIONS, radio } from './radio.ts';
+import { voice } from './voice.ts';
 import { World } from '../../shared/src/world.ts';
 import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
@@ -34,6 +37,32 @@ const flyCanvas = $<HTMLCanvasElement>('flyCanvas');
 const flyover = new Game3D(flyCanvas, $<HTMLDivElement>('flyTags'), true);
 flyover.setRoom(20261008, [], -1);
 flyover.ink.setQuality(0.75);
+// the arsenal pictures are drawn once, when the page is idle
+const idle = (window as unknown as { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback ?? ((f: () => void) => setTimeout(f, 300));
+idle(() => renderArsenal($('arsenal')));
+// the radio: off -> station 1 -> 2 -> 3 -> off in the lobby; in a vehicle it comes on by itself
+radio.onChange = (name, tag) => {
+  setHTML($('radioBtn'), `📻 <span>${esc(name)}</span>`);
+  if (state.screen === 'game') hint(`📻 ${name} · ${tag}   (N next · M off)`, 3200);
+};
+$('radioBtn').onclick = () => {
+  sfx.unlock();
+  if (!radio.on) { radio.muted = false; radio.play(0); }
+  else if (radio.station < STATIONS.length - 1) radio.nextStation();
+  else { radio.stop(); radio.muted = true; setHTML($('radioBtn'), '📻 <span>radio off</span>'); }
+};
+addEventListener('keyup', (e) => { if (e.code === 'KeyV') void voice.talk(false); });
+addEventListener('keydown', (e) => {
+  if (state.screen !== 'game') return;
+  if (e.code === 'KeyV' && !e.repeat) void voice.talk(true);
+  if (e.code === 'KeyU' && voice.active) { voice.setDeaf(!voice.deaf); hint(voice.deaf ? 'squad voice muted (U)' : 'squad voice on', 1500); }
+  if (e.code === 'KeyN' && radio.on) radio.nextStation();
+  if (e.code === 'KeyM') { radio.muted = !radio.muted; if (radio.muted) { radio.stop(); hint('📻 radio off (M to turn it back on)', 1800); } }
+});
+// the character you drop in as (remembered between visits)
+let mySkin = 0;
+try { mySkin = Math.max(0, Math.min(4, Number(localStorage.getItem('skin')) || 0)); } catch { /* private window */ }
+setTimeout(() => renderSkins($('skinList'), mySkin, (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } }), 50);
 let flyVisible = true;
 try { new IntersectionObserver((e) => { flyVisible = e[0].isIntersecting; }).observe(flyCanvas); } catch { /* old browser: always draw */ }
 const input = new FpsInput(canvas);
@@ -105,7 +134,7 @@ $('connectBtn').onclick = async () => {
 const touchOnly = () => matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 $('playBtn').onclick = () => {
   if (touchOnly()) return err('King of the Hill Royale needs a mouse and keyboard. Open it on a computer.');
-  net.send({ t: 'queue', mode: state.mode, party: state.mode === 'solo' ? undefined : state.party || undefined });
+  net.send({ t: 'queue', mode: state.mode, party: state.mode === 'solo' ? undefined : state.party || undefined, skin: mySkin });
   $('queueInfo').textContent = `Finding a ${MODES[state.mode].name.toLowerCase()} room…`;
 };
 
@@ -181,7 +210,7 @@ $('roomList').addEventListener('click', (e) => {
   if (!id) return;
   if (!state.authed) return err('Connect a wallet or join as a guest first.');
   if (touchOnly()) return err('King of the Hill Royale needs a mouse and keyboard. Open it on a computer.');
-  net.send({ t: 'queue', room: id, party: state.party || undefined }); $('queueInfo').textContent = 'Joining that room…';
+  net.send({ t: 'queue', room: id, party: state.party || undefined, skin: mySkin }); $('queueInfo').textContent = 'Joining that room…';
 });
 
 // ---------- ticker: fees coming in, wins, rooms starting ----------
@@ -193,7 +222,7 @@ function ticker(html: string) {
 }
 ticker('<span>the hill is open · <b>solo, duos & squads</b></span>');
 ticker('<span class="gold">golden pencil cases hold <b>the SCAR & the Heavy Sniper</b></span>');
-$('leaveBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); $('queueInfo').textContent = ''; };
+$('leaveBtn').onclick = () => { voice.stop(); net.send({ t: 'leave' }); show('lobby'); $('queueInfo').textContent = ''; };
 
 // ---------- lobby ----------
 const marks = (n: number) => '<i></i>'.repeat(Math.min(Math.ceil(n / 50), 15));
@@ -366,9 +395,9 @@ function drawMinimap() {
   // vehicles near you, and supply drops anywhere
   for (const v of game.vehiclesNow) {
     mini.fillStyle = v[8] ? '#d32336' : '#2b2f3a';
-    const s = v[1] === 0 ? 2.5 : 3.5;
-    mini.fillRect(toX(v[2]) - s, toY(v[4]) - s / 2, s * 2, s);
-    if (v[1] > 0) mini.fillRect(toX(v[2]) - s / 2, toY(v[4]) - s, s, s * 2);
+    const s = v[1] === 0 || v[1] === 3 ? 2.5 : 3.5; // aircraft are crosses, ground vehicles bars, a tank a fat block
+    mini.fillRect(toX(v[2]) - s, toY(v[4]) - s / 2, s * 2, v[1] === 4 ? s * 1.6 : s);
+    if (v[1] === 1 || v[1] === 2) mini.fillRect(toX(v[2]) - s / 2, toY(v[4]) - s, s, s * 2);
   }
   for (const d of game.drops) { mini.fillStyle = '#e8a317'; mini.strokeStyle = '#2b2f3a'; mini.lineWidth = 1.5; mini.beginPath(); mini.arc(toX(d.x), toY(d.z), 5, 0, Math.PI * 2); mini.fill(); mini.stroke(); }
   if (game.self && !game.self.alive) {
@@ -435,6 +464,8 @@ net.on((m: ServerMsg) => {
         state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set();
         game.setRoom(m.seed, m.seats, m.you);
         $('feed').innerHTML = '';
+        // squad voice with your teammates (online matches; the demo's teammates are bots)
+        if (!DEMO && m.mode !== 'solo') { voice.start(m.you, [...game.mates], (to, data) => net.send({ t: 'rtc', to, data })); setTimeout(() => hint('hold V to talk to your squad · U mutes them', 3500), 4000); }
         show('game');
         input.yaw = 0; input.pitch = -0.5;
         $('pause').classList.remove('hidden');
@@ -443,6 +474,7 @@ net.on((m: ServerMsg) => {
       }
       break;
     }
+    case 'rtc': void voice.onSignal(m.from, m.data); break;
     case 'snap':
       game.onSnap(m);
       if (m.self && !state.aimed) { input.yaw = m.self.yaw; input.pitch = m.self.pitch; state.aimed = true; }
@@ -469,6 +501,12 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
       if (m.kind === 'vhit') { hitmarker(false); sfx.hit(false); const v = game.vehiclesNow.find((x) => x[0] === m.vehicle); vehicleNumber(v, m.dmg); break; }
       if (m.kind === 'upgrade') { if (m.by === state.you) { hint(`weapon upgraded ${'★'.repeat(m.level)} · +${Math.round(m.level * 22)}% damage`, 2200); sfx.open(true); } break; }
+      if (m.kind === 'wreck') { game.onWreck(m.add, m.kill, m.falls); break; }
+      if (m.kind === 'chop') {
+        const cam = game.ink.camera.position;
+        if (m.by === state.you || Math.hypot(m.x - cam.x, m.z - cam.z) < 40) sfx.chop(m.broke);
+        break;
+      }
       if (m.kind === 'knock') {
         const mineK = m.victim === state.you || m.by === state.you || game.mates.has(m.victim);
         feed(`<span style="color:#c98a00">⬇ ${esc(label(m.victim))}</span> <span class="by">knocked${m.by !== null ? ` by ${esc(label(m.by))}` : ''}</span>`, mineK);
@@ -509,6 +547,7 @@ net.on((m: ServerMsg) => {
         : mine ? `+${mine} points for the pot${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
       if (winners.length) ticker(`<span class="gold">♛ <b>${esc(winners.map((w) => seatOf(w)?.name ?? label(w)).join(' + '))}</b> won a ${MODES[state.roomMode].name.toLowerCase()} match</span>`);
       banner(word, sub, won);
+      voice.stop();
       setTimeout(() => { $('banner').classList.add('hidden'); show('lobby'); }, RESULT_MS);
       break;
     }
@@ -561,7 +600,7 @@ function frame(now: number) {
   if (state.screen === 'game') govern(raw);
   if (state.screen === 'lobby') {
     jar.frame(dt);
-    if (flyVisible) flyover.showcase(dt, flyCanvas.clientWidth, flyCanvas.clientHeight);
+    if (flyVisible) { flyover.showcase(dt, flyCanvas.clientWidth, flyCanvas.clientHeight); setText($('flyCaption'), flyover.caption); }
     if (state.pot) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
@@ -591,7 +630,7 @@ function frame(now: number) {
     game.frame(dt, { yaw: input.yaw, pitch: input.pitch, aim: input.aim });
     const me = game.self;
     if (me) {
-      const w = me.slots[me.cur], def = w ? WEAPONS[w] : null, mag = me.mags[me.cur] ?? 0;
+      const w = me.axe ? null : me.slots[me.cur], def = w ? WEAPONS[w] : null, mag = me.mags[me.cur] ?? 0;
       $('hpFill').style.width = `${(me.hp / PLAYER_HP) * 100}%`;
       setText($('hpNum'), String(me.hp));
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
@@ -602,10 +641,10 @@ function frame(now: number) {
       setText($('ammoMax'), def ? `/${def.mag}` : '');
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
       setHTML($('magTally'), def ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
-      setText($('weapon'), def ? def.name : 'unarmed');
+      setText($('weapon'), me.axe ? 'Axe' : def ? def.name : 'unarmed');
       $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
-      setHTML($('weapons'), me.slots.map((s, i) => s
-        ? `<li class="${i === me.cur ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}${me.ups?.[i] ? `<b class="stars">${'★'.repeat(me.ups[i])}</b>` : ''}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
+      setHTML($('weapons'), `<li class="axe ${me.axe ? 'on' : ''}"><span><kbd>X</kbd> axe</span><em>▦ ${me.mats}</em></li>` + me.slots.map((s, i) => s
+        ? `<li class="${i === me.cur && !me.axe ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}${me.ups?.[i] ? `<b class="stars">${'★'.repeat(me.ups[i])}</b>` : ''}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
         : `<li class="empty"><span>empty</span><em></em></li>`).join(''));
       const shields = me.items.big + me.items.mini;
       setHTML($('items'), `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
@@ -635,8 +674,8 @@ function frame(now: number) {
       setHTML(sq, [...game.mates].map((id) => {
         const down = state.dead.has(id), o = game.infoOf(id), hp = down ? 0 : o ? Math.round((o[6] / PLAYER_HP) * 100) : 100;
         const knocked = !down && !!o && !!(o[7] & OTHER_DOWN);
-        return `<div class="mate ${down ? 'down' : knocked ? 'knocked' : ''}"><span>${esc(seatOf(id)?.name ?? label(id))}</span><div class="bar"><i style="width:${hp}%"></i></div></div>`;
-      }).join(''));
+        return `<div class="mate ${down ? 'down' : knocked ? 'knocked' : ''}"><span>${voice.speaking(id) ? '🔊 ' : ''}${esc(seatOf(id)?.name ?? label(id))}</span><div class="bar"><i style="width:${hp}%"></i></div></div>`;
+      }).join('') + (voice.active ? `<div class="mic ${voice.talking ? 'on' : ''}">${voice.talking ? '🎙 talking' : voice.deaf ? '🔇 squad muted (U)' : '<kbd>V</kbd> talk'}</div>` : ''));
     } else setHTML(sq, '');
     const spec = !!me && !me.alive && !state.over;
     $('specBar').classList.toggle('hidden', !spec);
@@ -648,13 +687,16 @@ function frame(now: number) {
     }
     // driving / flying: vehicle health, speed and what the keys do
     const ride = game.me?.ride ?? 0;
+    if (ride && me?.alive && !radio.muted && !radio.on) radio.play();
+    else if ((!ride || !me?.alive) && radio.on) radio.stop();
     sfx.engine(me?.alive ? ride : 0, Math.hypot(game.me?.vx ?? 0, game.me?.vz ?? 0));
     $('vehHud').classList.toggle('hidden', !ride || !me?.alive);
     if (ride && me) {
       const kind = VEHICLE_KINDS[ride - 1], def = VEHICLES[kind], hpPct = Math.max(0, Math.min(100, (me.vhp / def.hp) * 100));
       const kmh = Math.round(Math.hypot(game.me!.vx, game.me!.vy, game.me!.vz) * 3.6);
       setHTML($('vehHud'), `<div class="veh-name">${def.name}<b>${kmh}<small> km/h</small></b></div><div class="bar veh"><div style="width:${hpPct}%" class="${hpPct < 30 ? 'low' : ''}"></div></div>`
-        + `<div class="veh-keys">${game.me!.seat ? '<b>passenger</b> · <kbd>LMB</kbd> shoot out of it · <kbd>G</kbd> throw · <kbd>E</kbd> hop off' : kind === 'car' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
+        + `<div class="veh-keys">${game.me!.seat ? '<b>passenger</b> · <kbd>LMB</kbd> shoot out of it · <kbd>G</kbd> throw · <kbd>E</kbd> hop off' : kind === 'car' || kind === 'moto' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
+          : kind === 'tank' ? '<kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · drive through walls'
           : kind === 'heli' ? '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up / down · <kbd>Shift</kbd> fast · <kbd>LMB</kbd> nose gun'
           : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'}${game.me!.seat ? '' : ' · <kbd>E</kbd> get out'}</div>`);
     }
