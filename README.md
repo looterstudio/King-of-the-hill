@@ -16,8 +16,16 @@ wins tickets, and the token's trading fees fill one shared pot that pays out to 
   (warehouses with catwalks, a factory with chimneys and tanks), Crumple Junk (car-stack alleys,
   crusher, crane), Eraser Lake (island house, piers, boathouse), Inkwood (forest lookout lodge),
   Tally Farms (barns with haylofts, twin silos), Doodle Drive-In (giant screen with a walkway),
-  Pit Stop (gas station, diner, motel) and Graphite Mine (tunnels through a hill). Every roof,
-  tower and golden case is reachable on foot.
+  Pit Stop (gas station, diner, motel), Graphite Mine (tunnels through a hill) and Paper Plane
+  Field (runway, hangar, control tower). `npm run check:map` walks the whole island with the
+  game's own movement rules and fails on any case or loot spot you can't reach on foot.
+- **Vehicles.** Cars on the roads (run people over, drive-by with your own gun, hop with Space),
+  helicopters on rooftops (a nose gun that aims where you look) and planes at Paper Plane Field
+  (wing guns and bombs). Crashes dent them, bullets and blasts wreck them, a wreck explodes on
+  whoever is near. Driving uses the same client prediction as walking, so it responds instantly.
+- **C4 and supply drops.** C4 sticks where it lands and goes off on the second press: 100 damage
+  inside 2.5 m, your own included, so you survive your charge only with shields up. Every time the
+  storm moves, a balloon crate drops into the next circle with a legendary gun, C4 or a nuke.
 - **Modes.** Solo win = 4 tickets, duo win = 2 each, squad win = 1 each, so every mode is worth the
   same per player on average. Friends type the same **party code** to drop on one team; empty spots
   are filled. No friendly fire; teammates are marked through walls and always on the minimap.
@@ -59,8 +67,8 @@ npm run loadtest -- --bots 2000     # bot swarm against a running server
 ```
 
 Measured on the production bundle, one process with 3 match workers (4 vCPU container),
-line-of-sight culling on: **1000 bots in ten full 100-player matches (solo, duos and squads),
-4–6 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
+line-of-sight culling and vehicles on: **1000 bots in ten full 100-player matches (solo, duos and
+squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
 
 ## How a round of money moves
 

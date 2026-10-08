@@ -1,8 +1,8 @@
 // Snapshot encoding, shared by the server and the offline demo. Work that is the same for every
 // recipient (rounding, packing) happens once per tick; each recipient then only gets their own
 // full state plus what is near them. Loot and cases go out at most a few times a second.
-import { VIEW_RANGE, WEAPON_IDS } from './constants.ts';
-import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_SLIDE, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
+import { VEHICLES, VEHICLE_KINDS, VIEW_RANGE, WEAPON_IDS } from './constants.ts';
+import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
 import type { PlayerState, Sim } from './sim.ts';
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -13,7 +13,7 @@ const KIND = { weapon: 0, item: 1, perk: 2 } as const;
 
 export interface Frame {
   tick: number; time: number; alive: number; ring: SnapRing; others: Map<number, SnapOther>; shots: number[][];
-  leader: [number, number] | null; fx: SnapFx[]; loot: SnapLoot[]; cases: SnapCase[]; lootVer: number; sim: Sim;
+  leader: [number, number] | null; fx: SnapFx[]; loot: SnapLoot[]; cases: SnapCase[]; lootVer: number; sim: Sim; veh: SnapVehicle[];
 }
 
 export function frame(sim: Sim): Frame {
@@ -23,7 +23,7 @@ export function frame(sim: Sim): Frame {
   for (const p of sim.players.values()) {
     if (p.kills > 0 && p.alive && (!leader || p.kills > leader[1])) leader = [p.id, p.kills];
     if (!p.alive) continue;
-    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0);
+    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0);
     const w = p.slots[p.cur];
     const o = [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), Math.ceil(p.hp), flags, w ? WEAPON_IDS.indexOf(w) : -1];
     if (p.hook) o.push(r1(p.gx), r1(p.gy), r1(p.gz));
@@ -37,14 +37,17 @@ export function frame(sim: Sim): Frame {
   ];
   return {
     sim, tick: sim.tick, time: r2(sim.t), alive: sim.alive, others, shots, leader, fx, lootVer: sim.lootVer,
+    veh: sim.vehicles.map((v): SnapVehicle => [v.id, VEHICLE_KINDS.indexOf(v.kind), r2(v.body.x), r2(v.body.y), r2(v.body.z), r2(v.body.head), r2(v.body.vpitch), Math.max(1, Math.round((v.hp / VEHICLES[v.kind].hp) * 100)), v.driver]),
     loot: sim.loot.map((l): SnapLoot => [l.id, r1(l.x), r1(l.y), r1(l.z), KIND[l.kind], l.what, l.n]),
-    cases: sim.cases.map((c): SnapCase => [c.id, r1(c.x), r1(c.y), r1(c.z), c.golden ? 1 : 0, c.open ? 1 : 0]),
+    cases: sim.cases.map((c): SnapCase => [c.id, r1(c.x), r1(c.y), r1(c.z), c.supply ? 2 : c.golden ? 1 : 0, c.open ? 1 : 0]),
     ring: { x: r1(g.x), y: r1(g.y), r: r1(g.r), nx: r1(g.nx), ny: r1(g.ny), nr: r1(g.nr), closing: g.closing, nextIn: Math.max(0, Math.ceil(g.nextAt - sim.t)), phase: g.phase },
   };
 }
 
-function selfOf(p: PlayerState): SnapSelf {
+function selfOf(p: PlayerState, sim: Sim): SnapSelf {
+  const v = p.rideV ? sim.vehicles.find((x) => x.id === p.rideV) : null;
   return {
+    ride: p.ride, head: p.head, vpitch: p.vpitch, spd: p.spd, vhp: v ? Math.max(0, Math.round(v.hp)) : 0,
     x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, grounded: p.grounded, gliding: p.gliding,
     airJumps: p.airJumps, wallX: p.wallX, wallZ: p.wallZ, wallT: Math.min(p.wallT, 9), slideT: p.slideT, dashT: p.dashT, dashX: p.dashX, dashZ: p.dashZ,
     dashReady: p.dashReady, hook: p.hook, gx: p.gx, gy: p.gy, gz: p.gz, hookCd: p.hookCd, launchT: p.launchT,
@@ -76,7 +79,7 @@ export function snapFor(f: Frame, recipient: number, watch: number, viewer: View
   const others: SnapOther[] = [];
   for (const [id, o] of f.others) if (id !== recipient && !opts?.hide?.has(id) && (opts?.keep?.has(id) || near(o[1], o[3], VIEW_RANGE))) others.push(o);
   const msg: Snap = {
-    t: 'snap', tick: f.tick, time: f.time, alive: f.alive, ring: f.ring, self: me ? selfOf(me) : null, others, leader: f.leader, watch,
+    t: 'snap', tick: f.tick, time: f.time, alive: f.alive, ring: f.ring, self: me ? selfOf(me, f.sim) : null, others, leader: f.leader, watch, veh: f.veh,
     shots: f.shots.filter((s) => near(s[0], s[2], VIEW_RANGE)),
     fx: f.fx.filter((e) => e[0] === 'nuke' || near(e[2], e[4], VIEW_RANGE)),
   };
@@ -104,7 +107,7 @@ export function frameJson(f: Frame): FrameJson {
     fx: f.fx.map((e) => JSON.stringify(e)),
     loot: f.loot.map((l) => JSON.stringify(l)),
     cases: f.cases.map((c) => JSON.stringify(c)),
-    head: `{"t":"snap","tick":${f.tick},"time":${f.time},"alive":${f.alive},"ring":${JSON.stringify(f.ring)},"leader":${JSON.stringify(f.leader)}`,
+    head: `{"t":"snap","tick":${f.tick},"time":${f.time},"alive":${f.alive},"ring":${JSON.stringify(f.ring)},"leader":${JSON.stringify(f.leader)},"veh":${JSON.stringify(f.veh)}`,
   };
 }
 
@@ -118,7 +121,7 @@ export function snapJsonFor(f: Frame, j: FrameJson, recipient: number, watch: nu
   f.shots.forEach((s, i) => { if (near(s[0], s[2], VIEW_RANGE)) shots.push(j.shots[i]); });
   const fx: string[] = [];
   f.fx.forEach((e, i) => { if (e[0] === 'nuke' || near(e[2], e[4], VIEW_RANGE)) fx.push(j.fx[i]); });
-  let out = `${j.head},"watch":${watch},"self":${me ? JSON.stringify(selfOf(me)) : 'null'},"others":[${others.join(',')}],"shots":[${shots.join(',')}],"fx":[${fx.join(',')}]`;
+  let out = `${j.head},"watch":${watch},"self":${me ? JSON.stringify(selfOf(me, f.sim)) : 'null'},"others":[${others.join(',')}],"shots":[${shots.join(',')}],"fx":[${fx.join(',')}]`;
   const moved = f.time - viewer.lootAt;
   if ((viewer.lootVer !== f.lootVer && moved > 0.3) || moved > 1) {
     const loot: string[] = [], cases: string[] = [];

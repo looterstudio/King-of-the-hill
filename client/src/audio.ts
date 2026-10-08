@@ -19,6 +19,24 @@ class Sfx {
     } catch { this.ctx = null; }
   }
 
+  // a continuous engine for whatever you drive: pitch follows speed, off when on foot (ride 0)
+  private eng: { osc: OscillatorNode; sub: OscillatorNode; gain: GainNode } | null = null;
+  engine(ride: number, speed: number) {
+    const c = this.ctx;
+    if (!c || !this.master) return;
+    if (!ride) { if (this.eng) { this.eng.gain.gain.setTargetAtTime(0, c.currentTime, 0.1); } return; }
+    if (!this.eng) {
+      const osc = c.createOscillator(), sub = c.createOscillator(), gain = c.createGain(), lp = c.createBiquadFilter();
+      osc.type = 'sawtooth'; sub.type = 'square'; lp.type = 'lowpass'; lp.frequency.value = 900; gain.gain.value = 0;
+      osc.connect(lp); sub.connect(lp); lp.connect(gain); gain.connect(this.master); osc.start(); sub.start();
+      this.eng = { osc, sub, gain };
+    }
+    const base = ride === 1 ? 45 : ride === 2 ? 28 : 70, t = c.currentTime;
+    this.eng.osc.frequency.setTargetAtTime(base + speed * (ride === 3 ? 3 : 4), t, 0.08);
+    this.eng.sub.frequency.setTargetAtTime((base + speed * 2) / 2 + (ride === 2 ? Math.sin(t * 40) * 6 : 0), t, 0.05);
+    this.eng.gain.gain.setTargetAtTime(ride === 2 ? 0.06 : 0.045, t, 0.15);
+  }
+
   private env(g: GainNode, t: number, peak: number, decay: number) {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(peak, t + 0.005);

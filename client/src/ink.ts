@@ -109,6 +109,11 @@ void main() {
     if (id > 2.5 && id < 3.5) col = mix(col, vec3(1.0, 0.82, 0.45), 0.55 * fade);
     if (id > 0.5 && id < 1.5) col = mix(col, vec3(1.0, 0.80, 0.80), 0.6 * fade);
     if (id > 3.5 && id < 4.5) col = mix(col, vec3(0.80, 0.93, 0.78), 0.6 * fade);
+    // light fills for the other inks too, so every object reads as a shape against the paper
+    if (id < 0.5) col = mix(col, vec3(0.84, 0.88, 0.99), 0.5 * fade);
+    if (id > 1.5 && id < 2.5) col = mix(col, vec3(0.85, 0.85, 0.87), 0.45 * fade);
+    if (id > 4.5 && id < 5.5) col = mix(col, vec3(0.99, 0.84, 0.92), 0.55 * fade);
+    if (id > 5.5 && id < 6.5) col = mix(col, vec3(0.93, 0.85, 0.74), 0.6 * fade);
     // hatching in the shadows, screen-space, two directions when it gets dark
     if (id < 6.5) {
       float s = b.r;
@@ -181,6 +186,8 @@ export class InkRenderer {
   camera: THREE.PerspectiveCamera;
   viewCamera: THREE.PerspectiveCamera;
   private rt: THREE.WebGLRenderTarget;
+  private basePr = 1;
+  quality = 1; // render scale chosen by the frame-time governor (0.55 .. 1)
   private post: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private postScene = new THREE.Scene();
   private postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -188,9 +195,11 @@ export class InkRenderer {
   private lightView = new THREE.Vector3();
   materials: THREE.ShaderMaterial[] = [];
 
-  constructor(public canvas: HTMLCanvasElement) {
+  // fit: size to the canvas element (a framed view in the lobby) instead of the whole window
+  constructor(public canvas: HTMLCanvasElement, private fit = false) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1));
+    this.basePr = Math.min(1.5, devicePixelRatio || 1);
     this.renderer.autoClear = false;
     this.camera = new THREE.PerspectiveCamera(78, 1, 0.15, 700);
     this.viewCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
@@ -227,8 +236,17 @@ export class InkRenderer {
     return m;
   }
 
+  // lower the internal resolution when frames run long, raise it again when there is headroom
+  setQuality(q: number) {
+    q = Math.max(0.55, Math.min(1, q));
+    if (Math.abs(q - this.quality) < 0.01) return;
+    this.quality = q;
+    this.renderer.setPixelRatio(this.basePr * q);
+    this.resize();
+  }
+
   resize() {
-    const w = innerWidth, h = innerHeight, pr = this.renderer.getPixelRatio();
+    const w = this.fit ? Math.max(2, this.canvas.clientWidth) : innerWidth, h = this.fit ? Math.max(2, this.canvas.clientHeight) : innerHeight, pr = this.renderer.getPixelRatio();
     this.renderer.setSize(w, h, false);
     this.rt.setSize(Math.floor(w * pr), Math.floor(h * pr));
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();

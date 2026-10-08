@@ -90,6 +90,7 @@ export class FpsInput {
       sprint: !!(k('ShiftLeft') || k('ShiftRight')),
       grapple: !!k('KeyQ'),
       jump: this.latched.jump, slide: this.latched.slide, reload: this.latched.reload, slot: this.latched.slot,
+      up: k('Space') - (k('KeyC') || k('ControlLeft') ? 1 : 0), // held: helicopter climb / descend
       interact: this.latched.interact, perk: this.latched.perk, item: this.latched.item,
       fire: this.fire, aim: this.aim, yaw: this.yaw, pitch: this.pitch,
     };

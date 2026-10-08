@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { ITEMS, MAP_HALF, MODES, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { ITEMS, MAP_HALF, MODES, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
 import { loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
@@ -15,6 +15,9 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
 const fmtSol = (v: number) => `◎ ${v.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
 const hms = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return [s / 3600, (s % 3600) / 60, s % 60].map((v) => String(Math.floor(v)).padStart(2, '0')).join(':'); };
+// only touch the DOM when the markup really changed (the HUD rebuilds strings every frame)
+const setHTML = (el: HTMLElement, html: string) => { if ((el as HTMLElement & { _h?: string })._h !== html) { (el as HTMLElement & { _h?: string })._h = html; el.innerHTML = html; } };
+const setText = (el: HTMLElement, t: string) => { if (el.textContent !== t) el.textContent = t; };
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 // a hand-drawn loop around banner words
 const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidden="true"><path d="M150 8 C 250 6, 296 34, 290 62 C 284 98, 210 114, 140 112 C 60 110, 6 92, 8 58 C 10 26, 70 8, 168 12"/></svg>';
@@ -26,6 +29,13 @@ const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: false
 const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false, crown: true });
 const canvas = $<HTMLCanvasElement>('arena');
 const game = new Game3D(canvas, $<HTMLDivElement>('tags'));
+// the lobby's live view of the island (its own renderer, drawn only while the lobby is open)
+const flyCanvas = $<HTMLCanvasElement>('flyCanvas');
+const flyover = new Game3D(flyCanvas, $<HTMLDivElement>('flyTags'), true);
+flyover.setRoom(20261008, [], -1);
+flyover.ink.setQuality(0.75);
+let flyVisible = true;
+try { new IntersectionObserver((e) => { flyVisible = e[0].isIntersecting; }).observe(flyCanvas); } catch { /* old browser: always draw */ }
 const input = new FpsInput(canvas);
 // headless test runs can't take pointer lock; #autotest pretends it was granted (demo build only)
 if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input }; }
@@ -62,8 +72,8 @@ function show(s: Screen) {
   $('waiting').classList.toggle('hidden', s !== 'waiting');
   $('hud').classList.toggle('hidden', s !== 'game');
   canvas.style.visibility = s === 'game' ? 'visible' : 'hidden';
-  if (s !== 'game') { input.unlock(); $('pause').classList.add('hidden'); }
-  if (s === 'lobby') { jar.resize(); updatePlay(); }
+  if (s !== 'game') { input.unlock(); $('pause').classList.add('hidden'); sfx.engine(0, 0); }
+  if (s === 'lobby') { jar.resize(); flyover.ink.resize(); updatePlay(); }
 }
 
 function err(msg: string) { $('error').textContent = msg; if (msg) setTimeout(() => { if ($('error').textContent === msg) $('error').textContent = ''; }, 5000); }
@@ -241,6 +251,15 @@ function damageNumber(victim: number, dmg: number, head: boolean, shield = false
     setTimeout(() => el.remove(), 900);
   }, 40);
 }
+function vehicleNumber(v: number[] | undefined, dmg: number) {
+  const at = v ? game.screenAt(v[2], v[3] + 2, v[4]) : null;
+  const el = document.createElement('div');
+  el.className = 'dmgnum vehicle';
+  el.textContent = String(dmg);
+  el.style.left = `${(at?.x ?? innerWidth / 2 + 40) + (Math.random() - 0.5) * 30}px`; el.style.top = `${at?.y ?? innerHeight / 2 - 40}px`;
+  $('tags').appendChild(el);
+  setTimeout(() => el.remove(), 900);
+}
 function hitmarker(head: boolean, kill = false) {
   const el = $('hitmarker'); el.classList.toggle('head', head); el.classList.toggle('kill', kill); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
@@ -307,10 +326,18 @@ function drawPreview(seed: number) {
 
 // ---------- minimap ----------
 const mini = $<HTMLCanvasElement>('minimap').getContext('2d')!;
+const islandLayer = document.createElement('canvas');
+let islandFor: World | null = null;
 function drawMinimap() {
   const S = 170, k = S / (MAP_HALF * 2), toX = (x: number) => (x + MAP_HALF) * k, toY = (z: number) => (z + MAP_HALF) * k;
   mini.clearRect(0, 0, S, S);
-  if (game.world) drawIsland(mini, game.world, S, false);
+  // the island itself never changes during a match: draw it once, then just copy it
+  if (game.world && islandFor !== game.world) {
+    islandFor = game.world;
+    islandLayer.width = S; islandLayer.height = S;
+    drawIsland(islandLayer.getContext('2d')!, game.world, S, false);
+  }
+  if (game.world) mini.drawImage(islandLayer, 0, 0);
   const g = game.ring;
   mini.strokeStyle = '#d32336'; mini.lineWidth = 2;
   mini.beginPath(); mini.arc(toX(g.x), toY(g.y), Math.max(0.5, g.r * k), 0, Math.PI * 2); mini.stroke();
@@ -321,6 +348,14 @@ function drawMinimap() {
     mini.fillStyle = '#13897f'; mini.strokeStyle = '#fffdf5'; mini.lineWidth = 1.5;
     mini.beginPath(); mini.arc(toX(o[1]), toY(o[3]), 4, 0, Math.PI * 2); mini.fill(); mini.stroke();
   }
+  // vehicles near you, and supply drops anywhere
+  for (const v of game.vehiclesNow) {
+    mini.fillStyle = v[8] ? '#d32336' : '#2b2f3a';
+    const s = v[1] === 0 ? 2.5 : 3.5;
+    mini.fillRect(toX(v[2]) - s, toY(v[4]) - s / 2, s * 2, s);
+    if (v[1] > 0) mini.fillRect(toX(v[2]) - s / 2, toY(v[4]) - s, s, s * 2);
+  }
+  for (const d of game.drops) { mini.fillStyle = '#e8a317'; mini.strokeStyle = '#2b2f3a'; mini.lineWidth = 1.5; mini.beginPath(); mini.arc(toX(d.x), toY(d.z), 5, 0, Math.PI * 2); mini.fill(); mini.stroke(); }
   if (game.self && !game.self.alive) {
     const cam = game.ink.camera.position;
     mini.strokeStyle = '#d32336'; mini.lineWidth = 2; mini.beginPath(); mini.arc(toX(cam.x), toY(cam.z), 5, 0, Math.PI * 2); mini.stroke();
@@ -418,11 +453,16 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'unbuild') { game.onUnbuild(m.id); break; }
       if (m.kind === 'nuke') { sfx.siren(); feed(`<b style="color:var(--red)">☢ ${esc(label(m.by))} launched an atomic bomb</b>`, m.by === state.you); break; }
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
+      if (m.kind === 'vhit') { hitmarker(false); sfx.hit(false); const v = game.vehiclesNow.find((x) => x[0] === m.vehicle); vehicleNumber(v, m.dmg); break; }
+      if (m.kind === 'drop') {
+        if (!m.landed) { feed('<b style="color:#c98a00">📦 supply drop incoming</b> · legendary inside', false); hint('supply drop incoming: legendary loot, find the balloon', 2600); sfx.siren(); }
+        break;
+      }
       if (m.by === state.you && m.victim !== state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); hitmarker(m.head, true); }
       state.dead.add(m.victim);
       const mine = m.victim === state.you || m.by === state.you || game.mates.has(m.victim) || (m.by !== null && game.mates.has(m.by));
-      const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : label(m.by);
-      feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : ''}${esc(how)}</span>`, mine);
+      const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : m.by === null ? 'a wreck' : label(m.by);
+      feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : m.cause === 'ram' ? 'run over by ' : m.cause === 'boom' ? 'blown up by ' : ''}${esc(how)}</span>`, mine);
       if (m.victim === state.you) {
         const mates = matesAlive();
         game.watch = mates[0] ?? m.by;
@@ -477,10 +517,22 @@ addEventListener('keydown', (e) => {
 // ---------- frame loop ----------
 let last = performance.now();
 let miniT = 0;
+// frame-time governor: if frames run long, render fewer pixels; win them back when it is smooth
+let perfT = 0, perfN = 0;
+function govern(dt: number) {
+  perfT += dt; perfN++;
+  if (perfT < 1.5) return;
+  const avg = (perfT / perfN) * 1000;
+  perfT = 0; perfN = 0;
+  if (avg > 21) game.ink.setQuality(game.ink.quality - 0.1);
+  else if (avg < 14) game.ink.setQuality(game.ink.quality + 0.05);
+}
 function frame(now: number) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
+  if (state.screen === 'game') govern(raw);
   if (state.screen === 'lobby') {
     jar.frame(dt);
+    if (flyVisible) flyover.showcase(dt, flyCanvas.clientWidth, flyCanvas.clientHeight);
     if (state.pot) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
@@ -503,28 +555,28 @@ function frame(now: number) {
     if (me) {
       const w = me.slots[me.cur], def = w ? WEAPONS[w] : null, mag = me.mags[me.cur] ?? 0;
       $('hpFill').style.width = `${(me.hp / PLAYER_HP) * 100}%`;
-      $('hpNum').textContent = String(me.hp);
+      setText($('hpNum'), String(me.hp));
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
-      $('shNum').textContent = String(me.shield);
+      setText($('shNum'), String(me.shield));
       document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 30);
       for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
-      $('ammo').textContent = def ? String(mag) : '–';
-      $('ammoMax').textContent = def ? `/${def.mag}` : '';
+      setText($('ammo'), def ? String(mag) : '–');
+      setText($('ammoMax'), def ? `/${def.mag}` : '');
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
-      $('magTally').innerHTML = def ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '';
-      $('weapon').textContent = def ? def.name : 'unarmed';
+      setHTML($('magTally'), def ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
+      setText($('weapon'), def ? def.name : 'unarmed');
       $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
-      $('weapons').innerHTML = me.slots.map((s, i) => s
+      setHTML($('weapons'), me.slots.map((s, i) => s
         ? `<li class="${i === me.cur ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
-        : `<li class="empty"><span>empty</span><em></em></li>`).join('');
+        : `<li class="empty"><span>empty</span><em></em></li>`).join(''));
       const shields = me.items.big + me.items.mini;
-      $('items').innerHTML = `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
+      setHTML($('items'), `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
         + `<span class="${me.items.med ? '' : 'empty'}"><kbd>6</kbd> medkit ×${me.items.med}</span>`
-        + `<span class="${me.perk ? '' : 'empty'}" style="${me.perk ? `color:${RARITY_CSS[PERKS[me.perk.kind].rarity]}` : ''}"><kbd>G</kbd> ${me.perk ? `${PERKS[me.perk.kind].name} ×${me.perk.n}` : 'no perk'}</span>`;
+        + `<span class="${me.perk ? '' : 'empty'}" style="${me.perk ? `color:${RARITY_CSS[PERKS[me.perk.kind].rarity]}` : ''}"><kbd>G</kbd> ${me.perk ? `${PERKS[me.perk.kind].name} ×${me.perk.n}` : 'no perk'}</span>`);
       $('useBar').classList.toggle('hidden', !me.use);
-      if (me.use) { const total = ITEMS[me.use.item].use; $('useLabel').textContent = ITEMS[me.use.item].name; $('useFill').style.width = `${(1 - me.use.t / total) * 100}%`; }
-      $('prompt').innerHTML = game.prompt;
-      $('killCount').textContent = String(me.kills);
+      if (me.use) { const total = ITEMS[me.use.item].use; setText($('useLabel'), ITEMS[me.use.item].name); $('useFill').style.width = `${(1 - me.use.t / total) * 100}%`; }
+      setHTML($('prompt'), game.prompt);
+      setText($('killCount'), String(me.kills));
       const body = game.me;
       const scoped = input.aim && (w === 'heavy' || w === 'hunting') && me.alive;
       const spread = body && w ? spreadFor(body, w, input.aim) : 0.02;
@@ -536,29 +588,41 @@ function frame(now: number) {
     // teammates: name + health, struck out when they go down
     const sq = $('squad');
     if (game.mates.size) {
-      sq.innerHTML = [...game.mates].map((id) => {
+      setHTML(sq, [...game.mates].map((id) => {
         const down = state.dead.has(id), o = game.infoOf(id), hp = down ? 0 : o ? o[6] : 100;
         return `<div class="mate ${down ? 'down' : ''}"><span>${esc(seatOf(id)?.name ?? label(id))}</span><div class="bar"><i style="width:${hp}%"></i></div></div>`;
-      }).join('');
-    } else if (sq.innerHTML) sq.innerHTML = '';
+      }).join(''));
+    } else setHTML(sq, '');
     const spec = !!me && !me.alive && !state.over;
     $('specBar').classList.toggle('hidden', !spec);
     if (spec) {
       const solo = !matesAlive().length;
       const who = game.free ? 'free camera' : game.watch !== null ? `${esc(label(game.watch))}${seatOf(game.watch)?.name ? ` <span style="font-weight:600">${esc(seatOf(game.watch)!.name)}</span>` : ''}` : '…';
-      $('specBar').innerHTML = `<div class="who-watch"><small>${game.free ? 'flying' : 'spectating'}</small>${who}</div>`
-        + `<div class="keys"><kbd>LMB</kbd> next · <kbd>RMB</kbd> previous${solo ? ` · <kbd>F</kbd> ${game.free ? 'back to players' : 'free camera'}${game.free ? ' · <kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up/down' : ''}` : ' · teammates only while one is alive'}</div>`;
+      setHTML($('specBar'), `<div class="who-watch"><small>${game.free ? 'flying' : 'spectating'}</small>${who}</div>`
+        + `<div class="keys"><kbd>LMB</kbd> next · <kbd>RMB</kbd> previous${solo ? ` · <kbd>F</kbd> ${game.free ? 'back to players' : 'free camera'}${game.free ? ' · <kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up/down' : ''}` : ' · teammates only while one is alive'}</div>`);
+    }
+    // driving / flying: vehicle health, speed and what the keys do
+    const ride = game.me?.ride ?? 0;
+    sfx.engine(me?.alive ? ride : 0, Math.hypot(game.me?.vx ?? 0, game.me?.vz ?? 0));
+    $('vehHud').classList.toggle('hidden', !ride || !me?.alive);
+    if (ride && me) {
+      const kind = VEHICLE_KINDS[ride - 1], def = VEHICLES[kind], hpPct = Math.max(0, Math.min(100, (me.vhp / def.hp) * 100));
+      const kmh = Math.round(Math.hypot(game.me!.vx, game.me!.vy, game.me!.vz) * 3.6);
+      setHTML($('vehHud'), `<div class="veh-name">${def.name}<b>${kmh}<small> km/h</small></b></div><div class="bar veh"><div style="width:${hpPct}%" class="${hpPct < 30 ? 'low' : ''}"></div></div>`
+        + `<div class="veh-keys">${kind === 'car' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
+          : kind === 'heli' ? '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up / down · <kbd>Shift</kbd> fast · <kbd>LMB</kbd> nose gun'
+          : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'} · <kbd>E</kbd> get out</div>`);
     }
     const nk = game.nukes[0];
     $('nukeWarn').classList.toggle('hidden', !nk);
-    if (nk) $('nukeWarn').textContent = `☢ ATOMIC BOMB INCOMING · ${Math.ceil(nk.t)}s · get out of the red zone`;
-    $('aliveCount').textContent = String(game.alive);
+    if (nk) setText($('nukeWarn'), `☢ ATOMIC BOMB INCOMING · ${Math.ceil(nk.t)}s · get out of the red zone`);
+    setText($('aliveCount'), String(game.alive));
     const L = game.leader;
-    $('leader').innerHTML = L ? `<span class="crown">♛</span> kill leader <b>${L[0] === state.you ? 'you' : esc(label(L[0]))}</b> · ${L[1]}` : '';
+    setHTML($('leader'), L ? `<span class="crown">♛</span> kill leader <b>${L[0] === state.you ? 'you' : esc(label(L[0]))}</b> · ${L[1]}` : '');
     const g = game.ring, st = $('storm');
     st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
-    if (state.pot) $('miniPot').textContent = fmtSol(sol(state.pot.lamports));
+    if (state.pot) setText($('miniPot'), fmtSol(sol(state.pot.lamports)));
     if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); }
     miniJar.frame(dt);
   }

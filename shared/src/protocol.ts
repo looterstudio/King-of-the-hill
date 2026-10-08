@@ -33,15 +33,17 @@ export interface SnapSelf extends Body {
   slots: (WeaponId | null)[]; mags: number[]; cur: number;
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
-  reloadT: number; spin: number; ack: number; kills: number;
+  reloadT: number; spin: number; ack: number; kills: number; vhp: number; // vhp: your vehicle's health, 0 on foot
 }
 // everyone else within VIEW_RANGE, compact: [id, x, y, z, yaw, pitch, hp, flags, weaponIdx, gx?, gy?, gz?]
 // flags: 1 alive, 2 sliding, 4 grappling (anchor appended), 8 gliding, 16 healing; weaponIdx into WEAPON_IDS, -1 none
 export type SnapOther = number[];
-export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16;
+export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32;
+// vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0]
+export type SnapVehicle = number[];
 // loot on the floor near you: [id, x, y, z, kind (0 weapon, 1 item, 2 perk), what, n]
 export type SnapLoot = [number, number, number, number, number, string, number];
-// pencil cases near you: [id, x, y, z, golden 0/1, open 0/1]
+// pencil cases near you: [id, x, y, z, golden 0/1 (2 = supply drop), open 0/1]
 export type SnapCase = [number, number, number, number, number, number];
 // grenades, smoke, launch pads, incoming nukes: [kind, id, x, y, z, secondsLeft]
 export type SnapFx = [string, number, number, number, number, number];
@@ -63,8 +65,10 @@ export type ServerMsg =
   | { t: 'queued'; position: number }
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number; mode: Mode }
   | { t: 'lobby'; rooms: LobbyRoom[] }
-  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; watch: number; fx: SnapFx[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
-  | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom'; left: number; head: boolean }
+  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; watch: number; fx: SnapFx[]; veh: SnapVehicle[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
+  | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom' | 'ram'; left: number; head: boolean }
+  | { t: 'event'; kind: 'vhit'; vehicle: number; by: number; dmg: number }
+  | { t: 'event'; kind: 'drop'; x: number; z: number; landed: boolean }
   | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { t: 'event'; kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
   | { t: 'event'; kind: 'build'; id: number; boxes: Box[] }

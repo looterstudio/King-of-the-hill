@@ -87,6 +87,8 @@ export function buildItem(what: string, ink: InkRenderer): THREE.Group {
     g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.12, 12), orange).translateY(0.06), box(0.1, 0.02, 0.4, blue, 0, 0.13, 0));
   } else if (what === 'fort') {
     g.add(box(0.36, 0.22, 0.18, ink.material(INK_IDS.BROWN), 0, 0.11, 0), box(0.36, 0.22, 0.18, ink.material(INK_IDS.BROWN), 0.04, 0.33, 0.02));
+  } else if (what === 'c4') {
+    g.add(box(0.34, 0.12, 0.22, ink.material(INK_IDS.BROWN), 0, 0.06, 0), box(0.12, 0.05, 0.14, dark, 0.06, 0.14, 0), box(0.02, 0.1, 0.02, red, -0.1, 0.17, 0.05));
   } else if (what === 'nuke') {
     g.add(tube(0.11, 0.6, dark, 0, 0.3, 0).rotateX(Math.PI / 2), new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 10), red).translateY(0.71), box(0.32, 0.02, 0.12, orange, 0, 0.06, 0), box(0.12, 0.02, 0.32, orange, 0, 0.06, 0));
   }
@@ -125,6 +127,49 @@ export function buildNukeMarker(ink: InkRenderer): THREE.Group {
   for (const r of [0, Math.PI / 2]) { const fin = box(2.6, 1.2, 0.1, ink.material(INK_IDS.ORANGE), 0, 2.4, 0); fin.rotation.y = r; missile.add(fin); }
   missile.name = 'missile';
   g.add(missile);
+  return g;
+}
+
+// ---------------- vehicles (modelled facing -z, origin on the ground) ----------------
+export interface VehicleModel { root: THREE.Group; spin: THREE.Object3D[]; kind: number }
+const wheel = (m: Mat, x: number, z: number) => { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.3, 12).rotateZ(Math.PI / 2), m); w.position.set(x, 0.42, z); w.name = 'wheel'; return w; };
+export function buildVehicle(ink: InkRenderer, kind: number, seed: number): VehicleModel {
+  const root = new THREE.Group(), spin: THREE.Object3D[] = [];
+  const dark = ink.material(INK_IDS.GRAPHITE), paper = ink.material(INK_IDS.PAPER), blue = ink.material(INK_IDS.BLUE), orange = ink.material(INK_IDS.ORANGE);
+  const paint = ink.material([INK_IDS.RED, INK_IDS.BLUE, INK_IDS.GREEN, INK_IDS.ORANGE, INK_IDS.PINK][seed % 5]);
+  if (kind === 0) { // car: a boxy hatchback with a roll bar (drive-by friendly) and big wheels
+    root.add(box(2.1, 0.6, 4.2, paint, 0, 0.75, 0), box(1.9, 0.12, 1.2, dark, 0, 1.12, -1.4)); // body, bonnet stripe
+    root.add(box(1.9, 0.5, 1.5, paint, 0, 1.3, 0.55), box(1.8, 0.42, 0.06, paper, 0, 1.32, -0.24)); // cabin, windscreen
+    root.add(box(1.7, 0.08, 0.08, dark, 0, 1.6, 1.25), box(0.3, 0.2, 0.1, ink.material(INK_IDS.RED), 0.75, 0.9, 2.12), box(0.3, 0.2, 0.1, ink.material(INK_IDS.RED), -0.75, 0.9, 2.12));
+    root.add(box(0.36, 0.18, 0.08, orange, 0.7, 0.85, -2.12), box(0.36, 0.18, 0.08, orange, -0.7, 0.85, -2.12)); // headlights
+    for (const [x, z] of [[-1.05, -1.35], [1.05, -1.35], [-1.05, 1.35], [1.05, 1.35]]) root.add(wheel(dark, x, z));
+  } else if (kind === 1) { // helicopter: bubble cabin, tail boom, skids, main and tail rotors
+    const cabin = new THREE.Mesh(new THREE.SphereGeometry(1.35, 14, 10), paint); cabin.scale.set(1, 0.85, 1.35); cabin.position.y = 1.5; root.add(cabin);
+    root.add(box(1.6, 0.5, 0.06, paper, 0, 1.75, -1.55)); // windscreen
+    root.add(box(0.4, 0.4, 3.6, paint, 0, 1.75, 2.8), box(0.08, 1.0, 0.6, paint, 0, 2.2, 4.5)); // tail boom, fin
+    for (const x of [-0.9, 0.9]) { root.add(box(0.1, 0.1, 3, dark, x, 0.08, 0)); root.add(box(0.08, 0.6, 0.08, dark, x, 0.4, -0.7), box(0.08, 0.6, 0.08, dark, x, 0.4, 0.7)); }
+    root.add(box(0.2, 0.4, 0.2, dark, 0, 2.7, 0), box(0.12, 0.12, 0.7, dark, 0, 1.2, -1.9)); // mast, nose gun
+    const rotor = new THREE.Group(); rotor.position.y = 2.95; rotor.add(box(8.5, 0.05, 0.35, dark), box(0.35, 0.05, 8.5, dark)); rotor.name = 'rotor'; root.add(rotor); spin.push(rotor);
+    const tail = new THREE.Group(); tail.position.set(0.3, 2.2, 4.6); tail.add(box(0.05, 1.6, 0.18, dark)); tail.name = 'tail'; root.add(tail); spin.push(tail);
+  } else { // plane: a paper-plane-ish prop fighter
+    root.add(box(1.1, 1.0, 5.6, paint, 0, 1.3, 0), box(9.5, 0.12, 1.6, paper, 0, 1.25, -0.3)); // fuselage, wings
+    root.add(box(3.4, 0.1, 0.9, paper, 0, 1.6, 2.5), box(0.1, 1.1, 0.9, paint, 0, 2.2, 2.5)); // tail plane, fin
+    root.add(box(0.8, 0.45, 1.2, blue, 0, 1.95, -0.4)); // canopy
+    for (const x of [-1.6, 1.6]) root.add(box(0.1, 0.8, 0.1, dark, x, 0.45, -0.6), wheel(dark, x, -0.6));
+    root.add(wheel(dark, 0, 2.4)); root.getObjectByName('wheel')!.scale.setScalar(0.7);
+    for (const x of [-3.2, 3.2]) root.add(box(0.1, 0.12, 0.6, ink.material(INK_IDS.RED), x, 1.3, -0.9)); // wing guns
+    const prop = new THREE.Group(); prop.position.set(0, 1.3, -2.95); prop.add(box(2.6, 0.22, 0.06, dark), box(0.22, 2.6, 0.06, dark)); prop.name = 'prop'; root.add(prop); spin.push(prop);
+  }
+  return { root, spin, kind };
+}
+
+// a supply crate hanging under a striped balloon
+export function buildSupply(ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group();
+  g.add(box(1.6, 1.2, 1.6, ink.material(INK_IDS.ORANGE), 0, 0.6, 0), box(1.65, 0.15, 1.65, ink.material(INK_IDS.BLUE), 0, 0.95, 0), box(0.15, 1.25, 1.65, ink.material(INK_IDS.BLUE), 0, 0.6, 0));
+  for (const [x, z] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) g.add(box(0.04, 3.2, 0.04, ink.material(INK_IDS.GRAPHITE), x * 0.8, 2.8, z * 0.8));
+  const balloon = new THREE.Mesh(new THREE.SphereGeometry(2.2, 14, 10), ink.material(INK_IDS.RED)); balloon.position.y = 6.2; balloon.scale.y = 1.15; g.add(balloon);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(2.25, 0.18, 6, 24).rotateX(Math.PI / 2), ink.material(INK_IDS.PAPER)); band.position.y = 6.2; g.add(band);
   return g;
 }
 

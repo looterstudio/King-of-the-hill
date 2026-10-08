@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test server/test/*.test.ts",
     "loadtest": "tsx server/scripts/loadtest.ts",
-    "build:server": "node scripts/build-server.mjs"
+    "build:server": "node scripts/build-server.mjs",
+    "check:map": "tsx scripts/check-map.ts"
   },
   "dependencies": {
     "@types/three": "^0.169.0",

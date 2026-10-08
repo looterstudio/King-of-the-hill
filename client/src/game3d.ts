@@ -3,18 +3,18 @@
 // server, interpolates everyone else 100 ms in the past, and draws it all through InkRenderer:
 // players, loot, pencil cases, grenades, smoke, pads, forts and incoming nukes.
 import * as THREE from 'three';
-import { EYE_H, INTERACT_R, ITEMS, NUKE, PERKS, TICK_HZ, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_SLIDE, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { EYE_H, INTERACT_R, ITEMS, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { OTHER_ALIVE, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildCase, buildFigure, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, poseFigure, type Figure } from './models.ts';
+import { buildCase, buildFigure, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, poseFigure, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
-const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT'] as const;
+const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
 export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PINK, legendary: INK_IDS.ORANGE };
@@ -42,6 +42,9 @@ export class Game3D {
   leader: [number, number] | null = null;
   prompt = '';                     // "E · open pencil case" etc.
   nukes: { x: number; z: number; t: number }[] = [];
+  drops: { x: number; z: number }[] = [];        // supply drops falling or landed (for the minimap)
+  vehiclesNow: SnapVehicle[] = [];                 // interpolated, for the HUD and minimap
+  private vmodels = new Map<number, VehicleModel>();
   private worldGroup = new THREE.Group();
   private pred: Body | null = null;
   private prevPos = new THREE.Vector3();
@@ -69,8 +72,8 @@ export class Game3D {
   private tagLayer: HTMLDivElement;
   private poiTags: HTMLDivElement[] = [];
 
-  constructor(canvas: HTMLCanvasElement, tagLayer: HTMLDivElement) {
-    this.ink = new InkRenderer(canvas);
+  constructor(canvas: HTMLCanvasElement, tagLayer: HTMLDivElement, fit = false) {
+    this.ink = new InkRenderer(canvas, fit);
     this.tagLayer = tagLayer;
     this.ink.scene.add(this.worldGroup);
     const lines = (n: number, color?: number) => {
@@ -103,6 +106,8 @@ export class Game3D {
     for (const b of this.builds.values()) for (const m of b.meshes) this.ink.scene.remove(m);
     for (const b of this.booms) this.ink.scene.remove(b.m);
     this.loot.clear(); this.cases.clear(); this.fx.clear(); this.builds.clear(); this.booms = [];
+    for (const m of this.vmodels.values()) this.ink.scene.remove(m.root);
+    this.vmodels.clear(); this.drops = []; this.vehiclesNow = [];
     this.buildWorld(new World(seed)); // always fresh: forts from the last match must not linger
   }
 
@@ -281,16 +286,20 @@ export class Game3D {
     const keep = new Set(list.map((f) => f[1]));
     for (const [id, v] of this.fx) if (!keep.has(id)) { this.ink.scene.remove(v.g); this.fx.delete(id); }
     this.nukes = [];
+    this.drops = [];
     for (const f of list) {
       const [kind, id, x, y, z, t] = f;
       let v = this.fx.get(id);
       if (!v) {
-        const g = kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink) : kind === 'pad' ? buildPad(this.ink) : buildNukeMarker(this.ink);
+        const g = kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink)
+          : kind === 'pad' ? buildPad(this.ink) : kind === 'c4' ? buildItem('c4', this.ink) : kind === 'bomb' ? buildItem('nuke', this.ink) : kind === 'drop' ? buildSupply(this.ink) : buildNukeMarker(this.ink);
         this.ink.scene.add(g);
         v = { g, kind };
         this.fx.set(id, v);
       }
       v.g.position.set(x, y, z);
+      if (kind === 'drop') { this.drops.push({ x, z }); v.g.rotation.y += 0.02; }
+      if (kind === 'bomb') v.g.rotation.x = Math.PI;
       if (kind === 'nuke') {
         this.nukes.push({ x, z, t });
         const missile = v.g.getObjectByName('missile');
@@ -309,7 +318,7 @@ export class Game3D {
     this.syncFx(s.fx);
     const heard = new Set<number>();
     for (const sh of s.shots) {
-      if (sh[6] === this.you) continue; // our own shots were already drawn when we pulled the trigger
+      if (sh[6] === this.you && !((this.pred?.ride ?? 0) >= 2)) continue; // our own gunshots were drawn when we pulled the trigger
       this.tracers.push({ start: new THREE.Vector3(sh[0], sh[1] - 0.15, sh[2]), end: new THREE.Vector3(sh[3], sh[4], sh[5]), life: 0.12, mine: false });
       if (!heard.has(sh[6])) { // one bang per shooter per snapshot (shotgun pellets are one shot)
         heard.add(sh[6]);
@@ -340,7 +349,7 @@ export class Game3D {
   get weapon(): WeaponId | null { return this.self ? this.self.slots[this.self.cur] : null; }
 
   // called at 30 Hz with sampled controls; returns the input to send (or null)
-  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean }): Input | null {
+  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean; up: number }): Input | null {
     if (!this.world || !this.self || !this.self.alive || !this.pred) return null;
     let slot = c.slot;
     if (slot < 0) { // wheel: cycle through filled slots
@@ -350,7 +359,7 @@ export class Game3D {
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
     if (c.reload && this.self.reloadT === 0) sfx.reload();
-    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk };
+    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
     this.lastTickAt = performance.now() / 1000;
@@ -359,7 +368,7 @@ export class Game3D {
     // cosmetic: kick the gun and draw our tracer right away
     this.localCd = Math.max(0, this.localCd - DT);
     const w = this.weapon;
-    if (w && c.fire && this.localCd === 0 && this.self.mags[this.self.cur] > 0 && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use) {
+    if (w && c.fire && this.localCd === 0 && this.self.mags[this.self.cur] > 0 && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use && this.pred.ride <= 1) {
       const def = WEAPONS[w];
       if (!def.spinUp || this.self.spin >= def.spinUp - 0.05) {
         this.localCd = def.burst ? def.cd + 0.15 : def.cd;
@@ -398,10 +407,97 @@ export class Game3D {
     return { others: out, tick: Math.round(a.s.tick + (b.s.tick - a.s.tick) * k) };
   }
 
+  // place names: visible from up high (the drop, rooftops, the tower, the lobby flyover)
+  private placeNames(W: number, H: number) {
+    if (!this.world) return;
+    const cam = this.ink.camera, v = new THREE.Vector3(), high = cam.position.y > 22;
+    this.world.pois.forEach((p, i) => {
+      const el = this.poiTags[i];
+      if (!el) return;
+      v.set(p.x, 14, p.z).project(cam);
+      const d = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
+      if (high && v.z < 1 && d > 25 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1) {
+        el.style.display = 'block';
+        el.style.transform = `translate(${((v.x + 1) / 2) * W}px, ${((1 - v.y) / 2) * H}px) translate(-50%, -50%)`;
+      } else el.style.display = 'none';
+    });
+  }
+
+  // the lobby's live view of the island: a slow orbit around the tower, vehicles parked where they
+  // spawn, one helicopter on patrol, rotors and props turning
+  showcase(dt: number, W: number, H: number) {
+    if (!this.world) return;
+    this.time += dt;
+    if (!this.vmodels.size) this.world.vehicleSpots.forEach((s, i) => {
+      const m = buildVehicle(this.ink, VEHICLE_KINDS.indexOf(s.kind), i + 3);
+      m.root.position.set(s.x, s.y, s.z); m.root.rotation.y = s.head;
+      this.ink.scene.add(m.root); this.vmodels.set(-1 - i, m);
+    });
+    const cam = this.ink.camera, a = this.time * 0.05;
+    cam.position.set(Math.cos(a) * 165, 78 + Math.sin(this.time * 0.13) * 12, Math.sin(a) * 165);
+    cam.lookAt(Math.cos(a + 0.6) * 25, 6, Math.sin(a + 0.6) * 25);
+    if (cam.fov !== 58) { cam.fov = 58; cam.updateProjectionMatrix(); }
+    const patrol = -1 - this.world.vehicleSpots.findIndex((s) => s.kind === 'heli');
+    for (const [id, m] of this.vmodels) {
+      if (id === patrol) { const t = this.time * 0.25; m.root.position.set(Math.cos(t) * 60, 42 + Math.sin(t * 2) * 6, Math.sin(t) * 60); m.root.rotation.set(-0.15, -t, 0.2, 'YXZ'); }
+      for (const s of m.spin) { if (s.name === 'rotor') s.rotation.y += dt * 24; else if (s.name === 'tail') s.rotation.x += dt * 30; else if (s.name === 'prop') s.rotation.z += dt * 10; }
+    }
+    this.placeNames(W, H);
+    this.ink.setStorm(0, 0, 9999, 0, 0, 0);
+    this.ink.render(this.time);
+  }
+
+  // vehicles: interpolated like players; the one you drive sits exactly where your prediction is
+  private drawVehicles(dt: number) {
+    const out: SnapVehicle[] = [];
+    if (this.snaps.length) {
+      const last = this.snaps[this.snaps.length - 1], now = performance.now() / 1000, rt = last.s.time + (now - last.at) - INTERP;
+      let a = this.snaps[0], b = last;
+      for (let i = 0; i < this.snaps.length - 1; i++) if (this.snaps[i].s.time <= rt && this.snaps[i + 1].s.time >= rt) { a = this.snaps[i]; b = this.snaps[i + 1]; break; }
+      const span = b.s.time - a.s.time, k = span > 0 ? Math.min(1, Math.max(0, (rt - a.s.time) / span)) : 1;
+      const prev = new Map((a.s.veh ?? []).map((v) => [v[0], v]));
+      for (const vb of b.s.veh ?? []) {
+        const va = prev.get(vb[0]) ?? vb, v = vb.slice();
+        for (const j of [2, 3, 4, 6]) v[j] = va[j] + (vb[j] - va[j]) * k;
+        let dh = vb[5] - va[5]; while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
+        v[5] = va[5] + dh * k;
+        out.push(v);
+      }
+    }
+    const mine = this.pred?.ride && this.self?.alive ? out.find((v) => v[8] === this.you) : null;
+    if (mine && this.pred) { const k = Math.min(1, (performance.now() / 1000 - this.lastTickAt) / DT); const p = this.prevPos.clone().lerp(new THREE.Vector3(this.pred.x, this.pred.y, this.pred.z), k).add(this.offset); mine[2] = p.x; mine[3] = p.y; mine[4] = p.z; mine[5] = this.pred.head; mine[6] = this.pred.vpitch; }
+    this.vehiclesNow = out;
+    const seen = new Set<number>();
+    for (const v of out) {
+      seen.add(v[0]);
+      let m = this.vmodels.get(v[0]);
+      if (!m) { m = buildVehicle(this.ink, v[1], v[0]); this.ink.scene.add(m.root); this.vmodels.set(v[0], m); }
+      m.root.position.set(v[2], v[3], v[4]);
+      // planes bank into turns, helicopters lean with their pitch
+      let roll = 0;
+      if (v[1] === 2 && m.root.userData.lastHead !== undefined) {
+        let dh = v[5] - m.root.userData.lastHead; while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
+        roll = Math.max(-0.7, Math.min(0.7, (dh / Math.max(dt, 1e-3)) * 0.45));
+      }
+      m.root.userData.lastHead = v[5];
+      m.root.userData.roll = (m.root.userData.roll ?? 0) + (roll - (m.root.userData.roll ?? 0)) * Math.min(1, dt * 5);
+      m.root.rotation.set(v[6], v[5], m.root.userData.roll, 'YXZ');
+      for (const s of m.spin) { if (s.name === 'rotor') s.rotation.y += dt * (v[8] ? 28 : 2); else if (s.name === 'tail') s.rotation.x += dt * (v[8] ? 40 : 3); else if (s.name === 'prop') s.rotation.z += dt * (v[8] ? 45 : 1); }
+    }
+    for (const [id, m] of this.vmodels) if (!seen.has(id)) { this.ink.scene.remove(m.root); this.vmodels.delete(id); }
+  }
+
   private updatePrompt() {
     this.prompt = '';
     const p = this.pred, me = this.self;
     if (!p || !me?.alive || p.gliding) return;
+    if (p.ride) return; // the vehicle panel shows how to get out
+    for (const v of this.vehiclesNow) {
+      const def = VEHICLES[VEHICLE_KINDS[v[1]]];
+      if (!v[8] && Math.hypot(v[2] - p.x, v[4] - p.z) < def.reach && Math.abs(v[3] - p.y) < 2.5) {
+        this.prompt = `E · ${v[1] === 0 ? 'drive the car' : v[1] === 1 ? 'fly the helicopter' : 'fly the plane'}`;
+      }
+    }
     let best = INTERACT_R, text = '';
     for (const c of this.cases.values()) {
       if (c.d[5] || Math.abs(c.d[2] - p.y) > 1.6) continue;
@@ -417,7 +513,7 @@ export class Game3D {
         text = `E · ${full ? 'swap for' : 'pick up'} ${WEAPONS[l.d[5] as WeaponId].name} <i style="color:${RARITY_CSS[WEAPONS[l.d[5] as WeaponId].rarity]}">${WEAPONS[l.d[5] as WeaponId].rarity}</i>`;
       }
     }
-    this.prompt = text;
+    if (text) this.prompt = text;
   }
 
   // ---------------- frame ----------------
@@ -436,8 +532,20 @@ export class Game3D {
       const crouch = this.pred.slideT > 0 ? -0.6 : 0;
       const speed = Math.hypot(this.pred.vx, this.pred.vz);
       if (this.pred.grounded && speed > 1) this.bob += dt * speed * (speed > 7.4 ? 2.1 : 1.6);
-      cam.position.copy(pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
-      cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : 0, 'YXZ');
+      if (this.pred.ride) {
+        // third person chase camera, orbiting with the mouse; pulls back with speed
+        const dist = (this.pred.ride === 1 ? 7.5 : 12) + Math.min(6, Math.abs(this.pred.spd) * 0.08), cp = Math.cos(look.pitch);
+        const tgt = pos.clone().add(new THREE.Vector3(0, this.pred.ride === 1 ? 1.8 : 2.4, 0));
+        const back = new THREE.Vector3(Math.sin(look.yaw) * cp, -Math.sin(look.pitch), Math.cos(look.yaw) * cp).multiplyScalar(dist);
+        const eye = tgt.clone().add(back);
+        if (eye.y < tgt.y - 1) eye.y = tgt.y - 1;
+        if (eye.y < 0.5) eye.y = 0.5;
+        cam.position.copy(eye);
+        cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
+      } else {
+        cam.position.copy(pos.add(new THREE.Vector3(0, EYE_H + crouch + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
+        cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : 0, 'YXZ');
+      }
       const w = this.weapon;
       const zoom = look.aim && w ? WEAPONS[w].zoom : 1;
       // speed reads as a wider view: sprinting, sliding, dashing and swinging all open the lens
@@ -462,7 +570,7 @@ export class Game3D {
     const seen = new Set<number>();
     const v = new THREE.Vector3();
     for (const o of others.values()) {
-      if (!(o[7] & OTHER_ALIVE)) continue;
+      if (!(o[7] & OTHER_ALIVE) || o[7] & OTHER_RIDE) continue;
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
@@ -534,11 +642,11 @@ export class Game3D {
     this.tracerGeo.setDrawRange(0, tn * 2);
 
     // first-person gun: sway, bob, recoil, reload dip; hidden while scoped with a sniper, gliding or healing
-    const gliding = !!this.pred?.gliding && !!me?.alive;
+    const gliding = (!!this.pred?.gliding || !!this.pred?.ride) && !!me?.alive;
     const w = this.weapon;
     const scoped = look.aim && (w === 'heavy' || w === 'hunting');
     for (const [id, g] of this.guns) g.visible = !!me?.alive && w === id && !scoped && !gliding && !me.use;
-    if (this.viewChute) { this.viewChute.visible = gliding; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
+    if (this.viewChute) { this.viewChute.visible = gliding && !this.pred?.ride; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
     const g = w ? this.guns.get(w) : null;
     if (g && me && w) {
       this.gunKick = Math.max(0, this.gunKick - dt * 9);
@@ -548,18 +656,9 @@ export class Game3D {
       g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, w === 'minigun' ? 0 : 0);
     }
 
-    // place names: visible from up high (the drop, rooftops, the tower)
-    const high = cam.position.y > 22;
-    this.world.pois.forEach((p, i) => {
-      const el = this.poiTags[i];
-      if (!el) return;
-      v.set(p.x, 14, p.z).project(cam);
-      const d = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
-      if (high && v.z < 1 && d > 25 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1) {
-        el.style.display = 'block';
-        el.style.transform = `translate(${((v.x + 1) / 2) * innerWidth}px, ${((1 - v.y) / 2) * innerHeight}px) translate(-50%, -50%)`;
-      } else el.style.display = 'none';
-    });
+    this.drawVehicles(dt);
+
+    this.placeNames(innerWidth, innerHeight);
     this.updatePrompt();
     // the nearest incoming nuke paints its target on the ground
     const n = this.nukes.sort((a, b) => a.t - b.t)[0];
@@ -570,6 +669,10 @@ export class Game3D {
 
   // screen rotation (0 = straight ahead, clockwise) of a world point, for damage indicators
   bearingTo(x: number, z: number, yaw: number) { if (!this.pred) return 0; return yaw + Math.PI - Math.atan2(x - this.pred.x, z - this.pred.z); }
+  screenAt(x: number, y: number, z: number): { x: number; y: number } | null {
+    const v = new THREE.Vector3(x, y, z).project(this.ink.camera);
+    return v.z < 1 ? { x: ((v.x + 1) / 2) * innerWidth, y: ((1 - v.y) / 2) * innerHeight } : null;
+  }
   screenOf(id: number, head: boolean): { x: number; y: number } | null {
     const a = this.avatars.get(id);
     if (!a || !a.root.visible) return null;

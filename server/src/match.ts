@@ -109,7 +109,8 @@ export class Match {
       } else if (e.kind === 'hit') {
         this.watchdog.hit(e.by, e.head, this.sim.tick);
         out.push({ to: [e.victim, e.by], json: JSON.stringify({ t: 'event', ...e }) }); // only the two involved care
-      } else out.push({ to: 'all', json: JSON.stringify({ t: 'event', ...e }) }); // booms, forts, nukes, opened cases
+      } else if (e.kind === 'vhit') out.push({ to: [e.by], json: JSON.stringify({ t: 'event', ...e }) });
+      else out.push({ to: 'all', json: JSON.stringify({ t: 'event', ...e }) }); // booms, forts, nukes, opened cases, supply drops
     }
   }
 

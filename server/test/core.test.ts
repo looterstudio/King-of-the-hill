@@ -521,3 +521,102 @@ test('no loot floats or sits inside walls: map spots and everything spilled from
   assert.ok(spilled.length > 100);
   for (const l of spilled) assert.ok(!bad(l.x, l.y, l.z), `spilled ${l.what} at ${l.x.toFixed(1)},${l.y},${l.z.toFixed(1)}`);
 });
+
+// ---------------- vehicles, C4, supply drops ----------------
+function garage(kind: 'car' | 'heli' | 'plane', boxes: import('../../shared/src/world.ts').Box[] = []) {
+  const w = World.custom(boxes);
+  w.vehicleSpots = [{ kind, x: 0, y: 0, z: 0, head: 0 }];
+  const sim = new Sim(1, w);
+  // Sim reads vehicleSpots in its constructor; World.custom has none, so add the vehicle by hand
+  if (!sim.vehicles.length) {
+    const b = { ...newBody(0, 0, 0), ride: ['car', 'heli', 'plane'].indexOf(kind) + 1, grounded: true };
+    sim.vehicles.push({ id: 999, kind, hp: ({ car: 500, heli: 650, plane: 350 } as const)[kind], driver: 0, last: 0, body: b, gunCd: 0, bombCd: 0 });
+  }
+  sim.spawn([1, 2]);
+  for (const p of sim.players.values()) { p.y = 0; p.gliding = false; p.grounded = true; }
+  const a = sim.players.get(1)!; a.x = 2; a.z = 0;
+  sim.players.get(2)!.x = 80;
+  return sim;
+}
+const tickN = (sim: Sim, n: number, i: Partial<Input> = {}, id = 1) => { const ev = []; for (let k = 0; k < n; k++) ev.push(...sim.step(DT, new Map([[id, inp(i)]]))); return ev; };
+
+test('get in a car, drive it forward, get out beside it', () => {
+  const sim = garage('car'), a = sim.players.get(1)!;
+  tickN(sim, 1, { interact: true });
+  assert.equal(a.ride, 1);
+  tickN(sim, 60, { fwd: 1, yaw: 0 });
+  assert.ok(a.z < -15, `drove north (z=${a.z.toFixed(1)})`);
+  assert.ok(sim.vehicles[0].body.z < -15, 'the car moved with the driver');
+  tickN(sim, 1, { interact: true });
+  assert.equal(a.ride, 0);
+  assert.ok(Math.hypot(a.x - sim.vehicles[0].body.x, a.z - sim.vehicles[0].body.z) > 1.5, 'stepped out beside it');
+});
+
+test('running someone over hurts them; crashing into a wall at speed dents the car', () => {
+  const sim = garage('car', [{ x0: -20, y0: 0, z0: -60, x1: 20, y1: 6, z1: -59, ink: 1, kind: 'wall' }]);
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  b.x = 0; b.z = -30;
+  tickN(sim, 1, { interact: true });
+  const ev = tickN(sim, 120, { fwd: 1, sprint: true, yaw: 0 });
+  assert.ok(ev.some((e) => e.kind === 'hit' && e.victim === 2 && e.by === 1), 'the pedestrian was hit');
+  assert.ok(b.hp < 100 || !b.alive);
+  assert.ok((sim.vehicles[0]?.hp ?? 0) < 500, 'the wall hurt the car');
+  assert.ok(a.alive);
+});
+
+test('a helicopter climbs and flies; a plane takes off from the runway', () => {
+  const heli = garage('heli'), h = heli.players.get(1)!;
+  tickN(heli, 1, { interact: true });
+  tickN(heli, 60, { up: 1, fwd: 1, yaw: 0 });
+  assert.ok(h.y > 8, `climbed to ${h.y.toFixed(1)}`);
+  assert.ok(h.z < -5, 'and flew forward');
+  const plane = garage('plane'), p = plane.players.get(1)!;
+  tickN(plane, 1, { interact: true });
+  tickN(plane, 150, { fwd: 1, yaw: 0, pitch: 0.3 });
+  assert.ok(p.y > 5, `airborne at ${p.y.toFixed(1)}`);
+  assert.ok(p.z < -60, 'covered ground');
+});
+
+test('shooting a car damages it; destroying it blows up the driver', () => {
+  const sim = garage('car'), a = sim.players.get(1)!, b = sim.players.get(2)!;
+  b.x = 0; b.z = 20; b.slots[0] = 'heavy'; b.mags[0] = 4; b.cur = 0; b.fireCd = 0;
+  tickN(sim, 1, { interact: true });
+  const hp = sim.vehicles[0].hp;
+  const ev = sim.step(DT, new Map([[2, inp({ fire: true, yaw: 0, pitch: -0.02 })]]));
+  assert.ok(sim.vehicles[0].hp < hp, 'the bullet hit the car');
+  assert.ok(ev.some((e) => e.kind === 'vhit'));
+  sim.vehicles[0].hp = 5; b.fireCd = 0; b.reloadT = 0; b.mags[0] = 4;
+  const ev2 = sim.step(DT, new Map([[2, inp({ fire: true, yaw: 0, pitch: -0.02 })]]));
+  assert.equal(sim.vehicles.length, 0, 'wrecked');
+  assert.ok(ev2.some((e) => e.kind === 'boom'));
+  assert.equal(a.ride, 0);
+  assert.ok(a.hp < 100 || !a.alive, 'the driver took the blast');
+});
+
+test('C4: your own charge takes 100 off health, but shields save you', () => {
+  for (const [shield, survives] of [[0, false], [100, true]] as const) {
+    const sim = arena([1, 2]), a = sim.players.get(1)!;
+    a.x = 0; a.z = 0; a.shield = shield; a.perk = { kind: 'c4', n: 2 };
+    sim.step(DT, new Map([[1, inp({ perk: true, pitch: -1.2 })]])); // throw it at your feet
+    for (let i = 0; i < 30; i++) sim.step(DT, new Map());
+    assert.ok(sim.projectiles.some((g) => g.kind === 'c4' && g.stuck), 'the charge stuck');
+    sim.step(DT, new Map([[1, inp({ perk: true })]])); // set it off
+    assert.equal(a.alive, survives, `shield ${shield}`);
+  }
+});
+
+test('supply drops fall into the next circle and land as a supply case full of legendary loot', () => {
+  const sim = new Sim(4321);
+  sim.spawn([1]);
+  let landed = false;
+  for (let i = 0; i < 30 * 90 && !landed; i++) landed = sim.step(DT, new Map()).some((e) => e.kind === 'drop' && e.landed);
+  assert.ok(landed, 'a drop landed in the first 90 s');
+  const c = sim.cases.find((x) => x.supply)!;
+  const p = sim.players.get(1)!;
+  Object.assign(p, { x: c.x, y: c.y, z: c.z + 1.2, gliding: false });
+  const before = new Set(sim.loot.map((l) => l.id));
+  (sim as unknown as { interact(p: unknown, ev: unknown[]): void }).interact(p, []);
+  const got = sim.loot.filter((l) => !before.has(l.id));
+  assert.ok(got.some((l) => l.kind === 'weapon' && WEAPONS[l.what as WeaponId].rarity === 'legendary'));
+  assert.ok(got.some((l) => l.kind === 'perk' && (l.what === 'c4' || l.what === 'nuke')));
+});

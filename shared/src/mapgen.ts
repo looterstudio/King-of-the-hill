@@ -5,7 +5,7 @@
 // lodge, farms, a drive-in, a motel stop and a mine with tunnels.
 // Buildings are hollow shells: walls with door and window openings, floors with a stairwell, and
 // stairs that alternate sides each floor, so every level of everything is reachable on foot.
-import { MAP_HALF } from './constants.ts';
+import { MAP_HALF, type VehicleKind } from './constants.ts';
 import { rng } from './rng.ts';
 import type { Box, World } from './world.ts';
 
@@ -15,11 +15,12 @@ export interface Spot { x: number; y: number; z: number; golden?: boolean }
 
 type Side = 'n' | 's' | 'e' | 'w';
 const SIDES: Side[] = ['n', 's', 'e', 'w'];
+const OPP: Record<Side, Side> = { n: 's', s: 'n', e: 'w', w: 'e' };
 const T = 0.3;            // wall thickness
 const SLAB = 0.25;        // floor thickness
 const RISE = 0.5, RUN = 0.6;
 
-interface ShellOpts { fh?: number; ink?: number; doors?: Side[]; windows?: boolean; roofAccess?: boolean; bigDoor?: number; cases?: number; golden?: boolean; base?: number; parapet?: boolean }
+interface ShellOpts { doorPos?: number; fh?: number; ink?: number; doors?: Side[]; windows?: boolean; roofAccess?: boolean; bigDoor?: number; cases?: number; golden?: boolean; base?: number; parapet?: boolean }
 
 export function generate(w: World, seed: number) {
   const r = rng(seed);
@@ -68,6 +69,20 @@ export function generate(w: World, seed: number) {
 
   const shell = (x0: number, z0: number, wd: number, dp: number, floors: number, o: ShellOpts = {}) => {
     const fh = o.fh ?? 3.5, ink = o.ink ?? INK.BLUE, x1 = x0 + wd, z1 = z0 + dp, doors = o.doors ?? ['s'], base = o.base ?? 0;
+    const steps = Math.round(fh / RISE), run = 0.55, len = steps * run, dw = o.bigDoor ?? 1.8;
+    // a stair strip hugging one wall: c0..c1 across the strip, the run from `start`, hole h0..h1
+    const stripGeom = (s: Side) => s === 'w' ? { alongZ: true, c0: x0 + T, c1: x0 + T + 1.4, h0: x0, h1: x0 + T + 1.6, start: z0 + T + 1.2 }
+      : s === 'e' ? { alongZ: true, c0: x1 - T - 1.4, c1: x1 - T, h0: x1 - T - 1.6, h1: x1, start: z0 + T + 1.2 }
+      : s === 'n' ? { alongZ: false, c0: z0 + T, c1: z0 + T + 1.4, h0: z0, h1: z0 + T + 1.6, start: x0 + T + 1.2 }
+      : { alongZ: false, c0: z1 - T - 1.4, c1: z1 - T, h0: z1 - T - 1.6, h1: z1, start: x0 + T + 1.2 };
+    const fits = (s: Side) => {
+      const g = stripGeom(s), end = g.start + len + 0.9, limit = g.alongZ ? z1 - T : x1 - T;
+      if (end > limit) return false;
+      if (!doors.includes(s)) return true;
+      const mid = g.alongZ ? (z0 + z1) / 2 : (x0 + x1) / 2; // that wall's door, centred
+      return mid + dw / 2 + 0.5 < g.start - 0.3 || mid - dw / 2 - 0.5 > end;
+    };
+    const strip: Side = (['w', 'e', 'n', 's'] as Side[]).find(fits) ?? 'w';
     for (let f = 0; f < floors; f++) {
       const y0 = base + f * fh, y1 = y0 + fh;
       for (const side of SIDES) {
@@ -75,33 +90,32 @@ export function generate(w: World, seed: number) {
         const len = alongX ? wd : dp, start = alongX ? x0 : z0;
         const ops: { a: number; b: number; lo: number; hi: number }[] = [];
         const door = f === 0 && doors.includes(side);
-        const dw = o.bigDoor ?? 1.8;
-        if (door) ops.push({ a: start + len / 2 - dw / 2, b: start + len / 2 + dw / 2, lo: 0, hi: Math.min(fh - 0.4, o.bigDoor ? 5 : 2.5) });
+        if (door) ops.push({ a: start + len * (o.doorPos ?? 0.5) - dw / 2, b: start + len * (o.doorPos ?? 0.5) + dw / 2, lo: 0, hi: Math.min(fh - 0.4, o.bigDoor ? 5 : 2.5) });
         if (o.windows !== false && len > 6) for (const k of len > 16 ? [0.15, 0.38, 0.62, 0.85] : [0.22, 0.78]) {
           const c = start + len * k;
-          if (door && Math.abs(c - (start + len / 2)) < dw) continue;
+          if (door && Math.abs(c - (start + len * (o.doorPos ?? 0.5))) < dw + 0.7) continue;
           ops.push({ a: c - 0.7, b: c + 0.7, lo: 1.1, hi: 2.3 });
         }
         const fixed = side === 'n' ? z0 : side === 's' ? z1 : side === 'w' ? x0 : x1;
         wall(alongX, fixed, alongX ? x0 : z0, alongX ? x1 : z1, y0, y1, ops, ink);
       }
-      // stairs up from this floor: west strip on even floors, east strip on odd ones
-      const last = f === floors - 1;
-      if (!last || o.roofAccess) {
-        const steps = Math.round(fh / RISE), run = 0.55, west = f % 2 === 0;
-        const sx0 = west ? x0 + T : x1 - T - 1.4, zs = z0 + T + 1.2;
-        for (let i = 0; i < steps; i++) box(sx0, y0, zs + i * run, sx0 + 1.4, y0 + (i + 1) * (fh / steps), zs + (i + 1) * run, INK.GRAPHITE, 'stair');
+      // stairs up from this floor, in a strip along one wall. The ground floor picks a wall whose
+      // run (and the landing at its top) stays clear of the doors; floors above alternate with the
+      // opposite wall so a flight never stands over the hole you arrive through.
+      const last = f === floors - 1, hasHole = !last || o.roofAccess;
+      const g = stripGeom(f % 2 === 0 ? strip : OPP[strip]);
+      if (hasHole) for (let i = 0; i < steps; i++) {
+        const h = y0 + (i + 1) * (fh / steps), a = g.start + i * run, b = a + run;
+        if (g.alongZ) box(g.c0, y0, a, g.c1, h, b, INK.GRAPHITE, 'stair'); else box(a, y0, g.c0, b, h, g.c1, INK.GRAPHITE, 'stair');
       }
       // the floor above (or the roof), with a hole over this floor's stairs
-      const ys = y1;
-      const holeWest = f % 2 === 0, hasHole = !last || o.roofAccess;
-      const hx0 = holeWest ? x0 : x1 - T - 1.6, hx1 = holeWest ? x0 + T + 1.6 : x1;
-      const hz0 = z0 + T + 1.0, hz1 = z0 + T + 1.2 + Math.round(fh / RISE) * 0.55 + 0.2;
-      if (!hasHole) box(x0, ys - SLAB, z0, x1, ys, z1, ink, 'floor');
+      if (!hasHole) box(x0, y1 - SLAB, z0, x1, y1, z1, ink, 'floor');
       else {
-        box(holeWest ? hx1 : x0, ys - SLAB, z0, holeWest ? x1 : hx0, ys, z1, ink, 'floor');
-        box(hx0, ys - SLAB, z0, hx1, ys, hz0, ink, 'floor');
-        box(hx0, ys - SLAB, hz1, hx1, ys, z1, ink, 'floor');
+        const [hx0, hz0, hx1, hz1] = g.alongZ ? [g.h0, g.start - 0.2, g.h1, g.start + len + 0.2] : [g.start - 0.2, g.h0, g.start + len + 0.2, g.h1];
+        box(x0, y1 - SLAB, z0, x1, y1, hz0, ink, 'floor');
+        box(x0, y1 - SLAB, hz1, x1, y1, z1, ink, 'floor');
+        box(x0, y1 - SLAB, hz0, hx0, y1, hz1, ink, 'floor');
+        box(hx1, y1 - SLAB, hz0, x1, y1, hz1, ink, 'floor');
       }
       // pencil cases and floor loot on this floor, clear of the stair strips
       for (let c = 0; c < (o.cases ?? 1); c++) {
@@ -162,6 +176,9 @@ export function generate(w: World, seed: number) {
     }
   };
   const poi = (name: string, x: number, z: number) => w.pois.push({ name, x, z });
+  // heading: 0 faces -z (north), PI/2 faces -x (west), -PI/2 faces +x (east), PI faces +z
+  const vehicle = (kind: VehicleKind, x: number, z: number, head: number, y = 0) => w.vehicleSpots.push({ kind, x, y, z, head });
+  const N = 0, W = Math.PI / 2, E = -Math.PI / 2, S = Math.PI;
 
   // =====================================================================================
   // CROWN CITY: downtown around the King's Tower. Tall blocks, a plaza, a clock tower.
@@ -192,7 +209,6 @@ export function generate(w: World, seed: number) {
     for (const [dx, dz] of [[-3.5, -3.5], [3, -3.5], [-3.5, 3], [3, 3]]) box(kx + dx, 17.5, kz + dz, kx + dx + 0.5, 20.5, kz + dz + 0.5, INK.BROWN, 'wall');
     box(kx - 4, 20.5, kz - 4, kx + 4, 21, kz + 4, INK.RED, 'floor');
     w.gables.push({ x0: kx - 4, z0: kz - 4, x1: kx + 4, z1: kz + 4, y: 21, h: 3.5, alongX: true });
-    for (let i = 0; i < 7; i++) car(-52 + i * 15, 64 + (i % 2) * 3, true);
     // downtown streets: a square around the plaza
     for (const [a, b, c, d] of [[-62, -64, 62, -64], [62, -64, 62, 62], [62, 62, -62, 62], [-62, 62, -62, -64]]) w.roads.push({ x0: a, z0: b, x1: c, z1: d });
   }
@@ -238,13 +254,15 @@ export function generate(w: World, seed: number) {
     plateau(cx, cz - 2, 46, 32, 4, INK.GREEN, ['s'], 4);
     const y = 8, x0 = cx - 19, x1 = cx + 19, z0 = cz - 14.5, z1 = cz + 10.5;
     // curtain walls with battlements, a gate on the south, arrow slits east and west
-    wall(true, z0, x0, x1, y, y + 3, [], INK.GRAPHITE, 0.6); crenel(true, z0, x0, x1, y + 3, INK.GRAPHITE);
-    wall(true, z1, x0, x1, y, y + 3, [{ a: cx - 2.5, b: cx + 2.5, lo: 0, hi: 3 }], INK.GRAPHITE, 0.6);
-    wall(false, x0, z0, z1, y, y + 3, [{ a: cz - 3, b: cz - 1, lo: 1.2, hi: 2.2 }], INK.GRAPHITE, 0.6); crenel(false, x0, z0, z1, y + 3, INK.GRAPHITE);
-    wall(false, x1, z0, z1, y, y + 3, [{ a: cz - 3, b: cz - 1, lo: 1.2, hi: 2.2 }], INK.GRAPHITE, 0.6); crenel(false, x1, z0, z1, y + 3, INK.GRAPHITE);
+    // the curtain walls run between the corner towers (never through them)
+    const tw = 3.5;
+    wall(true, z0, x0 + tw, x1 - tw, y, y + 3, [], INK.GRAPHITE, 0.6); crenel(true, z0, x0 + tw, x1 - tw, y + 3, INK.GRAPHITE);
+    wall(true, z1, x0 + tw, x1 - tw, y, y + 3, [{ a: cx - 2.5, b: cx + 2.5, lo: 0, hi: 3 }], INK.GRAPHITE, 0.6);
+    wall(false, x0, z0 + tw, z1 - tw, y, y + 3, [{ a: cz - 3, b: cz - 1, lo: 1.2, hi: 2.2 }], INK.GRAPHITE, 0.6); crenel(false, x0, z0 + tw, z1 - tw, y + 3, INK.GRAPHITE);
+    wall(false, x1, z0 + tw, z1 - tw, y, y + 3, [{ a: cz - 3, b: cz - 1, lo: 1.2, hi: 2.2 }], INK.GRAPHITE, 0.6); crenel(false, x1, z0 + tw, z1 - tw, y + 3, INK.GRAPHITE);
     box(cx - 3.5, y + 3, z1 - 0.5, cx + 3.5, y + 4.5, z1 + 0.5, INK.RED, 'wall'); // gate arch
     // corner towers, each a 3-floor shell with battlements on top
-    for (const [tx, tz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) shell(tx - 3.5, tz - 3.5, 7, 7, 3, { base: y, fh: 3.5, ink: INK.GRAPHITE, doors: [tz === z0 ? 's' : 'n'], roofAccess: true, parapet: true, cases: 1 });
+    for (const [tx, tz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) shell(tx - 3.5, tz - 3.5, 7, 7, 3, { base: y, fh: 3.5, ink: INK.GRAPHITE, doors: [tz === z0 ? 's' : 'n'], doorPos: tx === x0 ? 0.8 : 0.2, roofAccess: true, parapet: true, cases: 1 });
     // the keep: three floors, golden case on the roof
     shell(cx - 7, cz - 10, 14, 12, 3, { base: y, fh: 4, ink: INK.PINK, doors: ['s'], roofAccess: true, golden: true, cases: 2, parapet: true });
     for (const dx of [-12, 12]) { crate(cx + dx, cz + 5, y, 1.3, INK.BROWN); crate(cx + dx + 1.5, cz + 5, y, 1.3, INK.BROWN); }
@@ -292,14 +310,14 @@ export function generate(w: World, seed: number) {
     poi('Paper Port', cx, cz);
     w.lakes.push({ x: 232, z: cz, r: 66 });
     // piers
-    for (const pz of [-30, 0, 30]) { box(168, 0, cz + pz - 3, 197, 0.5, cz + pz + 3, INK.BROWN, 'floor'); for (let k = 0; k < 5; k++) pillar(171 + k * 6, cz + pz + 3.2, 1.4, 0.4, INK.BROWN); }
+    for (const pz of [-30, 0, 30]) { box(pz ? 170 : 160, 0, cz + pz - 3, 197, 0.5, cz + pz + 3, INK.BROWN, 'floor'); for (let k = 0; k < 5; k++) pillar(171 + k * 6, cz + pz + 3.2, 1.4, 0.4, INK.BROWN); }
     // the cargo ship moored at the middle pier: hull, deck, containers, a bridge tower at the stern
     const sx0 = 170, sx1 = 192, sz0 = cz + 4, sz1 = cz + 14;
     box(sx0, 0, sz0, sx1, 5, sz1, INK.RED, 'building');
     box(sx1, 0, sz0 + 1.5, sx1 + 4, 5, sz1 - 1.5, INK.RED, 'building'); // bow
     w.roofs.push({ x0: sx0, z0: sz0, x1: sx1 + 4, z1: sz1, y: 5 });
-    box(sx0 + 8, 5, sz1 - 0.3, sx1 + 4, 6, sz1, INK.GRAPHITE, 'wall'); // rail on the sea side
-    for (let i = 0; i < 3; i++) { container(sx0 + 8 + i * 4.5, sz0 + 3, false, 5); if (i !== 1) container(sx0 + 8 + i * 4.5, sz0 + 3, false, 7.6); }
+    box(sx0 + 9, 5, sz1 - 0.3, sx1 + 4, 6, sz1, INK.GRAPHITE, 'wall'); // rail on the sea side
+    for (let i = 0; i < 3; i++) { container(sx0 + 11 + i * 3.8, sz0 + 3.5, false, 5); if (i !== 1) container(sx0 + 11 + i * 3.8, sz0 + 3.5, false, 7.6); }
     shell(sx0 + 0.5, sz0 + 1, 7, 8, 2, { base: 5, fh: 3.5, ink: INK.PAPER, doors: ['e'], roofAccess: true, golden: true });
     stairs(sx0 + 10, sz0, 0.5, 5, 'n', 2, INK.BROWN); // gangway up from the pier
     // lighthouse on a rocky point
@@ -327,8 +345,8 @@ export function generate(w: World, seed: number) {
       const x0 = cx - 44 + i * 28, z0 = cz - 28;
       shell(x0, z0, 22, 15, 1, { fh: 8, ink: INK.GRAPHITE, doors: ['n', 's'], bigDoor: 6, cases: 3, windows: false, roofAccess: true });
       // catwalk along the back wall inside, with its own stairs
-      box(x0 + T, 4, z0 + 11, x0 + 16, 4.25, z0 + 15 - T, INK.ORANGE, 'floor');
-      stairs(x0 + 16, z0 + 13, 0, 4.25, 'e', 1.6, INK.ORANGE);
+      box(x0 + T, 4, z0 + 11, x0 + 22 - T, 4.25, z0 + 15 - T, INK.ORANGE, 'floor');
+      stairs(x0 + 17.8, z0 + 11, 0, 4.25, 'n', 1.6, INK.ORANGE);
       cases({ x: x0 + 8, y: 4.25, z: z0 + 13 });
       crate(x0 + 15, z0 + 3, 0, 1.4); crate(x0 + 16.5, z0 + 3, 0, 1.4); crate(x0 + 15.7, z0 + 3, 1.4, 1.3);
     }
@@ -385,9 +403,9 @@ export function generate(w: World, seed: number) {
     plateau(cx, cz, 24, 24, 0.3, INK.GREEN, []);
     shell(cx - 7, cz - 7, 14, 14, 2, { base: 0.3, doors: ['s', 'n'], ink: INK.BLUE, cases: 2, roofAccess: true, golden: true, parapet: true });
     // piers from the shore toward the island
-    for (const [px, pz, alongX] of [[cx + 12, cz, true], [cx - 30, cz, true], [cx, cz + 12, false], [cx, cz - 30, false]] as const) {
-      if (alongX) box(px, 0, pz - 1.3, px + 18, 0.3, pz + 1.3, INK.BROWN, 'floor');
-      else box(px - 1.3, 0, pz, px + 1.3, 0.3, pz + 18, INK.BROWN, 'floor');
+    for (const [px, pz, alongX] of [[cx + 12, cz, true], [cx - 40, cz, true], [cx, cz + 12, false], [cx, cz - 40, false]] as const) {
+      if (alongX) box(px, 0, pz - 1.3, px + 28, 0.3, pz + 1.3, INK.BROWN, 'floor');
+      else box(px - 1.3, 0, pz, px + 1.3, 0.3, pz + 28, INK.BROWN, 'floor');
     }
     // boathouse on the north shore
     shell(cx - 6, cz - 52, 12, 9, 1, { fh: 4, ink: INK.BROWN, doors: ['s', 'n'], bigDoor: 4, cases: 2 });
@@ -466,6 +484,7 @@ export function generate(w: World, seed: number) {
     w.roofs.push({ x0: cx - 8, z0: cz - 6, x1: cx + 8, z1: cz + 6, y: 5 });
     for (const dx of [-3, 3]) box(cx + dx - 0.5, 0, cz - 0.4, cx + dx + 0.5, 1.6, cz + 0.4, INK.ORANGE, 'crate');
     cases({ x: cx, y: 5, z: cz + 2 });
+    stairs(cx + 8, cz, 0, 5, 'e', 1.4, INK.GRAPHITE); // up onto the canopy
     shell(cx - 24, cz - 4, 12, 9, 1, { doors: ['e'], ink: INK.GREEN, cases: 2, roofAccess: true }); // diner
     // motel: long two-floor block; the upstairs walkway runs along the front, stairs at the end
     const mx = cx - 6, mz = cz + 16;
@@ -498,6 +517,38 @@ export function generate(w: World, seed: number) {
     box(cx + 5.5, h + 9, cz - 8.5, cx + 10.5, h + 9.3, cz - 3.5, INK.BROWN, 'floor');
     shell(cx - 12, cz - 11, 8, 7, 1, { base: h, fh: 3, ink: INK.BROWN, doors: ['s'], cases: 1 });
   }
+
+  // =====================================================================================
+  // PAPER PLANE FIELD (S W): a runway, a hangar, a control tower and the planes
+  // =====================================================================================
+  {
+    const cx = -62, cz = 180;
+    poi('Paper Plane Field', cx, cz);
+    w.roads.push({ x0: -104, z0: 189, x1: -18, z1: 189 }, { x0: -104, z0: 189, x1: -104, z1: 172 });
+    shell(-118, 160, 22, 15, 1, { fh: 7, ink: INK.GRAPHITE, doors: ['s', 'e'], bigDoor: 8, cases: 3, roofAccess: true });
+    gable(-118, 160, -96, 175, 7, 2.5);
+    shell(cx - 6, 164, 7, 7, 4, { fh: 3.5, ink: INK.PAPER, doors: ['s'], roofAccess: true, golden: true, parapet: true });
+    for (const [x, z] of [[-80, 168], [-40, 168], [-30, 168]]) { box(x, 0, z, x + 1.5, 1.5, z + 1.5, INK.ORANGE, 'crate'); }
+    for (let i = 0; i < 12; i++) box(-100 + i * 7, 0, 184.4, -98.5 + i * 7, 0.15, 184.8, INK.PAPER, 'floor'); // runway marks
+    vehicle('plane', -96, 189, E); vehicle('plane', -84, 189, E); vehicle('plane', -107, 167, S);
+    vehicle('car', -88, 178, E);
+  }
+
+  // ---------- vehicles everywhere else: cars on the roads, helicopters on rooftops ----------
+  for (const [x, z, h] of [[62, -20, N], [-62, 20, S], [20, 62, W], [-20, -64, E], [62, 40, N], [-62, -40, S]] as const) vehicle('car', x, z, h);
+  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 + 0.2; vehicle('car', Math.cos(a) * 100, Math.sin(a) * 100, -a); }
+  vehicle('car', -145, -105, N); vehicle('car', -115, -155, E);         // suburbs
+  vehicle('car', 84, -122, E); vehicle('car', 175, -122, W);           // margin mart
+  vehicle('car', 96, -50, N);                                          // drive-in
+  vehicle('car', 80, 54, W); vehicle('car', 44, 80, N);                // pit stop
+  vehicle('car', -78, -40, N);                                         // farms
+  vehicle('car', 126, -4, S); vehicle('car', 64, 104, E);              // port, depot
+  vehicle('car', -40, 132, E); vehicle('car', -60, 30, N);              // junk, mine
+  vehicle('car', 0, -128, N);                                          // castle road
+  vehicle('heli', -10, 10, N, 24);                                     // on the King's Tower
+  vehicle('heli', 141, 6, W, 7);                                       // port warehouse roof
+  vehicle('heli', 5, -153, S, 8);                                      // castle courtyard
+  vehicle('heli', 95, 135, N, 10);                                     // factory roof
 
   // =====================================================================================
   // roads: a ring road, spokes into downtown, and a road out to every place
@@ -565,4 +616,12 @@ export function generate(w: World, seed: number) {
     const x = (r() * 2 - 1) * (MAP_HALF - 8), z = (r() * 2 - 1) * (MAP_HALF - 8);
     if (!inLake(x, z) && free(x - 0.5, z - 0.5, x + 0.5, z + 0.5, 0.3)) w.lootSpots.push({ x, y: 0, z });
   }
+
+  // last pass: props (parked cars, crates, containers) never cut into a building, wall, floor or
+  // stairs; any that would are left out, so no doorway, stairwell or room is ever plugged
+  const STRUCT = new Set<Box['kind']>(['wall', 'stair', 'floor', 'building']);
+  const PROP = new Set<Box['kind']>(['car', 'crate', 'container']);
+  const structural = w.boxes.filter((b) => STRUCT.has(b.kind));
+  const cuts = (p: Box) => structural.some((b) => p.x0 < b.x1 - 0.05 && p.x1 > b.x0 + 0.05 && p.y0 < b.y1 - 0.05 && p.y1 > b.y0 + 0.05 && p.z0 < b.z1 - 0.05 && p.z1 > b.z0 + 0.05);
+  w.boxes = w.boxes.filter((b) => !PROP.has(b.kind) || !cuts(b));
 }

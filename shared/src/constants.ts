@@ -78,12 +78,13 @@ export const ITEMS: Record<ItemId, { name: string; rarity: Rarity; use: number; 
   big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 50, shieldCap: 100 },
   med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 100 },
 };
-export type PerkId = 'grenade' | 'smoke' | 'launch' | 'fort' | 'nuke';
+export type PerkId = 'grenade' | 'smoke' | 'launch' | 'fort' | 'c4' | 'nuke';
 export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number }> = {
   grenade: { name: 'Grenades', rarity: 'uncommon', count: 3 },
   smoke: { name: 'Smoke', rarity: 'uncommon', count: 2 },
   launch: { name: 'Launch Pad', rarity: 'rare', count: 1 },
   fort: { name: 'Instant Fort', rarity: 'epic', count: 1 },
+  c4: { name: 'C4', rarity: 'epic', count: 2 },
   nuke: { name: 'Atomic Bomb', rarity: 'legendary', count: 1 },
 };
 export const SHIELD_MAX = 100;
@@ -93,6 +94,27 @@ export const PAD = { life: 30, launch: 24 };
 export const FORT = { life: 30, size: 2.2, height: 1.8 };
 export const NUKE = { delay: 6, radius: 26, dmg: 400, range: 450 };
 export const INTERACT_R = 2.3;
+// C4: throw it (it sticks where it lands), press again to set it off. Up to 100 damage, walls
+// block it, shields soak it first: with shields up you survive your own charge, without you don't.
+export const C4 = { radius: 7, dmg: 100, speed: 15, core: 2.5 };
+// supply drops: a crate on a balloon falls into the next circle every time the storm moves
+export const SUPPLY = { height: 110, fall: 7 };
+
+// ---- vehicles ----
+// ride code on the body: 0 on foot, 1 car, 2 helicopter, 3 plane
+export type VehicleKind = 'car' | 'heli' | 'plane';
+export const VEHICLE_KINDS: VehicleKind[] = ['car', 'heli', 'plane'];
+export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number; h: number; top: number; boost: number; accel: number; reach: number }> = {
+  car: { name: 'Car', hp: 500, r: 1.25, h: 1.7, top: 24, boost: 34, accel: 16, reach: 3.2 },
+  heli: { name: 'Helicopter', hp: 650, r: 2.3, h: 2.6, top: 25, boost: 32, accel: 14, reach: 4.2 },
+  plane: { name: 'Plane', hp: 350, r: 2.4, h: 1.8, top: 46, boost: 62, accel: 11, reach: 4.6 },
+};
+export const RAM = { minSpeed: 7, dmgPerMs: 4.2, cooldown: 0.6 };      // running people over
+export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle
+export const VEH_BOOM = { radius: 7.5, dmg: 110 };                     // a wrecked vehicle explodes
+export const HELI_GUN = { dmg: 14, cd: 0.09, range: 170, spread: 0.028 };
+export const PLANE_GUN = { dmg: 12, cd: 0.07, range: 200, spread: 0.02 };
+export const BOMB = { radius: 8, dmg: 125, cd: 2.5 };
 
 // economy
 export const EPOCH_MS = 6 * 60 * 60 * 1000; // pot draws every 6h, aligned to 00/06/12/18 UTC

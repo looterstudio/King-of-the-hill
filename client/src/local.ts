@@ -144,6 +144,17 @@ export class LocalNet {
     const inp: Input = { ...emptyInput(), seq: ++b.seq, yaw: self.yaw, pitch: self.pitch };
     const yawTo = (x: number, z: number) => Math.atan2(-(x - self.x), -(z - self.z));
     if (self.gliding) { inp.yaw = yawTo(b.dropX, b.dropZ); inp.fwd = Math.hypot(b.dropX - self.x, b.dropZ - self.z) > 4 ? 1 : 0; return inp; }
+    // driving: head for the circle, swerve into anyone close enough to run over, hop out when there
+    if (self.ride === 1) {
+      const enemy = [...sim.players.values()].find((q) => q.alive && !q.ride && q.team !== self.team && Math.hypot(q.x - self.x, q.z - self.z) < 35);
+      const gx = enemy ? enemy.x : g.nx, gz = enemy ? enemy.z : g.ny;
+      let d = yawTo(gx, gz) - self.head; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+      inp.strafe = Math.max(-1, Math.min(1, -d * 2)); inp.fwd = 1; inp.sprint = !!enemy || Math.abs(d) < 0.4; inp.yaw = self.head;
+      if (self.spd < 2 && Math.random() < 0.02) inp.fwd = -1;
+      if (!enemy && Math.hypot(self.x - g.nx, self.z - g.ny) < g.nr * 0.6) inp.interact = true;
+      return inp;
+    }
+    if (self.ride) { inp.interact = true; return inp; }
 
     // re-pick the nearest enemy a few times a second and check line of sight
     b.losT -= 1 / TICK_HZ;
@@ -169,7 +180,13 @@ export class LocalNet {
     if (!fighting && self.shield < 60 && (self.items.big || self.items.mini) && Math.random() < 0.2) inp.item = 1;
     else if (!fighting && self.hp < 60 && self.items.med && Math.random() < 0.2) inp.item = 2;
 
-    if (!inRing || ((g.closing || g.nextAt - sim.t < 12) && !inNext)) {
+    // far from the circle: grab a car if one is close
+    const car = Math.hypot(self.x - g.nx, self.z - g.ny) > g.nr + 70 && !fighting ? sim.vehicles.find((v) => v.kind === 'car' && !v.driver && Math.hypot(v.body.x - self.x, v.body.z - self.z) < 30) : null;
+    if (car) {
+      const dc = Math.hypot(car.body.x - self.x, car.body.z - self.z);
+      inp.yaw = yawTo(car.body.x, car.body.z); inp.fwd = 1; inp.sprint = true;
+      if (dc < 2.8) inp.interact = true;
+    } else if (!inRing || ((g.closing || g.nextAt - sim.t < 12) && !inNext)) {
       inp.yaw = yawTo(g.nx, g.ny); inp.fwd = 1; inp.sprint = true;
       if (self.perk?.kind === 'launch' && Math.hypot(self.x - g.nx, self.z - g.ny) > g.nr + 40) inp.perk = true; // pad, then run onto it
     } else if (fighting && tgt) {
@@ -233,13 +250,14 @@ export class LocalNet {
     const inputs = new Map<number, Input>();
     const mine = this.queue.shift();
     if (mine) this.last = mine;
-    inputs.set(1, mine ?? { ...this.last, jump: false, slide: false, slot: 0, reload: false });
+    inputs.set(1, mine ?? { ...this.last, jump: false, slide: false, slot: 0, reload: false, interact: false, perk: false, item: 0 });
     for (const b of r.bots) if (sim.players.get(b.id)?.alive) inputs.set(b.id, this.botInput(b, sim));
     for (const e of sim.step(1 / TICK_HZ, inputs)) {
       if (e.kind === 'elim') {
         if (e.victim === 1) this.killer = e.by;
         this.emit({ t: 'event', kind: 'elim', victim: e.victim, by: e.by, cause: e.cause, left: sim.alive, head: e.head });
       } else if (e.kind === 'hit') { if (e.victim === 1 || e.by === 1) this.emit({ t: 'event', ...e }); }
+      else if (e.kind === 'vhit') { if (e.by === 1) this.emit({ t: 'event', ...e }); }
       else this.emit({ t: 'event', ...e } as ServerMsg);
     }
     if (sim.tick % SNAP_EVERY === 0) {

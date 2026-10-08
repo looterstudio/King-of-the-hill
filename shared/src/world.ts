@@ -2,7 +2,7 @@
 // Everything solid is an axis-aligned box, indexed in a 2D grid so collision and raycasts only
 // look at nearby boxes. The same code runs on the server and in the browser, so client-side
 // prediction moves through exactly the world the server simulates.
-import { MAP_HALF, PLAYER_H, PLAYER_R, STEP_H } from './constants.ts';
+import { MAP_HALF, PLAYER_H, PLAYER_R, STEP_H, VEHICLES, type VehicleKind } from './constants.ts';
 import { generate, type Poi, type Spot } from './mapgen.ts';
 
 export { INK } from './mapgen.ts';
@@ -25,6 +25,7 @@ export class World {
   lootSpots: Spot[] = [];
   gables: { x0: number; z0: number; x1: number; z1: number; y: number; h: number; alongX: boolean }[] = []; // visual roofs
   roads: { x0: number; z0: number; x1: number; z1: number }[] = [];
+  vehicleSpots: { kind: VehicleKind; x: number; y: number; z: number; head: number }[] = [];
   private grid: number[][] = Array.from({ length: GRID * GRID }, () => []);
 
   constructor(public seed: number, boxes?: Box[]) {
@@ -43,6 +44,14 @@ export class World {
       if (s && !cases.some((o) => Math.abs(o.y - s.y) < 1 && Math.hypot(o.x - s.x, o.z - s.z) < 1.1)) loot.push(s);
     }
     this.lootSpots = loot;
+    // vehicles park where they fit (nudged off anything they would overlap) and nowhere else
+    const parked: World['vehicleSpots'] = [];
+    for (const v of this.vehicleSpots) {
+      const d = VEHICLES[v.kind];
+      const s = this.settle(v.x, v.y, v.z, d.r + 0.2, d.h);
+      if (s && !parked.some((o) => Math.hypot(o.x - s.x, o.z - s.z) < VEHICLES[o.kind].r + d.r + 1)) parked.push({ ...v, ...s });
+    }
+    this.vehicleSpots = parked;
   }
 
   // anything solid in a small cylinder standing at (x, y, z)?
@@ -103,6 +112,15 @@ export class World {
     const [cx0, cz0] = this.cell(x0, z0), [cx1, cz1] = this.cell(x1, z1);
     for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) for (const i of this.grid[cz * GRID + cx]) if (this.stamp[i] !== v) { this.stamp[i] = v; out.push(i); }
     return out;
+  }
+
+  // the first solid box overlapping a square footprint of half-size r and height h standing at y
+  hitBox(x: number, y: number, z: number, r: number, h: number): Box | null {
+    for (const i of this.near(x - r, z - r, x + r, z + r)) {
+      const b = this.boxes[i];
+      if (!b.dead && x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1 && y + h > b.y0 && y < b.y1) return b;
+    }
+    return null;
   }
 
   overlaps(x: number, y: number, z: number, scratch: number[] = []): Box | null {
@@ -176,12 +194,14 @@ export interface Body {
   airJumps: number; wallX: number; wallZ: number; wallT: number; slideT: number; dashT: number; dashX: number; dashZ: number; dashReady: boolean;
   hook: boolean; gx: number; gy: number; gz: number; hookCd: number;
   launchT: number; // launch pad: fly up first, open the glider at the top
+  ride: number; head: number; vpitch: number; spd: number; // in a vehicle: 1 car, 2 heli, 3 plane; its heading, pitch, speed
 }
-export interface MoveInput { fwd: number; strafe: number; yaw: number; pitch: number; jump: boolean; sprint: boolean; slide: boolean; grapple: boolean }
+export interface MoveInput { fwd: number; strafe: number; yaw: number; pitch: number; jump: boolean; sprint: boolean; slide: boolean; grapple: boolean; up?: number }
 
 export const newBody = (x: number, y: number, z: number): Body => ({
   x, y, z, vx: 0, vy: 0, vz: 0, grounded: false, gliding: false, airJumps: 1, wallX: 0, wallZ: 0, wallT: 99,
   slideT: 0, dashT: 0, dashX: 0, dashZ: 0, dashReady: true, hook: false, gx: 0, gy: 0, gz: 0, hookCd: 0, launchT: 0,
+  ride: 0, head: 0, vpitch: 0, spd: 0,
 });
 
 // gliding: look down to dive (fast fall, fast forward), look up to float and cover distance
