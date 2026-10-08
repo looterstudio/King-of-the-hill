@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Pot Royale</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Oswald:wght@500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+<canvas id="arena"></canvas>
+
+<section id="lobby" class="screen">
+  <header class="top">
+    <div class="brand"><span class="sym">○</span><span class="sym">△</span><span class="sym">□</span> POT ROYALE</div>
+    <div class="stats"><span id="online">0</span> online · <span id="rooms">0</span> rooms</div>
+  </header>
+  <div class="hall">
+    <canvas id="jar"></canvas>
+    <div class="prize">
+      <div class="label">PREMIO ACUMULADO</div>
+      <div id="potAmount" class="amount">◎ 0.000</div>
+      <div class="draw">SORTEO EN <span id="countdown">--:--:--</span></div>
+      <div id="inflowToast" class="toast"></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="who">
+      <span id="me">no conectado</span>
+      <button id="connectBtn" class="btn ghost">Conectar Phantom</button>
+      <input id="guestName" maxlength="14" placeholder="nombre invitado" />
+      <button id="guestBtn" class="btn ghost">Invitado</button>
+    </div>
+    <button id="playBtn" class="btn big" disabled>ENTRAR A UNA SALA</button>
+    <div id="queueInfo" class="muted"></div>
+    <div id="error" class="error"></div>
+  </div>
+  <div class="boards">
+    <div class="board">
+      <h3>Tickets de esta ronda</h3>
+      <ol id="tickets"></ol>
+      <div class="muted small">Cada sala ganada = 1 ticket. El pote se reparte cada 6 horas.</div>
+    </div>
+    <div class="board">
+      <h3>Último sorteo</h3>
+      <div id="lastDraw" class="muted">todavía no hubo sorteo</div>
+    </div>
+  </div>
+</section>
+
+<section id="waiting" class="screen hidden">
+  <div class="wait-title">SALA <span id="roomId"></span></div>
+  <div id="waitStatus" class="wait-status">esperando jugadores…</div>
+  <div id="seats" class="seats"></div>
+  <div class="muted">10 entran. 1 sale con el ticket.</div>
+  <button id="leaveBtn" class="btn ghost">Salir</button>
+</section>
+
+<section id="hud" class="hidden">
+  <div class="hud-top">
+    <div id="aliveCount" class="alive">10 / 10</div>
+    <div id="miniPot" class="mini-pot">◎ 0</div>
+  </div>
+  <div id="feed" class="feed"></div>
+  <div class="hud-bottom">
+    <div class="hp"><div id="hpFill"></div></div>
+    <div class="muted small">WASD mover · click disparar · espacio dash</div>
+  </div>
+  <div id="banner" class="banner hidden"></div>
+</section>
+
+<script type="module" src="./src/main.ts"></script>
+</body>
+</html>

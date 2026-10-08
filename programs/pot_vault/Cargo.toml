@@ -1,0 +1,23 @@
+[package]
+name = "pot_vault"
+version = "0.1.0"
+edition = "2021"
+description = "Pot Royale prize vault: holds token fees, pays epoch winners against a merkle root"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "pot_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+
+[dev-dependencies]
+hex = "0.4"
