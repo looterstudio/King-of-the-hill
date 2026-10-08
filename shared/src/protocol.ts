@@ -31,7 +31,7 @@ export interface SnapBullet { id: number; x: number; y: number; vx: number; vy: 
 export interface RoomSeat { id: number; num: string; name: string; verified: boolean }
 
 export type ServerMsg =
-  | { t: 'hello'; nonce: string; requireWallet: boolean; allowGuests: boolean }
+  | { t: 'hello'; nonce: string; requireWallet: boolean; allowGuests: boolean; holdMinUsd: number }
   | { t: 'authed'; name: string; wallet: string | null; num: string }
   | { t: 'error'; msg: string }
   | { t: 'pot'; pot: PotView }

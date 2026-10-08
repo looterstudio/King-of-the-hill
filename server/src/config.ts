@@ -23,7 +23,9 @@ export const config = {
   vaultAddress: env.VAULT_ADDRESS ?? '',   // vault PDA: seeds ["vault"]
   configAddress: env.CONFIG_ADDRESS ?? '', // config PDA: seeds ["config"]
   tokenMint: env.TOKEN_MINT ?? '',
-  holdMin: BigInt(env.HOLD_MIN_RAW ?? '0'), // min token balance (raw units) to enter a room
+  holdMinUsd: Number(env.HOLD_MIN_USD ?? '50'), // USD value of the token a wallet must hold to play
+  priceUrl: env.PRICE_URL ?? 'https://lite-api.jup.ag/price/v3?ids=', // Jupiter price API, mint appended
+  mockPriceUsd: Number(env.MOCK_PRICE_USD ?? '0.0001'),
   vaultReserveLamports: BigInt(env.VAULT_RESERVE_LAMPORTS ?? '1000000'), // rent + fees buffer, never paid out
 
   // payout policy

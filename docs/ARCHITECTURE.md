@@ -54,7 +54,8 @@ Squads multisig; later, have rooms sign results with a TEE key, or post room res
 
 ## Before mainnet (not done yet)
 
-- [ ] Keeper script: read `data/epochs/N.json`, send `settle_epoch` from a multisig, and a claim UI.
+- [ ] Keeper script: read `data/epochs/N.json`, propose `settle_epoch` to the Squads multisig (authority = Squads vault PDA via `set_authority`), and a claim UI.
+- [ ] Confirm the Jupiter price v3 response format against the live API (not reachable from the build sandbox).
 - [ ] Fee sweep: claim pump.fun creator fees (or harvest Token-2022 withheld fees, then swap) into the vault on a schedule.
 - [ ] `draw` mode: mix a future slot hash or Switchboard VRF into the seed. A commit-reveal alone
       still lets the operator, who knows the secret, steer the result with sybil tickets.

@@ -113,6 +113,7 @@ net.on((m: ServerMsg) => {
   switch (m.t) {
     case 'hello':
       state.nonce = m.nonce; state.authed = false; updatePlay();
+      $('holdReq').textContent = m.holdMinUsd > 0 ? `Para jugar tenés que tener $${m.holdMinUsd} del token en tu wallet` : '';
       $('connectBtn').classList.toggle('hidden', false);
       $('guestBtn').classList.toggle('hidden', !m.allowGuests);
       $('guestName').classList.toggle('hidden', !m.allowGuests);

@@ -4,12 +4,21 @@
 import { EventEmitter } from 'node:events';
 import type { Config } from './config.ts';
 
+export interface Holding { raw: bigint; decimals: number }
+
+// raw units -> human string for messages, e.g. 49_500_000n @ 6 -> "49.5"
+export function fromRaw(raw: bigint, decimals: number): string {
+  const s = raw.toString().padStart(decimals + 1, '0');
+  const whole = s.slice(0, s.length - decimals), frac = s.slice(s.length - decimals).replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : whole;
+}
+
 export interface PotSource extends EventEmitter {
   start(): void;
   stop(): void;
   balance(): bigint;                       // spendable lamports (vault minus reserve and unclaimed)
   markPaid(lamports: bigint): void;        // settlement reserved this much for claims
-  holderBalance(wallet: string): Promise<bigint>;
+  holderTokens(wallet: string): Promise<Holding>;
 }
 
 // Local/dev: fake fee flow shaped like real trading (bursty, mostly small, occasional whale).
@@ -31,7 +40,7 @@ export class MockPot extends EventEmitter implements PotSource {
   stop() { if (this.timer) clearTimeout(this.timer); }
   balance() { return this.lamports; }
   markPaid(l: bigint) { this.lamports -= l; }
-  async holderBalance() { return 1n << 62n; }
+  async holderTokens(): Promise<Holding> { return { raw: 1n << 62n, decimals: 6 }; }
 }
 
 // Production: poll the vault over JSON-RPC. No @solana/web3.js dependency; two calls is all we need.
@@ -40,8 +49,14 @@ export class SolanaPot extends EventEmitter implements PotSource {
   private reserved = 0n;       // settled since boot, possibly not yet posted on chain by the keeper
   private chainReserved = 0n;  // Config.reserved read from the vault program
   private timer: NodeJS.Timeout | null = null;
-  private holderCache = new Map<string, { at: number; v: bigint }>();
-  constructor(private cfg: Config) { super(); if (!cfg.vaultAddress) throw new Error('VAULT_ADDRESS is required for POT_SOURCE=solana'); }
+  private holderCache = new Map<string, { at: number; v: Holding }>();
+  private decimals = -1;
+  constructor(private cfg: Config) {
+    super();
+    if (!cfg.vaultAddress) throw new Error('VAULT_ADDRESS is required for POT_SOURCE=solana');
+    // fail at boot, not by silently locking every player out
+    if (cfg.holdMinUsd > 0 && !cfg.tokenMint) throw new Error('TOKEN_MINT is required when HOLD_MIN_USD > 0');
+  }
 
   private async rpc<T>(method: string, params: unknown[]): Promise<T> {
     const res = await fetch(this.cfg.rpcUrl, {
@@ -80,15 +95,23 @@ export class SolanaPot extends EventEmitter implements PotSource {
   }
   markPaid(l: bigint) { this.reserved += l; }
 
-  async holderBalance(wallet: string): Promise<bigint> {
-    if (!this.cfg.tokenMint) return 0n;
+  // sums every account of the mint the wallet owns (works for SPL Token and Token-2022 mints)
+  async holderTokens(wallet: string): Promise<Holding> {
     const hit = this.holderCache.get(wallet);
     if (hit && Date.now() - hit.at < 60_000) return hit.v;
-    type Acc = { account: { data: { parsed: { info: { tokenAmount: { amount: string } } } } } };
+    type Acc = { account: { data: { parsed: { info: { tokenAmount: { amount: string; decimals: number } } } } } };
     const r = await this.rpc<{ value: Acc[] }>('getTokenAccountsByOwner', [
       wallet, { mint: this.cfg.tokenMint }, { encoding: 'jsonParsed', commitment: 'confirmed' },
     ]);
-    const v = r.value.reduce((s, a) => s + BigInt(a.account.data.parsed.info.tokenAmount.amount), 0n);
+    let raw = 0n, decimals = this.decimals;
+    for (const a of r.value) { const t = a.account.data.parsed.info.tokenAmount; raw += BigInt(t.amount); decimals = t.decimals; }
+    if (r.value.length === 0 && decimals < 0) {
+      // no account yet: read decimals from the mint so the comparison is still exact
+      const m = await this.rpc<{ value: { data: { parsed: { info: { decimals: number } } } } | null }>('getAccountInfo', [this.cfg.tokenMint, { encoding: 'jsonParsed' }]);
+      decimals = m.value?.data.parsed.info.decimals ?? 6;
+    }
+    this.decimals = decimals;
+    const v = { raw, decimals };
     this.holderCache.set(wallet, { at: Date.now(), v });
     return v;
   }

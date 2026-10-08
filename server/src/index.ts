@@ -10,13 +10,15 @@ import { playerNumber } from '../../shared/src/constants.ts';
 import { loginMessage, type ClientMsg, type PotView, type ServerMsg } from '../../shared/src/protocol.ts';
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
-import { makePot } from './pot.ts';
+import { fromRaw, makePot } from './pot.ts';
+import { PriceFeed, rawNeeded } from './price.ts';
 import { Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
 
 const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requireWallet ? 4 : 1));
 
 const pot = makePot(config);
+const price = new PriceFeed(config);
 const epochs = new Epochs(config, pot);
 const clients = new Set<Client>();
 const byWallet = new Map<string, Client>();
@@ -75,6 +77,18 @@ const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 2048, p
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 const cleanName = (s: unknown) => String(s ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 14) || 'guest';
 
+// null = may play. Uses the 15-min median price, and fails closed when the price feed is down.
+async function checkHold(wallet: string): Promise<string | null> {
+  if (config.holdMinUsd <= 0) return null;
+  const usd = price.usd();
+  if (usd === null) return 'precio del token no disponible, probá en un minuto';
+  let h;
+  try { h = await pot.holderTokens(wallet); } catch { return 'no pude leer tu balance, probá de nuevo'; }
+  const need = rawNeeded(config.holdMinUsd, usd, h.decimals);
+  if (h.raw >= need) return null;
+  return `necesitás $${config.holdMinUsd} del token para jugar: ${fromRaw(need, h.decimals)} tokens (tenés ${fromRaw(h.raw, h.decimals)})`;
+}
+
 async function onMessage(c: Client, msg: ClientMsg) {
   switch (msg.t) {
     case 'in': {
@@ -89,11 +103,8 @@ async function onMessage(c: Client, msg: ClientMsg) {
       const ok = nacl.sign.detached.verify(new TextEncoder().encode(loginMessage(c.nonce)), sig, pk);
       if (!ok) return c.send({ t: 'error', msg: 'signature does not match' });
       const wallet = bs58.encode(pk);
-      if (config.holdMin > 0n) {
-        let bal = 0n;
-        try { bal = await pot.holderBalance(wallet); } catch { return c.send({ t: 'error', msg: 'could not check token balance, try again' }); }
-        if (bal < config.holdMin) return c.send({ t: 'error', msg: 'hold the token to enter rooms' });
-      }
+      const holdErr = await checkHold(wallet);
+      if (holdErr) return c.send({ t: 'error', msg: holdErr });
       // one live seat per wallet: a second tab replaces the first
       const prev = byWallet.get(wallet);
       if (prev && prev !== c) { prev.send({ t: 'error', msg: 'signed in somewhere else' }); prev.ws.close(); }
@@ -104,6 +115,7 @@ async function onMessage(c: Client, msg: ClientMsg) {
     case 'guest': {
       if (c.authed) return;
       if (!config.allowGuests) return c.send({ t: 'error', msg: 'connect a wallet to play' });
+      if (config.potSource === 'solana' && config.holdMinUsd > 0) return c.send({ t: 'error', msg: `conectá una wallet con $${config.holdMinUsd} del token para jugar` });
       c.name = cleanName(msg.name); c.authed = true;
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);
@@ -113,6 +125,8 @@ async function onMessage(c: Client, msg: ClientMsg) {
       if (!c.authed) return c.send({ t: 'error', msg: 'sign in first' });
       if (c.room?.phase === 'over') c.room.remove(c);
       if (clients.size > config.maxConnections) return c.send({ t: 'error', msg: 'server full' });
+      // checked again on every queue, not just at login: selling after signing in must not keep you in
+      if (c.wallet) { const holdErr = await checkHold(c.wallet); if (holdErr) return c.send({ t: 'error', msg: holdErr }); }
       return mm.enqueue(c);
     }
     case 'leave': return mm.leave(c);
@@ -124,7 +138,7 @@ wss.on('connection', (ws) => {
   const id = nextId++;
   const c = new Client(id, ws, playerNumber(randomBytes(2).readUInt16LE()), randomBytes(16).toString('hex'), config.msgsPerSecond);
   clients.add(c);
-  c.send({ t: 'hello', nonce: c.nonce, requireWallet: config.requireWallet, allowGuests: config.allowGuests });
+  c.send({ t: 'hello', nonce: c.nonce, requireWallet: config.requireWallet, allowGuests: config.allowGuests, holdMinUsd: config.holdMinUsd });
   c.send({ t: 'pot', pot: potView() });
   if (epochs.lastSettled) c.send({ t: 'settled', settled: epochs.lastSettled });
 
@@ -150,12 +164,13 @@ wss.on('connection', (ws) => { alive.add(ws); ws.on('pong', () => alive.add(ws))
 setInterval(() => { for (const ws of wss.clients) { if (!alive.has(ws)) { ws.terminate(); continue; } alive.delete(ws); ws.ping(); } }, 20_000);
 
 pot.start();
+price.start();
 epochs.start();
 mm.start();
 http.listen({ port: config.port, backlog: 4096 }, () => {
-  console.log(`[pot-royale] :${config.port} pot=${config.potSource} payout=${config.payoutMode} wallet=${config.requireWallet} guests=${config.allowGuests} minVerified=${MIN_VERIFIED}`);
+  console.log(`[pot-royale] :${config.port} pot=${config.potSource} payout=${config.payoutMode} hold=$${config.holdMinUsd} wallet=${config.requireWallet} guests=${config.allowGuests} minVerified=${MIN_VERIFIED}`);
 });
 
-const shutdown = () => { mm.stop(); epochs.stop(); pot.stop(); wss.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); };
+const shutdown = () => { price.stop(); mm.stop(); epochs.stop(); pot.stop(); wss.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

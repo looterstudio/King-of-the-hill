@@ -122,3 +122,36 @@ test('an epoch missed while the server was down settles on boot', () => {
   const rec = JSON.parse(readFileSync(join(dir, 'epochs', '200.json'), 'utf8'));
   assert.equal(rec.claims.length, 1);
 });
+
+test('hold gate: a one-sample pump does not move the median price', async () => {
+  const { PriceFeed } = await import('../src/price.ts');
+  let now = 1_000_000;
+  const feed = new PriceFeed({ ...config, potSource: 'solana' }, () => now);
+  for (let i = 0; i < 20; i++) { feed.push(0.0001); now += 30_000; }
+  feed.push(0.01); // 100x spike for one sample
+  assert.equal(feed.usd(), 0.0001);
+});
+
+test('hold gate fails closed when the price feed goes dark', async () => {
+  const { PriceFeed } = await import('../src/price.ts');
+  let now = 0;
+  const feed = new PriceFeed({ ...config, potSource: 'solana' }, () => now);
+  assert.equal(feed.usd(), null);
+  feed.push(0.5);
+  now += 21 * 60_000;
+  assert.equal(feed.usd(), null);
+});
+
+test('hold gate: $50 at a given price, rounded up', async () => {
+  const { rawNeeded } = await import('../src/price.ts');
+  const { fromRaw } = await import('../src/pot.ts');
+  // $50 at $0.0001 = 500,000 tokens; pump.fun mints use 6 decimals
+  assert.equal(rawNeeded(50, 0.0001, 6), 500_000_000_000n);
+  // a price that does not divide evenly rounds up, never down
+  const need = rawNeeded(50, 0.0003, 6);
+  assert.ok(Number(need) / 1e6 * 0.0003 >= 50);
+  assert.ok(Number(need - 1n) / 1e6 * 0.0003 < 50 + 1e-9);
+  assert.equal(fromRaw(49_500_000n, 6), '49.5');
+  assert.equal(fromRaw(7n, 6), '0.000007');
+  assert.equal(fromRaw(500_000_000_000n, 6), '500000');
+});
