@@ -27,11 +27,21 @@ class Seat {
   free: { x: number; z: number } | null = null; // free spectator camera
   // one input per tick, in order: the client predicts with the same inputs, so none may be skipped
   // or doubled. A client sending faster than 30 Hz only fills the queue; it never moves faster.
-  push(i: Input) { this.queue.push(i); if (this.queue.length > 10) this.queue.shift(); }
+  // A late packet: its tick runs with a stand-in (keep walking, no one-shots) that takes the missing
+  // input's sequence number, and the real one is dropped when it shows up. Running both moved the
+  // player twice (the client got shoved forward) and left every input after a hiccup queued for good:
+  // one 250 ms stall meant +267 ms of input lag for the rest of the match.
+  expect = -1; // the next sequence number a tick will consume (-1 until the first input)
+  push(i: Input) {
+    if (i.seq < this.expect) return; // its tick already ran with a stand-in
+    this.queue.push(i); if (this.queue.length > 10) this.queue.shift();
+  }
   next(): Input {
     const i = this.queue.shift();
-    if (i) { this.last = i; return i; }
-    return { ...this.last, jump: false, slide: false, slot: 0, reload: false, interact: false, item: 0, perk: false }; // late packet: keep walking, don't repeat one-shots
+    if (i) { this.last = i; this.expect = i.seq + 1; return i; }
+    const stand = { ...this.last, jump: false, slide: false, slot: 0, reload: false, interact: false, item: 0, perk: false };
+    if (this.expect >= 0) stand.seq = this.expect++;
+    return stand;
   }
 }
 

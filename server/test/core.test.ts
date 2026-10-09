@@ -998,3 +998,20 @@ test('loose pieces fall: blow out the bottom of a wall and the top comes down; a
   const top = s2.world.boxes.filter((b) => b.y0 >= 6);
   assert.ok(top.every((b) => !b.dead), 'the top row still stands');
 });
+
+test('a network hiccup never moves a player twice or leaves input lag behind', async () => {
+  const { Match } = await import('../src/match.ts');
+  const m = new Match('j', 77, [1, 2], 0, { 1: 0, 2: 1 });
+  const seat = (m as unknown as { seats: Map<number, { queue: Input[] }> }).seats.get(1)!;
+  let seq = 0, now = 0;
+  const late: Input[] = [];
+  for (let k = 0; k < 200; k++) {
+    const i: Input = { ...emptyInput(), seq: ++seq, fwd: 1, sprint: true, yaw: 0.3 };
+    if (k >= 100 && k < 108) late.push(i);              // 250 ms of inputs stuck in the network...
+    else { if (k === 108) for (const l of late) m.input(1, l); m.input(1, i); } // ...arrive all at once
+    m.step((now += 1000 / TICK_HZ));
+    if (k > 120) assert.ok(seat.queue.length <= 1, `queue ${seat.queue.length} at tick ${k}: input lag piling up`);
+  }
+  // every tick consumed exactly one sequence number: the stand-ins took the late ones' place
+  assert.equal(m.sim.players.get(1)!.ack, seq);
+});
