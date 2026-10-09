@@ -576,3 +576,16 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 
 .squad-panel .mic { font-size: 13px; color: var(--ink-soft); margin-top: 3px; }
 .squad-panel .mic.on { color: var(--red); font-weight: 800; }
+
+/* axe: what the mouse buttons do, while it is out */
+.axe-hint { position: absolute; left: 50%; bottom: 13vh; transform: translateX(-50%); display: flex; gap: 14px; align-items: center; font-size: 15px; font-weight: 700; color: var(--ink); background: rgba(255,253,245,.9); border: 2px solid var(--ink); border-radius: 10px 14px 9px 13px; padding: 5px 14px; box-shadow: 3px 3px 0 var(--red); white-space: nowrap; mix-blend-mode: normal !important; }
+.axe-hint .red { color: var(--red); } .axe-hint .blue { color: #2f7fd6; } .axe-hint .dim { opacity: .55; }
+.axe-hint kbd, .howto kbd { font-family: inherit; font-size: 12px; font-weight: 800; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 5px; }
+/* how to play: shown when you land the first time */
+.howto { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-0.6deg); width: min(620px, 92vw); background: var(--card); border: 3px solid var(--ink); border-radius: 12px 16px 11px 15px; padding: 16px 22px 14px; box-shadow: 7px 7px 0 var(--red); pointer-events: none; mix-blend-mode: normal !important; animation: pop .25s ease-out; }
+.howto h3 { margin: 0 0 8px; font-size: 26px; }
+.howto-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; font-size: 15px; }
+.howto-grid div { display: flex; gap: 8px; align-items: baseline; }
+.howto-grid div:nth-child(5), .howto-grid div:nth-child(6) { grid-column: span 2; }
+.howto-grid span { color: var(--ink-soft); font-weight: 600; } .howto-grid b { color: var(--ink); }
+.howto p { margin: 10px 0 0; font-size: 14px; color: var(--ink-soft); } .howto small { float: right; font-family: var(--f-note); font-size: 18px; color: var(--red); }

@@ -102,7 +102,7 @@ export const SHOCK = { radius: 7, push: 22, fuse: 1.4 };
 export const SLOTS = 4;
 // the axe: always in your pocket (X). Swing it at walls, cars and people; broken blocks give you
 // material, right click with the axe out places a 1 m block (Minecraft style)
-export const AXE = { reach: 2.9, cd: 0.42, player: 28, vehicle: 30, block: 34 };
+export const AXE = { reach: 3.2, cd: 0.34, player: 28, vehicle: 30, block: 50 }; // wood 2 hits, brick 3, metal 6
 export const BUILD = { cost: 2, maxMats: 400, reach: 6, cd: 0.16, cap: 3000, startMats: 30 };
 // destruction: block health by material, and how much material a broken block gives back
 export const MATERIAL = { wood: { hp: 70, yield: 3 }, brick: { hp: 150, yield: 5 }, metal: { hp: 270, yield: 7 } };

@@ -76,7 +76,7 @@ export type ServerMsg =
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom' | 'ram'; left: number; head: boolean }
   | { t: 'event'; kind: 'vhit'; vehicle: number; by: number; dmg: number }
   | { t: 'event'; kind: 'knock'; victim: number; by: number | null; head: boolean }
-  | { t: 'event'; kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[] }
+  | { t: 'event'; kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[]; drop?: number[] }
   | { t: 'event'; kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean }
   | { t: 'event'; kind: 'revive'; victim: number; by: number }
   | { t: 'event'; kind: 'drop'; x: number; z: number; landed: boolean }

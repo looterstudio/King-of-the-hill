@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { BUILD, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
 import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
@@ -52,6 +52,10 @@ $('radioBtn').onclick = () => {
   else { radio.stop(); radio.muted = true; setHTML($('radioBtn'), '📻 <span>radio off</span>'); }
 };
 addEventListener('keyup', (e) => { if (e.code === 'KeyV') void voice.talk(false); });
+let howtoDone = false, howtoAt = 0;
+function closeHowto() { howtoAt = 0; $('howto').classList.add('hidden'); }
+addEventListener('keydown', () => { if (howtoAt && performance.now() - howtoAt > 1200) closeHowto(); });
+addEventListener('mousedown', () => { if (howtoAt && performance.now() - howtoAt > 1200) closeHowto(); });
 addEventListener('keydown', (e) => {
   if (state.screen !== 'game') return;
   if (e.code === 'KeyV' && !e.repeat) void voice.talk(true);
@@ -461,7 +465,7 @@ net.on((m: ServerMsg) => {
         : `Up to 100 drop in, in ${m.mode === 'duo' ? 'teams of 2' : 'squads of 4'}. A win is ${POINTS.win[m.mode]} points each, top ${topPlaces(m.mode)} teams +${POINTS.top}, every kill +${POINTS.kill}. Knocked teammates can be picked up.`;
       if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); drawPreview(m.seed); }
       if (m.state === 'live') {
-        state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set();
+        state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set(); howtoDone = false;
         game.setRoom(m.seed, m.seats, m.you);
         $('feed').innerHTML = '';
         // squad voice with your teammates (online matches; the demo's teammates are bots)
@@ -501,7 +505,7 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'open') { if (m.by === state.you) sfx.open(m.golden); break; }
       if (m.kind === 'vhit') { hitmarker(false); sfx.hit(false); const v = game.vehiclesNow.find((x) => x[0] === m.vehicle); vehicleNumber(v, m.dmg); break; }
       if (m.kind === 'upgrade') { if (m.by === state.you) { hint(`weapon upgraded ${'★'.repeat(m.level)} · +${Math.round(m.level * 22)}% damage`, 2200); sfx.open(true); } break; }
-      if (m.kind === 'wreck') { game.onWreck(m.add, m.kill, m.falls); break; }
+      if (m.kind === 'wreck') { game.onWreck(m.add, m.kill, m.falls, m.drop); break; }
       if (m.kind === 'chop') {
         const cam = game.ink.camera.position;
         if (m.by === state.you || Math.hypot(m.x - cam.x, m.z - cam.z) < 40) sfx.chop(m.broke);
@@ -655,6 +659,23 @@ function frame(now: number) {
         : me.reviving > 0 ? { label: 'reviving teammate…', k: me.reviving / KNOCK.revive, cls: 'revive' }
         : me.down > 0 && me.reviveT > 0 ? { label: 'being picked up…', k: me.reviveT / KNOCK.revive, cls: 'revive' }
         : me.down > 0 ? { label: `KNOCKED · bleeding out ${Math.ceil(me.down)}s`, k: me.down / KNOCK.bleed, cls: 'bleed' } : null;
+      // how to play: the first few matches, once you land
+      if (!howtoDone && me.alive && game.me && !game.me.gliding) {
+        howtoDone = true;
+        let seen = 0;
+        try { seen = Number(localStorage.getItem('howto')) || 0; localStorage.setItem('howto', String(seen + 1)); } catch { /* private window */ }
+        if (seen < 3) { $('howto').classList.remove('hidden'); howtoAt = performance.now(); }
+      }
+      if (howtoAt && performance.now() - howtoAt > 14000) closeHowto();
+      // the axe: say what the buttons do and what you're aiming at
+      const axeOn = me.alive && me.axe && !game.me?.ride;
+      $('axeHint').classList.toggle('hidden', !axeOn);
+      if (axeOn && input.aim && me.mats < BUILD.cost) hint('not enough material ▦ · chop something with left click first', 1200);
+      if (axeOn) {
+        const aim = game.axeAim;
+        setHTML($('axeHint'), `<span class="red"><kbd>LMB</kbd> chop${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
+          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>RMB</kbd> place block (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> back to gun</span>`);
+      }
       $('useBar').classList.toggle('hidden', !bar || !me.alive);
       if (bar) { setText($('useLabel'), bar.label); $('useFill').style.width = `${bar.k * 100}%`; $('useBar').dataset.kind = bar.cls; }
       document.body.classList.toggle('knocked', me.alive && me.down > 0);

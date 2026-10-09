@@ -30,6 +30,7 @@ export interface Lake { x: number; z: number; r: number }
 
 const CELL = 8;
 const GRID = Math.ceil((MAP_HALF * 2) / CELL);
+const YCELLS = 64; // 8 m layers up to 512 m
 
 export class World {
   boxes: Box[] = [];
@@ -110,7 +111,25 @@ export class World {
   private index() { this.boxes.forEach((b, i) => this.indexBox(b, i)); }
   private indexBox(b: Box, i: number) {
     const [cx0, cz0] = this.cell(b.x0, b.z0), [cx1, cz1] = this.cell(b.x1, b.z1);
-    for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) this.grid[cz * GRID + cx].push(i);
+    const cy0 = this.ycell(b.y0), cy1 = this.ycell(b.y1);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+      this.grid[cz * GRID + cx].push(i);
+      for (let cy = cy0; cy <= cy1; cy++) { const k = (cz * GRID + cx) * YCELLS + cy, l = this.grid3.get(k); if (l) l.push(i); else this.grid3.set(k, [i]); }
+    }
+  }
+  // the same grid with height (8 m layers): towers stack dozens of floors in one ground cell
+  private grid3 = new Map<number, number[]>();
+  private ycell(y: number) { return Math.max(0, Math.min(YCELLS - 1, Math.floor(y / CELL))); }
+  near3(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, out: number[] = []): number[] {
+    out.length = 0;
+    if (this.stamp.length < this.boxes.length) this.stamp = new Uint32Array(this.boxes.length * 2);
+    const v = ++this.visit;
+    const [cx0, cz0] = this.cell(x0, z0), [cx1, cz1] = this.cell(x1, z1), cy0 = this.ycell(y0), cy1 = this.ycell(y1);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) for (let cy = cy0; cy <= cy1; cy++) {
+      const l = this.grid3.get((cz * GRID + cx) * YCELLS + cy);
+      if (l) for (const i of l) if (this.stamp[i] !== v) { this.stamp[i] = v; out.push(i); }
+    }
+    return out;
   }
   // boxes added mid-match (forts, broken-off blocks, placed blocks); returns their indices
   addBoxes(list: Box[]): number[] {
@@ -173,12 +192,36 @@ export class World {
     }
     return out;
   }
+  // where a 1 m block goes when you place one looking along a ray: against the face you aim at
+  // (on top of it, under it, or beside it), lined up with the block you aim at if it is one, on a
+  // 1 m grid otherwise; on the ground if the ray hits nothing. null = nothing in reach, or no room.
+  placeCell(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, reach: number): { x0: number; y0: number; z0: number } | null {
+    const hit = this.raycastBox(ox, oy, oz, dx, dy, dz, reach);
+    let x0: number, y0: number, z0: number;
+    const tg = dy < 0 ? -oy / dy : Infinity;
+    if (hit.i < 0 || tg < hit.t) {
+      if (tg >= reach) return null;
+      x0 = Math.floor(ox + dx * tg); z0 = Math.floor(oz + dz * tg); y0 = 0;
+    } else {
+      const b = this.boxes[hit.i], hx = ox + dx * hit.t, hy = oy + dy * hit.t, hz = oz + dz * hit.t, e = 0.02;
+      const unit = Math.abs(b.x1 - b.x0 - 1) < 0.01 && Math.abs(b.z1 - b.z0 - 1) < 0.01 && Math.abs(b.y1 - b.y0 - 1) < 0.01;
+      const gx = unit ? b.x0 : Math.floor(hx), gz = unit ? b.z0 : Math.floor(hz), gy = unit ? b.y0 : b.y0 + Math.floor(hy - b.y0);
+      if (Math.abs(hy - b.y1) < e) { x0 = gx; z0 = gz; y0 = b.y1; }
+      else if (Math.abs(hy - b.y0) < e) { x0 = gx; z0 = gz; y0 = b.y0 - 1; }
+      else if (Math.abs(hx - b.x1) < e) { x0 = b.x1; z0 = gz; y0 = gy; }
+      else if (Math.abs(hx - b.x0) < e) { x0 = b.x0 - 1; z0 = gz; y0 = gy; }
+      else if (Math.abs(hz - b.z1) < e) { x0 = gx; z0 = b.z1; y0 = gy; }
+      else { x0 = gx; z0 = b.z0 - 1; y0 = gy; }
+    }
+    if (y0 < 0 || this.hitBox(x0 + 0.5, y0 + 0.01, z0 + 0.5, 0.49, 0.98)) return null;
+    return { x0, y0, z0 };
+  }
   static isBlock(b: Box) { return b.x1 - b.x0 <= BLOCK + 0.35 && b.y1 - b.y0 <= BLOCK + 0.35 && b.z1 - b.z0 <= BLOCK + 0.35; }
 
   // the first box a ray hits, with its index (-1: none, or only the ground)
   raycastBox(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number): { t: number; i: number } {
     let best = maxT, bi = -1;
-    for (const i of this.near(Math.min(ox, ox + dx * maxT), Math.min(oz, oz + dz * maxT), Math.max(ox, ox + dx * maxT), Math.max(oz, oz + dz * maxT))) {
+    for (const i of this.near3(Math.min(ox, ox + dx * maxT), Math.min(oy, oy + dy * maxT), Math.min(oz, oz + dz * maxT), Math.max(ox, ox + dx * maxT), Math.max(oy, oy + dy * maxT), Math.max(oz, oz + dz * maxT))) {
       const b = this.boxes[i];
       if (b.dead) continue;
       const h = rayBox(ox, oy, oz, dx, dy, dz, b);

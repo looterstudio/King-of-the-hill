@@ -973,3 +973,28 @@ test('a motorbike rides fast; a tank drives through a wall and its cannon blows 
   const c = s2.vehicles.find((v) => v.id === 951);
   assert.ok(!c || c.hp < 500, 'the shell hit the car');
 });
+
+test('loose pieces fall: blow out the bottom of a wall and the top comes down; a held piece stays', () => {
+  // a free-standing wall 8 m tall, already broken into 2 m blocks (4 x 4)
+  const boxes: import('../../shared/src/world.ts').Box[] = [];
+  for (let ix = 0; ix < 4; ix++) for (let iy = 0; iy < 4; iy++) boxes.push({ x0: ix * 2, y0: iy * 2, z0: -10.2, x1: ix * 2 + 2, y1: iy * 2 + 2, z1: -10, ink: 1, kind: 'wall' });
+  const sim = new Sim(1, World.custom(boxes));
+  const client = mirror(boxes);
+  sim.spawn([1]);
+  const p = sim.players.get(1)!; p.x = 30; p.z = 30; p.y = 0; p.gliding = false;
+  // knock out the whole bottom row: everything above is left hanging
+  sim.damageWorld(4, 1, -10.1, 4.6, 9999, 0, 1);
+  const ev = sim.step(DT, new Map());
+  applyWreck(client, ev);
+  const w = ev.find((e) => e.kind === 'wreck');
+  assert.ok(w && w.kind === 'wreck' && (w.drop?.length ?? 0) > 0, 'something fell');
+  assert.ok(sim.world.boxes.every((b) => b.dead), 'nothing is left floating');
+  client.boxes.forEach((b, i) => assert.equal(!!b.dead, !!sim.world.boxes[i].dead, `mirror box ${i}`));
+  // a wall with a hole in the middle keeps its top: it still stands on its sides
+  const s2 = new Sim(1, World.custom(boxes.map((b) => ({ ...b, dead: undefined }))));
+  s2.spawn([1]);
+  s2.damageWorld(3.5, 1, -10.1, 1.2, 9999, 0, 1); // one bottom block in the middle
+  s2.step(DT, new Map());
+  const top = s2.world.boxes.filter((b) => b.y0 >= 6);
+  assert.ok(top.every((b) => !b.dead), 'the top row still stands');
+});

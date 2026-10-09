@@ -46,7 +46,7 @@ export type ElimCause = 'shot' | 'ring' | 'left' | 'boom' | 'ram';
 export type SimEvent =
   | { kind: 'knock'; victim: number; by: number | null; head: boolean }
   // the world changed: blocks broken off / placed (append in order), boxes gone, buildings coming down
-  | { kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[] }
+  | { kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[]; drop?: number[] } // drop: loose pieces that fall (also in kill)
   | { kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean }
   | { kind: 'revive'; victim: number; by: number }
   | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
@@ -145,6 +145,7 @@ export class Sim {
   private wreckAdd: Box[] = [];
   private wreckKill: number[] = [];
   private wreckFalls: { sid: number; x: number; y: number; z: number }[] = [];
+  private wreckDrop: number[] = [];
   private dirty: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null = null;
   private baseBoxes: number;
   private placed = 0;
@@ -618,7 +619,7 @@ export class Sim {
   // a blast, a crash, a nuke: blocks near it break, and the buildings it reaches take structural
   // damage; enough of that and the whole building comes down
   damageWorld(x: number, y: number, z: number, r: number, blockDmg: number, structDmg: number, by: number, nuke = false) {
-    for (const i of this.world.near(x - r, z - r, x + r, z + r, [])) {
+    for (const i of this.world.near3(x - r, y - r, z - r, x + r, y + r, z + r, [])) {
       const b = this.world.boxes[i];
       if (b.dead || b.hard || this.boxDist(b, x, y, z) >= r) continue;
       if (nuke) { this.killBox(i); continue; } // vaporised whole, no rubble to track
@@ -641,6 +642,47 @@ export class Sim {
     for (const i of s.boxes) this.killBox(i);
     this.collapsed.push(s);
   }
+  // pieces left hanging (the top of a wall whose bottom was blown out, a block on a broken bridge)
+  // fall: anything near the damage that no longer connects to the ground or to terrain through
+  // touching boxes drops, and lands on whoever is underneath
+  private dropLoose(ev: SimEvent[]) {
+    const d = this.dirty, w = this.world;
+    if (!d) return;
+    const e = 0.06, LIMIT = 500, supported = new Set<number>(), loose: number[] = [], hit: { x0: number; z0: number; x1: number; z1: number; y: number }[] = [];
+    const touching = (a: Box) => {
+      const out: number[] = [];
+      for (const j of w.near3(a.x0 - e, a.y0 - e, a.z0 - e, a.x1 + e, a.y1 + e, a.z1 + e, [])) {
+        const b = w.boxes[j];
+        if (!b.dead && a.x0 <= b.x1 + e && b.x0 <= a.x1 + e && a.z0 <= b.z1 + e && b.z0 <= a.z1 + e && a.y0 <= b.y1 + e && b.y0 <= a.y1 + e) out.push(j);
+      }
+      return out;
+    };
+    const done = new Set<number>();
+    for (const start of w.near3(d.x0 - 3, d.y0 - 3, d.z0 - 3, d.x1 + 3, d.y1 + 3, d.z1 + 3, [])) {
+      const s = w.boxes[start];
+      if (s.dead || s.hard || s.y0 <= 0.05 || done.has(start) || s.y1 < d.y0 - 3 || s.y0 > d.y1 + 3) continue;
+      // walk the piece this box belongs to until something in it stands on the ground
+      const piece = [start], seen = new Set([start]);
+      let ok = false;
+      for (let k = 0; k < piece.length; k++) {
+        const b = w.boxes[piece[k]];
+        if (b.hard || b.y0 <= 0.05 || supported.has(piece[k]) || piece.length > LIMIT) { ok = true; break; }
+        for (const j of touching(b)) if (!seen.has(j)) { seen.add(j); piece.push(j); }
+      }
+      for (const i of piece) { done.add(i); if (ok) supported.add(i); }
+      if (ok) continue;
+      const box = { x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity, y: Infinity };
+      for (const i of piece) { const b = w.boxes[i]; loose.push(i); box.x0 = Math.min(box.x0, b.x0); box.z0 = Math.min(box.z0, b.z0); box.x1 = Math.max(box.x1, b.x1); box.z1 = Math.max(box.z1, b.z1); box.y = Math.min(box.y, b.y0); }
+      hit.push(box);
+    }
+    for (const i of loose) { this.killBox(i); this.wreckDrop.push(i); }
+    for (const h of hit) for (const q of this.players.values()) {
+      if (!q.alive || q.x < h.x0 || q.x > h.x1 || q.z < h.z0 || q.z > h.z1 || q.y > h.y) continue;
+      this.hurt(q, 60);
+      if (q.hp <= 0) this.fall(q, null, 'boom', ev);
+    }
+  }
+
   // falling rubble hurts whoever was inside; loot, cases and parked vehicles drop to what is left
   private settleWreck(ev: SimEvent[]) {
     for (const s of this.collapsed) {
@@ -708,15 +750,9 @@ export class Sim {
   private place(p: PlayerState) {
     if (p.mats < BUILD.cost || this.placed >= BUILD.cap) return;
     const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
-    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
-    const hit = this.world.raycastBox(ox, oy, oz, dx, dy, dz, BUILD.reach);
-    let t = hit.i >= 0 ? hit.t : BUILD.reach;
-    if (dy < 0) t = Math.min(t, -oy / dy);
-    if (t >= BUILD.reach) return;
-    const qx = ox + dx * (t - 0.05), qy = oy + dy * (t - 0.05), qz = oz + dz * (t - 0.05);
-    const cx = Math.floor(qx), cy = Math.max(0, Math.floor(qy + 1e-3)), cz = Math.floor(qz);
-    const b: Box = { x0: cx, y0: cy, z0: cz, x1: cx + 1, y1: cy + 1, z1: cz + 1, ink: INK.BROWN, kind: 'fort' };
-    if (this.world.hitBox(cx + 0.5, cy + 0.01, cz + 0.5, 0.49, 0.98)) return;
+    const c = this.world.placeCell(p.x, p.y + EYE_H, p.z, dx, dy, dz, BUILD.reach);
+    if (!c) return;
+    const b: Box = { x0: c.x0, y0: c.y0, z0: c.z0, x1: c.x0 + 1, y1: c.y0 + 1, z1: c.z0 + 1, ink: INK.BROWN, kind: 'fort' };
     for (const q of this.players.values()) if (q.alive && q.x + PLAYER_R > b.x0 && q.x - PLAYER_R < b.x1 && q.z + PLAYER_R > b.z0 && q.z - PLAYER_R < b.z1 && q.y < b.y1 && q.y + 1.8 > b.y0) return;
     for (const v of this.vehicles) { const r = VEHICLES[v.kind].r; if (v.body.x + r > b.x0 && v.body.x - r < b.x1 && v.body.z + r > b.z0 && v.body.z - r < b.z1 && v.body.y < b.y1 && v.body.y + VEHICLES[v.kind].h > b.y0) return; }
     this.world.addBoxes([b]); this.wreckAdd.push(b);
@@ -1067,9 +1103,10 @@ export class Sim {
     this.stepVehicles(dt, ev);
     this.stepProjectiles(dt, ev);
     this.stepEffects(dt, ev);
+    if (this.wreckKill.length) this.dropLoose(ev);
     if (this.wreckAdd.length || this.wreckKill.length) {
-      ev.push({ kind: 'wreck', add: this.wreckAdd, kill: this.wreckKill, falls: this.wreckFalls });
-      this.wreckAdd = []; this.wreckKill = []; this.wreckFalls = [];
+      ev.push({ kind: 'wreck', add: this.wreckAdd, kill: this.wreckKill, falls: this.wreckFalls, drop: this.wreckDrop.length ? this.wreckDrop : undefined });
+      this.wreckAdd = []; this.wreckKill = []; this.wreckFalls = []; this.wreckDrop = [];
     }
     this.settleWreck(ev);
 

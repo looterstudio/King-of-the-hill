@@ -14,7 +14,7 @@ import { sfx } from './audio.ts';
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
-const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat'] as const;
+const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
 export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PINK, legendary: INK_IDS.ORANGE };
@@ -74,12 +74,15 @@ export class Game3D {
   private boxMesh: THREE.InstancedMesh | null = null;
   private boxInk: THREE.InstancedBufferAttribute | null = null;
   private sepIdx = new Map<number, THREE.Mesh>(); // boxes drawn as their own mesh (forts)
-  private falling: { g: THREE.Object3D; t: number; v: number; rx: number; rz: number }[] = [];
+  private falling: { g: THREE.Object3D; t: number; v: number; rx: number; rz: number; land?: number; dust?: boolean }[] = [];
   private debris: { m: THREE.Mesh; vx: number; vy: number; vz: number; t: number }[] = [];
   private axeView: THREE.Group | null = null;
   private axeSwing = 0;
   private axeLocal = 0;
   private ghost: THREE.LineSegments | null = null;
+  private target: THREE.LineSegments | null = null; // the block the axe would hit
+  private shardCache: { i: number; list: Box[] } | null = null;
+  axeAim: { mat: string; hard: boolean } | null = null;
   private lookYaw = 0;
   private gableMesh: THREE.InstancedMesh | null = null;
   caption = ''; // the lobby flyover: the place on screen
@@ -125,7 +128,7 @@ export class Game3D {
     this.loot.clear(); this.cases.clear(); this.fx.clear(); this.builds.clear(); this.booms = [];
     for (const f of this.falling) this.ink.scene.remove(f.g);
     for (const d of this.debris) this.ink.scene.remove(d.m);
-    this.falling = []; this.debris = [];
+    this.falling = []; this.debris = []; this.shardCache = null;
     for (const m of this.vmodels.values()) this.ink.scene.remove(m.root);
     this.vmodels.clear(); this.drops = []; this.vehiclesNow = [];
     this.buildWorld(new World(seed)); // always fresh: forts from the last match must not linger
@@ -222,27 +225,39 @@ export class Game3D {
     mesh.frustumCulled = false;
     this.boxMesh = mesh; this.boxInk = attr;
     for (let i = 0; i < w.boxes.length; i++) this.setBox(i);
+    this.dirtyBoxes = [];
     mesh.count = w.boxes.length;
     this.worldGroup.add(mesh);
   }
   private static ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
   private static M = new THREE.Matrix4();
+  private dirtyBoxes: number[] = [];
   private setBox(i: number) {
     const b = this.world!.boxes[i], mesh = this.boxMesh!;
     if (i >= mesh.instanceMatrix.count) return;
+    this.dirtyBoxes.push(i);
     if (b.dead || this.sepIdx.has(i)) mesh.setMatrixAt(i, Game3D.ZERO);
     else mesh.setMatrixAt(i, Game3D.M.makeScale(b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0).setPosition((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2));
     (this.boxInk!.array as Float32Array)[i] = b.ink;
   }
+  // upload only the instances that changed (a blast touches a few dozen of ~50 000)
   private boxesChanged() {
-    const mesh = this.boxMesh!;
-    if (this.world!.boxes.length > mesh.instanceMatrix.count) { this.makeBoxMesh(); return; }
+    const mesh = this.boxMesh!, ink = this.boxInk!;
+    if (this.world!.boxes.length > mesh.instanceMatrix.count) { this.makeBoxMesh(); this.dirtyBoxes = []; return; }
     mesh.count = this.world!.boxes.length;
-    mesh.instanceMatrix.needsUpdate = true; this.boxInk!.needsUpdate = true;
+    const d = [...new Set(this.dirtyBoxes)].sort((a, b) => a - b);
+    this.dirtyBoxes = [];
+    if (!d.length) return;
+    mesh.instanceMatrix.clearUpdateRanges(); ink.clearUpdateRanges();
+    let s = d[0], e = d[0];
+    const flush = () => { mesh.instanceMatrix.addUpdateRange(s * 16, (e - s + 1) * 16); ink.addUpdateRange(s, e - s + 1); };
+    for (let k = 1; k < d.length; k++) { if (d[k] - e <= 32) e = d[k]; else { flush(); s = e = d[k]; } }
+    flush();
+    mesh.instanceMatrix.needsUpdate = true; ink.needsUpdate = true;
   }
 
   // the world broke: blocks broken off or placed, boxes gone, whole buildings falling
-  onWreck(add: Box[], kill: number[], falls: { sid: number; x: number; y: number; z: number }[]) {
+  onWreck(add: Box[], kill: number[], falls: { sid: number; x: number; y: number; z: number }[], drop: number[] = []) {
     const w = this.world;
     if (!w || !this.boxMesh) return;
     const idx = w.addBoxes(add.map((b) => ({ ...b, hp: undefined })));
@@ -275,6 +290,18 @@ export class Game3D {
         this.gableMesh.instanceMatrix.needsUpdate = true;
       }
     }
+    // loose pieces (the top of a wall with its bottom blown out) drop straight down and break up
+    const dropped = new Set(drop.filter((i) => w.boxes[i] && !w.boxes[i].dead));
+    if (dropped.size) {
+      const list = [...dropped], g = new THREE.BoxGeometry(1, 1, 1);
+      g.setAttribute('aInk', new THREE.InstancedBufferAttribute(new Float32Array(list.map((i) => w.boxes[i].ink)), 1));
+      const m = new THREE.InstancedMesh(g, this.ink.material(0), list.length);
+      let lo = Infinity;
+      list.forEach((i, k) => { const b = w.boxes[i]; lo = Math.min(lo, b.y0); m.setMatrixAt(k, Game3D.M.makeScale(b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0).setPosition((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2)); });
+      m.frustumCulled = false;
+      const pivot = new THREE.Group(); pivot.add(m); this.ink.scene.add(pivot);
+      this.falling.push({ g: pivot, t: 0, v: 0, rx: (Math.random() - 0.5) * 0.4, rz: (Math.random() - 0.5) * 0.4, land: lo, dust: true });
+    }
     w.killBoxes(kill);
     let n = 0;
     for (const i of kill) {
@@ -283,7 +310,7 @@ export class Game3D {
       if (fort) { this.ink.scene.remove(fort); this.sepIdx.delete(i); }
       const b = w.boxes[i];
       // a few chunks fly off each broken block
-      if (n < 36 && !(b.sid && fell.has(b.sid)) && World.isBlock(b)) {
+      if (n < 36 && !(b.sid && fell.has(b.sid)) && !dropped.has(i) && World.isBlock(b)) {
         n++;
         const cam = this.ink.camera.position, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, cz = (b.z0 + b.z1) / 2;
         if (Math.hypot(cam.x - cx, cam.z - cz) > 160) continue;
@@ -357,9 +384,12 @@ export class Game3D {
     axe.scale.setScalar(0.75); axe.position.set(0.28, -0.3, -0.35); axe.visible = false;
     this.ink.viewScene.add(axe); this.axeView = axe;
     // where a block would go: a wire cube, shown while the axe is out
-    this.ghost = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02)), new THREE.LineBasicMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.8 }));
+    this.ghost = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02)), new THREE.LineBasicMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.9, depthTest: false }));
     this.ghost.visible = false;
-    this.ink.scene.add(this.ghost);
+    this.ink.overlay.add(this.ghost); // drawn on the finished picture, crisp, not through the ink pass
+    this.target = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0xd32336, transparent: true, opacity: 0.9, depthTest: false }));
+    this.target.visible = false; this.target.renderOrder = 10;
+    this.ink.overlay.add(this.target);
     const chute = new THREE.Group();
     const dome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2.6), this.ink.material(INK_IDS.RED, true));
     dome.position.set(0, 1.6, 0);
@@ -787,7 +817,16 @@ export class Game3D {
     for (const f of this.fx.values()) if (f.kind === 'grenade') f.g.rotation.x += dt * 8;
     for (const b of this.builds.values()) for (const m of b.meshes) m.scale.y = Math.min(1, m.scale.y + dt * 5);
     this.falling = this.falling.filter((f) => {
-      f.t += dt; f.v += 7 * dt;
+      f.t += dt;
+      if (f.land !== undefined) { // a loose piece: real gravity, gone in a puff when it hits the ground
+        f.v += 24 * dt; f.g.position.y -= f.v * dt;
+        if (f.land + f.g.position.y <= 0.05 || f.t > 3) {
+          if (f.dust) { const p = new THREE.Box3().setFromObject(f.g).getCenter(new THREE.Vector3()); this.onBoom(p.x, Math.max(0.5, p.y), p.z, 3.5, false); }
+          this.ink.scene.remove(f.g); return false;
+        }
+        return true;
+      }
+      f.v += 7 * dt;
       f.g.position.y -= f.v * dt;
       f.g.rotation.x += f.rx * dt; f.g.rotation.z += f.rz * dt;
       if (f.t > 4) { this.ink.scene.remove(f.g); return false; }
@@ -844,19 +883,36 @@ export class Game3D {
       this.axeView.rotation.set(0.5 - s * 1.5, 0.15, -0.2 + s * 0.3);
       this.axeView.position.set(0.28 - s * 0.1, -0.3 + Math.sin(this.bob) * 0.012, -0.35 - s * 0.15);
     }
+    // with the axe out: outline what a swing would hit (the 2 m block a wall breaks into there)
+    this.axeAim = null;
+    if (this.target) {
+      this.target.visible = false;
+      if (axeOut && this.world && this.pred) {
+        const cp = Math.cos(look.pitch), dx = -Math.sin(look.yaw) * cp, dy = Math.sin(look.pitch), dz = -Math.cos(look.yaw) * cp;
+        const ox = this.pred.x, oy = this.pred.y + EYE_H, oz = this.pred.z;
+        const hit = this.world.raycastBox(ox, oy, oz, dx, dy, dz, AXE.reach);
+        if (hit.i >= 0) {
+          const b = this.world.boxes[hit.i], hx = ox + dx * (hit.t + 0.05), hy = oy + dy * (hit.t + 0.05), hz = oz + dz * (hit.t + 0.05);
+          let c: Box = b;
+          if (!b.hard && !World.isBlock(b)) {
+            if (this.shardCache?.i !== hit.i) this.shardCache = { i: hit.i, list: this.world.shards(hit.i) };
+            c = this.shardCache.list.find((s) => hx >= s.x0 - 0.01 && hx <= s.x1 + 0.01 && hy >= s.y0 - 0.01 && hy <= s.y1 + 0.01 && hz >= s.z0 - 0.01 && hz <= s.z1 + 0.01) ?? b;
+          }
+          this.target.scale.set(c.x1 - c.x0 + 0.04, c.y1 - c.y0 + 0.04, c.z1 - c.z0 + 0.04);
+          this.target.position.set((c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2, (c.z0 + c.z1) / 2);
+          (this.target.material as THREE.LineBasicMaterial).color.setHex(b.hard ? 0x7a7f8c : 0xd32336);
+          this.target.visible = true;
+          const wood = b.kind === 'crate' || b.kind === 'trunk' || b.kind === 'fort' || b.ink === 6, metal = b.kind === 'container' || b.kind === 'car' || b.ink === 2;
+          this.axeAim = { mat: b.hard ? 'rock' : wood ? 'wood' : metal ? 'metal' : 'brick', hard: !!b.hard };
+        }
+      }
+    }
     if (this.ghost) {
       this.ghost.visible = false;
       if (axeOut && this.world && this.pred && me.mats >= BUILD.cost) {
         const cp = Math.cos(look.pitch), dx = -Math.sin(look.yaw) * cp, dy = Math.sin(look.pitch), dz = -Math.cos(look.yaw) * cp;
-        const ox = this.pred.x, oy = this.pred.y + EYE_H, oz = this.pred.z;
-        const hit = this.world.raycastBox(ox, oy, oz, dx, dy, dz, BUILD.reach);
-        let t = hit.i >= 0 ? hit.t : BUILD.reach;
-        if (dy < 0) t = Math.min(t, -oy / dy);
-        if (t < BUILD.reach) {
-          const cx = Math.floor(ox + dx * (t - 0.05)), cy = Math.max(0, Math.floor(oy + dy * (t - 0.05) + 1e-3)), cz = Math.floor(oz + dz * (t - 0.05));
-          const free = !this.world.hitBox(cx + 0.5, cy + 0.01, cz + 0.5, 0.49, 0.98);
-          this.ghost.position.set(cx + 0.5, cy + 0.5, cz + 0.5); this.ghost.visible = free;
-        }
+        const c = this.world.placeCell(this.pred.x, this.pred.y + EYE_H, this.pred.z, dx, dy, dz, BUILD.reach);
+        if (c) { this.ghost.position.set(c.x0 + 0.5, c.y0 + 0.5, c.z0 + 0.5); this.ghost.visible = true; }
       }
     }
     const g = w ? this.guns.get(w) : null;

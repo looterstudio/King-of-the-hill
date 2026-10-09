@@ -35,7 +35,7 @@ export class LocalNet {
   private viewer: Viewer = { lootVer: -1, lootAt: -9 };
 
   constructor() {
-    for (let i = 0; i < 6; i++) this.tickets.set(fakeWallet(), { name: NAMES[i], wins: (6 - i + Math.floor(Math.random() * 3)) * 45 + Math.floor(Math.random() * 30) });
+    for (let i = 0; i < 6; i++) this.tickets.set(`bot-${NAMES[i]}`, { name: NAMES[i], wins: (6 - i + Math.floor(Math.random() * 3)) * 45 + Math.floor(Math.random() * 30) });
     for (let i = 0; i < 5; i++) this.fake.push(this.fakeRoom(i < 3));
   }
   private fakeRoom(live: boolean): LobbyRoom {
