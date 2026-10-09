@@ -670,11 +670,11 @@ function frame(now: number) {
       // the axe: say what the buttons do and what you're aiming at
       const axeOn = me.alive && me.axe && !game.me?.ride;
       $('axeHint').classList.toggle('hidden', !axeOn);
-      if (axeOn && input.aim && me.mats < BUILD.cost) hint('not enough material ▦ · chop something with left click first', 1200);
+      if (axeOn && (input.aim || input.isDown('KeyB')) && me.mats < BUILD.cost) hint('not enough material ▦ · chop something with left click first', 1200);
       if (axeOn) {
         const aim = game.axeAim;
-        setHTML($('axeHint'), `<span class="red"><kbd>LMB</kbd> chop${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
-          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>RMB</kbd> place block (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> back to gun</span>`);
+        setHTML($('axeHint'), `<span class="red"><kbd>left click</kbd> chop${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
+          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>right click</kbd> or <kbd>B</kbd> place block at the blue cube (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> gun</span>`);
       }
       $('useBar').classList.toggle('hidden', !bar || !me.alive);
       if (bar) { setText($('useLabel'), bar.label); $('useFill').style.width = `${bar.k * 100}%`; $('useBar').dataset.kind = bar.cls; }

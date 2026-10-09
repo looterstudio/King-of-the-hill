@@ -513,7 +513,7 @@ export class Game3D {
   get weapon(): WeaponId | null { return this.self && !this.self.axe ? this.self.slots[this.self.cur] : null; }
 
   // called at 30 Hz with sampled controls; returns the input to send (or null)
-  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean; up: number; hold: boolean }): Input | null {
+  tick(c: { fwd: number; strafe: number; sprint: boolean; grapple: boolean; jump: boolean; slide: boolean; reload: boolean; slot: number; fire: boolean; aim: boolean; yaw: number; pitch: number; interact: boolean; item: number; perk: boolean; up: number; hold: boolean; build?: boolean }): Input | null {
     if (!this.world || !this.self || !this.self.alive || !this.pred) return null;
     let slot = c.slot;
     if (slot < 0) { // wheel: cycle through filled slots
@@ -523,7 +523,7 @@ export class Game3D {
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
     if (c.reload && this.self.reloadT === 0) sfx.reload();
-    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim, reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold };
+    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
     this.lastTickAt = performance.now() / 1000;
