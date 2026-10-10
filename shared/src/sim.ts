@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AIR_CRASH, AXE, BOMB, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AIR_CRASH, AXE, BOMB, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -86,6 +86,11 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 
 // one tick of movement for a player: on foot, or driving / flying. Returns the crash speed, if any.
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
+  if (p.bus) { // aboard the paper plane: carried along at its speed until you jump out
+    if (!inp.jump && !inp.interact) { p.x += p.vx * dt; p.z += p.vz * dt; return 0; }
+    p.bus = 0; p.gliding = true; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0; // out: you keep a little of its speed and glide
+    return 0;
+  }
   if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
   if (p.ride) return moveVehicle(w, p, inp, dt, GRAVITY);
   if (p.down > 0) { // crawling: no glider, pad launch, dash or hook (they all beat the crawl speed several times over)
@@ -240,7 +245,17 @@ export class Sim {
 
   // everyone drops in from the sky over the island and glides down wherever they like
   // teammates (same team number) jump from the same spot, a few meters apart
-  spawn(ids: number[], teamOf?: Map<number, number>) {
+  // the paper plane's flight: from (x, z) along (dx, dz), BUS.len long; null when the match starts in the air
+  bus: { x: number; z: number; dx: number; dz: number; t: number } | null = null;
+  busAt(t = this.t) { const b = this.bus!, s = Math.min(BUS.len, (t - b.t) * BUS.speed); return { x: b.x + b.dx * s, z: b.z + b.dz * s, s }; }
+
+  // opts.bus: everyone boards the paper plane (a match); without it they start gliding over their team's
+  // drop spot (the tests, a training ground)
+  spawn(ids: number[], teamOf?: Map<number, number>, opts: { bus?: boolean } = {}) {
+    if (opts.bus) {
+      const a = this.rand() * Math.PI * 2, off = (this.rand() - 0.5) * 2 * BUS.offset, dx = Math.cos(a), dz = Math.sin(a);
+      this.bus = { x: -dz * off - dx * BUS.len / 2, z: dx * off - dz * BUS.len / 2, dx, dz, t: this.t };
+    }
     const drop = new Map<number, { x: number; z: number; n: number }>();
     ids.forEach((id) => {
       const team = teamOf?.get(id) ?? id;
@@ -255,7 +270,19 @@ export class Sim {
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
         downBy: null, reviveT: 0, reviver: 0, axe: false, axeCd: 0, mats: BUILD.startMats, tp: false,
       });
+      if (this.bus) Object.assign(this.players.get(id)!, { x: this.bus.x, y: BUS.y, z: this.bus.z, vx: this.bus.dx * BUS.speed, vy: 0, vz: this.bus.dz * BUS.speed, gliding: false, bus: 1, yaw: Math.atan2(-this.bus.dx, -this.bus.dz), pitch: -0.3 });
     });
+  }
+  // out of the paper plane: you keep a little of its speed and glide from there
+  private leaveBus(p: PlayerState) {
+    p.bus = 0; p.gliding = true; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0;
+  }
+  // riders move with their own inputs (moveStep carries them at the plane's speed, so prediction is exact);
+  // at the far edge everyone still aboard is thrown out
+  private stepBus() {
+    if (!this.bus) return;
+    const b = this.bus, over = this.busAt().s >= BUS.len; // the plane itself is past the edge: nobody stays (idle players too)
+    for (const p of this.players.values()) if (p.bus && p.alive && (over || (p.x - b.x) * b.dx + (p.z - b.z) * b.dz >= BUS.len)) this.leaveBus(p);
   }
 
   get alive() { let n = 0; for (const p of this.players.values()) if (p.alive) n++; return n; }
@@ -1269,8 +1296,10 @@ export class Sim {
 
   // one of a player's inputs: their own timeline (aim, movement, cooldowns, shooting, healing)
   private playerInput(p: PlayerState, inp: Input, dt: number, ev: SimEvent[]) {
+    const fresh = inp.seq !== p.ack; // (an idle tick repeats the last seq: aboard the plane it moves nobody, as on the client)
     p.ack = inp.seq;
     p.yaw = inp.yaw; p.pitch = inp.pitch; p.tp = !!inp.tp;
+    if (p.bus) { if (fresh) moveStep(this.world, p, inp, dt); return; } // aboard: look around, jump out when you like (moveStep, so it's predicted)
     p.fireCd = Math.max(0, p.fireCd - dt);
     p.burstT = Math.max(0, p.burstT - dt);
     if (p.down > 0) { moveStep(this.world, p, inp, dt); return; } // knocked: crawl, nothing else (bleeding is per tick)
@@ -1364,6 +1393,7 @@ export class Sim {
       }
     }
 
+    this.stepBus();
     this.stepVehicles(dt, ev);
     this.stepProjectiles(dt, ev);
     this.stepEffects(dt, ev);

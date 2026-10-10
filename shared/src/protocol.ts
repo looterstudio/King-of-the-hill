@@ -64,6 +64,7 @@ export interface SnapSelf extends Body {
 export type SnapOther = number[];
 export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64, OTHER_AXE = 128;
 export const OTHER_UPS = 8; // flags >> OTHER_UPS & 3: the upgrade stars on the gun in hand
+export const OTHER_BUS = 1024; // still aboard the paper plane (drawn as the plane, not as a person)
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
 // [id, kind, x, y, z, heading, pitch, hp %, driver id (0: none), passengers, ...passenger ids by seat]
 export type SnapVehicle = number[];
@@ -92,7 +93,7 @@ export type ServerMsg =
   | { t: 'queued'; position: number }
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number; mode: Mode }
   | { t: 'lobby'; rooms: LobbyRoom[] }
-  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; board?: number[][]; watch: number; fx: SnapFx[]; veh: SnapVehicle[]; loot?: SnapLoot[]; cases?: SnapCase[] } // leader = [id, kills], board = top teams [team, kills, alive, best player] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
+  | { t: 'snap'; tick: number; time: number; alive: number; ring: SnapRing; self: SnapSelf | null; others: SnapOther[]; shots: number[][]; leader: [number, number] | null; board?: number[][]; watch: number; fx: SnapFx[]; veh: SnapVehicle[]; loot?: SnapLoot[]; cases?: SnapCase[]; bus?: number[] } // bus: the paper plane [x, y, z, dx, dz, aboard], while it flies // leader = [id, kills], board = top teams [team, kills, alive, best player] // shot = [ox,oy,oz,ex,ey,ez,by,hit]
   | { t: 'event'; kind: 'elim'; victim: number; by: number | null; cause: 'shot' | 'ring' | 'left' | 'boom' | 'ram'; left: number; head: boolean }
   | { t: 'event'; kind: 'vhit'; vehicle: number; by: number; dmg: number }
   | { t: 'event'; kind: 'knock'; victim: number; by: number | null; head: boolean }

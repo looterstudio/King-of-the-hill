@@ -167,7 +167,7 @@ export class LocalNet {
     r.sim = new Sim(r.seed);
     const teams = makeTeams(r.seats.map((s) => ({ id: s.id, party: '' })), MODES[r.mode].size);
     r.seats = r.seats.map((s) => ({ ...s, team: teams.get(s.id)! }));
-    r.sim.spawn(r.seats.map((s) => s.id), teams);
+    r.sim.spawn(r.seats.map((s) => s.id), teams, { bus: true });
     teamDrops(r.bots, teams, Math.random);
     this.mine = new InputQueue(emptyInput(), TICK_HZ); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);

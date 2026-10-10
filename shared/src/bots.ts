@@ -284,6 +284,19 @@ export function botInput(b: Bot, sim: Sim): Input {
   // view: the tick we're looking at. A bot sees the world as it is; 0 meant the oldest lag-compensated
   // positions (300 ms back), so every bullet was tested against where its target used to be
   const inp: Input = { ...emptyInput(), seq: ++b.seq, yaw: self.yaw, pitch: self.pitch, view: sim.tick };
+  // aboard the paper plane: pull our drop spot within gliding reach of the flight line (150 m to the side
+  // at most), and jump when the plane is level with it (a little before: we glide on forward)
+  if (self.bus && sim.bus) {
+    const B = sim.bus, at = { s: (self.x - B.x) * B.dx + (self.z - B.z) * B.dz }, rx = b.dropX - B.x, rz = b.dropZ - B.z;
+    const along = rx * B.dx + rz * B.dz, side = -rx * B.dz + rz * B.dx, reach = 150;
+    if (Math.abs(side) > reach) {
+      const k = side - Math.sign(side) * reach;
+      b.dropX += B.dz * k; b.dropZ -= B.dx * k; b.wp = { x: b.dropX, z: b.dropZ }; b.dest = { x: b.dropX, z: b.dropZ };
+    }
+    inp.yaw = Math.atan2(-(b.dropX - self.x), -(b.dropZ - self.z)); inp.pitch = -0.4;
+    if (at.s >= Math.max(70, along - 30)) inp.jump = true;
+    return inp;
+  }
   // the floor we're on, for planning: walking down stairs the body is in the air a moment on every step,
   // and only updating it when grounded left a bot at the foot of a flight planning from the floor above
   // (the plan sent it back up, and round again)

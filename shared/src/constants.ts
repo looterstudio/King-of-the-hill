@@ -110,6 +110,10 @@ export const SPELL = { speed: 72, push: 19, lift: 7.5, life: 3 };
 export const UPGRADE = { max: 3, perLevel: 0.22, benchReach: 2.4 };
 export const MOLOTOV = { radius: 4.5, life: 7, dps: 38 };
 export const SHOCK = { radius: 7, push: 22, fuse: 1.4 };
+// the drop: everyone starts aboard a giant paper plane crossing the island in a straight line (near the
+// middle, from a random side) and jumps out where they like (Space); at the far edge everyone left is
+// thrown out
+export const BUS = { y: 140, speed: 44, len: 2 * MAP_HALF + 120, offset: 90, exit: 0.35 };
 export const SLOTS = 4;
 // the axe: always in your pocket (X). Swing it at walls, cars and people; broken blocks give you
 // material, right click with the axe out places a 1 m block (Minecraft style)

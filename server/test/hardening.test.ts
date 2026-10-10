@@ -176,7 +176,8 @@ test('a paused player stops, and moves again the moment they come back', async (
   const me = () => m.sim.players.get(1)!;
   let seq = 0, now = 0;
   const tick = (i?: Partial<ReturnType<typeof emptyInput>>) => { if (i) m.input(1, { ...emptyInput(), seq: ++seq, yaw: 0, ...i }); m.step((now += 1000 / 30)); };
-  for (let k = 0; k < 400; k++) tick({ fwd: 1 });                       // land and walk
+  tick({ jump: true });                                                 // out of the paper plane
+  for (let k = 0; k < 400; k++) tick({ fwd: 1, pitch: -1.3 });          // dive, land and walk
   for (let k = 0; k < 30; k++) tick({ fwd: 1, fire: true });
   const at = { x: me().x, z: me().z };
   for (let k = 0; k < 90; k++) tick();                                  // 3 s of nothing (Esc, alt-tab)

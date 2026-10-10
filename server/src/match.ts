@@ -48,7 +48,7 @@ export class Match {
   constructor(public roomId: string, seed: number, ids: number[], now: number, teams?: Record<number, number>, bots: number[] = []) {
     this.sim = new Sim(seed);
     const teamOf = teams ? new Map(Object.entries(teams).map(([k, v]) => [Number(k), v])) : undefined;
-    this.sim.spawn([...ids, ...bots], teamOf);
+    this.sim.spawn([...ids, ...bots], teamOf, { bus: true });
     for (const id of ids) this.seats.set(id, new Seat());
     this.bots = bots.map((id) => newBot(id, rng(seed * 7919 + id)));
     teamDrops(this.bots, teamOf ?? new Map([...ids, ...bots].map((id) => [id, id])), rng(seed ^ 0x5eed));
