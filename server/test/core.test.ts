@@ -870,12 +870,20 @@ test('a plane flown into a tower wall at speed is wrecked', () => {
   assert.ok(wrecked, `plane still flying at z=${p.z.toFixed(0)} y=${p.y.toFixed(0)}`);
 });
 
-test('a helicopter flown fast into a wall gets dented', () => {
-  const sim = garage('heli', [{ x0: -30, y0: 0, z0: -120, x1: 30, y1: 60, z1: -110, ink: 1, kind: 'wall' }]), p = sim.players.get(1)!;
-  tickN(sim, 1, { interact: true });
-  const v = sim.vehicles[0], hp = v.hp;
-  for (let i = 0; i < TICK_HZ * 10 && sim.vehicles.includes(v) && v.hp === hp; i++) sim.step(DT, new Map([[1, inp({ fwd: 1, sprint: true, yaw: 0, up: p.y < 8 ? 1 : 0, seq: i + 2 })]]));
-  assert.ok(!sim.vehicles.includes(v) || v.hp < hp, `no damage (z=${p.z.toFixed(0)})`);
+test('a helicopter flown fast into a wall blows up; nosing into it slowly only dents it', () => {
+  for (const [fwd, sprint] of [[1, true], [0.4, false]] as const) {
+    const sim = garage('heli', [{ x0: -30, y0: 0, z0: -120, x1: 30, y1: 60, z1: -110, ink: 1, kind: 'wall' }]), p = sim.players.get(1)!;
+    tickN(sim, 1, { interact: true });
+    const v = sim.vehicles[0], hp = v.hp, ev: ReturnType<Sim['step']> = [];
+    for (let i = 0; i < TICK_HZ * 20 && sim.vehicles.includes(v) && v.hp === hp; i++) ev.push(...sim.step(DT, new Map([[1, inp({ fwd, sprint, yaw: 0, up: p.y < 8 ? 1 : 0, seq: i + 2 })]])));
+    if (sprint) {
+      assert.ok(!sim.vehicles.includes(v), `still flying (z=${p.z.toFixed(0)})`);
+      assert.ok(ev.some((e) => e.kind === 'boom') && sim.world.boxes[0].dead, 'it went up and took a chunk of the wall');
+    } else {
+      assert.ok(sim.vehicles.includes(v) && v.hp < hp, `slow: dented, not wrecked (hp ${v.hp}, z=${p.z.toFixed(0)})`);
+      assert.ok(!ev.some((e) => e.kind === 'boom'), 'slow: nothing blew up');
+    }
+  }
 });
 
 // ---------- destruction ----------

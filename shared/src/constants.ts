@@ -163,6 +163,16 @@ export const TANK = { dmg: 340, cd: 2.4, speed: 70, radius: 6.5 };
 export const RAM = { minSpeed: 7, dmgPerMs: 10.5, cooldown: 0.6 };      // running people over
 export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle
 export const VEH_BOOM = { radius: 7.5, dmg: 275 };                     // a wrecked vehicle explodes
+// an aircraft flown into something faster than minSpeed (or set down harder than land) is wrecked on the
+// spot and blows up: the fireball tears through what it hit along its path (r across, depth along it,
+// flat: the slab of floors it takes, as a share of r), every building it reaches takes struct damage (a
+// house is ~1 600, the King's Tower 4 900, the Spire 19 200, The Needle 50 000), and dmg hits whoever
+// is within boom (the crew in full). All of it at full speed (at); slower is less, boosting a bit more.
+export const AIR_CRASH = {
+  minSpeed: 16, land: 24,
+  plane: { at: 46, r: 12, depth: 20, flat: 0.45, struct: 14000, dmg: 420, boom: 11 },
+  heli: { at: 25, r: 7.5, depth: 10, flat: 0.5, struct: 3600, dmg: 340, boom: 9 },
+};
 export const HELI_GUN = { dmg: 14, cd: 0.09, range: 170, spread: 0.028 };
 export const PLANE_GUN = { dmg: 12, cd: 0.07, range: 200, spread: 0.02 };
 export const BOMB = { radius: 8, dmg: 310, cd: 2.5 };
