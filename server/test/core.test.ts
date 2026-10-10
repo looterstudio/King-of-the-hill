@@ -1002,7 +1002,7 @@ test('loose pieces fall: blow out the bottom of a wall and the top comes down; a
 test('a network hiccup never moves a player twice or leaves input lag behind', async () => {
   const { Match } = await import('../src/match.ts');
   const m = new Match('j', 77, [1, 2], 0, { 1: 0, 2: 1 });
-  const seat = (m as unknown as { seats: Map<number, { queue: Input[] }> }).seats.get(1)!;
+  const seat = (m as unknown as { seats: Map<number, { inputs: { queue: Input[] } }> }).seats.get(1)!.inputs;
   let seq = 0, now = 0;
   const late: Input[] = [];
   for (let k = 0; k < 200; k++) {
@@ -1012,7 +1012,7 @@ test('a network hiccup never moves a player twice or leaves input lag behind', a
     m.step((now += 1000 / TICK_HZ));
     if (k > 120) assert.ok(seat.queue.length <= 1, `queue ${seat.queue.length} at tick ${k}: input lag piling up`);
   }
-  // every tick consumed exactly one sequence number: the stand-ins took the late ones' place
+  // every input ran exactly once: the body waited while they were stuck and caught up after
   assert.equal(m.sim.players.get(1)!.ack, seq);
 });
 

@@ -2,7 +2,8 @@
 // about sockets; everything it wants sent comes out as (targets, json) pairs. That is what lets
 // matches run on worker threads (one per core) while the main thread owns the connections.
 import { EYE_H, HEAD_Y, MAP_HALF, ROUND_MAX_MS, SNAP_EVERY, TICK_HZ, VIEW_RANGE } from '../../shared/src/constants.ts';
-import { Sim, emptyInput, type Input, type PlayerState, type SimEvent } from '../../shared/src/sim.ts';
+import { Sim, emptyInput, type Input, type PlayerState, type SimEvent, type TickInputs } from '../../shared/src/sim.ts';
+import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, frameJson, snapJsonFor, type Viewer } from '../../shared/src/snap.ts';
 import { Watchdog, type Flag } from './anticheat.ts';
 
@@ -20,29 +21,10 @@ const LOS_FAR_TICKS = 10;          // farther ones every 5th
 const LOS_BUDGET = 450;            // rays per snapshot per match; unchecked pairs are sent (fail open)
 
 class Seat {
-  queue: Input[] = [];
-  last: Input = emptyInput();
+  inputs = new InputQueue(emptyInput(), TICK_HZ); // see shared/src/inputq.ts
   present = true;
   viewer: Viewer = { lootVer: -1, lootAt: -9 };
   free: { x: number; z: number } | null = null; // free spectator camera
-  // one input per tick, in order: the client predicts with the same inputs, so none may be skipped
-  // or doubled. A client sending faster than 30 Hz only fills the queue; it never moves faster.
-  // A late packet: its tick runs with a stand-in (keep walking, no one-shots) that takes the missing
-  // input's sequence number, and the real one is dropped when it shows up. Running both moved the
-  // player twice (the client got shoved forward) and left every input after a hiccup queued for good:
-  // one 250 ms stall meant +267 ms of input lag for the rest of the match.
-  expect = -1; // the next sequence number a tick will consume (-1 until the first input)
-  push(i: Input) {
-    if (i.seq < this.expect) return; // its tick already ran with a stand-in
-    this.queue.push(i); if (this.queue.length > 10) this.queue.shift();
-  }
-  next(): Input {
-    const i = this.queue.shift();
-    if (i) { this.last = i; this.expect = i.seq + 1; return i; }
-    const stand = { ...this.last, jump: false, slide: false, slot: 0, reload: false, interact: false, item: 0, perk: false };
-    if (this.expect >= 0) stand.seq = this.expect++;
-    return stand;
-  }
 }
 
 export class Match {
@@ -71,7 +53,7 @@ export class Match {
 
   input(id: number, i: Input) {
     if (!this.watchdog.input(id, i.seq, i.yaw, i.pitch, this.sim.tick)) return;
-    this.seats.get(id)?.push(i);
+    this.seats.get(id)?.inputs.push(i);
   }
 
   private mateOf(id: number) {
@@ -191,8 +173,8 @@ export class Match {
 
   step(now: number): Outbound {
     const out: Send[] = [];
-    const inputs = new Map<number, Input>();
-    for (const [id, s] of this.seats) if (s.present) inputs.set(id, s.next());
+    const inputs: TickInputs = new Map();
+    for (const [id, s] of this.seats) if (s.present) inputs.set(id, s.inputs.next());
     this.emit(this.sim.step(1 / TICK_HZ, inputs), out);
     if (this.sim.tick % SNAP_EVERY === 0) this.snapshot(out);
     const drained = this.watchdog.drain(), flags = drained.length ? drained : undefined;

@@ -40,6 +40,8 @@ export interface Input {
   up: number; // helicopter climb (+1) / descend (-1)
   hold: boolean; // E held down: reviving a knocked teammate
 }
+// per player this tick: one input, several (catching up), none (late: the body waits), or no entry (idle)
+export type TickInputs = Map<number, Input | Input[]>;
 export interface Ring { x: number; y: number; r: number; nx: number; ny: number; nr: number; phase: number; closing: boolean; dps: number; nextAt: number }
 export interface Shot { ox: number; oy: number; oz: number; ex: number; ey: number; ez: number; by: number; hit: boolean }
 export type ElimCause = 'shot' | 'ring' | 'left' | 'boom' | 'ram';
@@ -274,13 +276,16 @@ export class Sim {
   }
 
   // teammates holding E next to a knocked player bring them back up
-  private stepRevives(dt: number, inputs: Map<number, Input>, ev: SimEvent[]) {
+  private stepRevives(dt: number, inputs: TickInputs, ev: SimEvent[]) {
     this.reviving.clear();
+    // E held, from the latest input; a tick with no input keeps the last answer (a late packet must
+    // not reset a five-second revive)
+    for (const [id, got] of inputs) { const l = Array.isArray(got) ? got[got.length - 1] : got; if (l) this.holding.set(id, l.hold); }
     for (const p of this.players.values()) {
       if (!p.alive || p.down === 0) continue;
       let by = 0;
       for (const q of this.players.values()) {
-        if (!q.alive || q.down > 0 || q.team !== p.team || q.id === p.id || q.ride || q.gliding || !inputs.get(q.id)?.hold) continue;
+        if (!q.alive || q.down > 0 || q.team !== p.team || q.id === p.id || q.ride || q.gliding || !this.holding.get(q.id)) continue;
         if (Math.hypot(q.x - p.x, q.z - p.z) < KNOCK.reach && Math.abs(q.y - p.y) < 1.6) { by = q.id; break; }
       }
       if (!by) { p.reviveT = 0; p.reviver = 0; continue; }
@@ -292,6 +297,7 @@ export class Sim {
     }
   }
   private reviving = new Set<number>();
+  private holding = new Map<number, boolean>();
 
   private stepRing() {
     const ring = this.ring, phase = RING_PHASES[ring.phase];
@@ -1011,7 +1017,77 @@ export class Sim {
     this.builds = this.builds.filter((x) => x.t > 0);
   }
 
-  step(dt: number, inputs: Map<number, Input>): SimEvent[] {
+  // one of a player's inputs: their own timeline (aim, movement, cooldowns, shooting, healing)
+  private playerInput(p: PlayerState, inp: Input, dt: number, ev: SimEvent[]) {
+    p.ack = inp.seq;
+    p.yaw = inp.yaw; p.pitch = inp.pitch;
+    p.fireCd = Math.max(0, p.fireCd - dt);
+    p.burstT = Math.max(0, p.burstT - dt);
+    if (p.down > 0) { moveStep(this.world, p, inp, dt); return; } // knocked: crawl, nothing else (bleeding is per tick)
+
+    p.axeCd = Math.max(0, p.axeCd - dt);
+    if (inp.slot >= 1 && inp.slot <= SLOTS && p.slots[inp.slot - 1] && (inp.slot - 1 !== p.cur || p.axe)) {
+      p.cur = inp.slot - 1; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.fireCd = Math.max(p.fireCd, 0.25); p.axe = false;
+    } else if (inp.slot === SLOTS + 1 && !p.axe) { p.axe = true; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.axeCd = Math.max(p.axeCd, 0.2); } // swapping can't skip the swing cooldown
+    if (inp.interact && !p.gliding) this.interact(p, ev);
+    if (inp.perk && !p.gliding && (!p.ride || p.seat > 0)) this.usePerk(p, ev); // passengers can throw things too
+    if (!p.alive || p.down > 0) return; // blew themselves up with their own C4: no healing, moving or looting after
+
+    // healing / shielding takes time and you walk slowly while doing it
+    if (inp.item && !p.use && !p.gliding && !p.ride) {
+      const it: ItemId | null = inp.item === 2 ? (p.items.med > 0 && p.hp < PLAYER_HP ? 'med' : null)
+        : p.items.big > 0 && p.shield < SHIELD_MAX ? 'big' : p.items.mini > 0 && p.shield < (ITEMS.mini.shieldCap ?? 50) ? 'mini' : null;
+      if (it) { p.use = { item: it, t: ITEMS[it].use }; p.reloadT = 0; }
+    }
+    if (p.use) {
+      if (inp.fire || inp.slot) p.use = null;
+      else if ((p.use.t -= dt) <= 0) {
+        const def = ITEMS[p.use.item];
+        p.items[p.use.item]--;
+        if (def.shield) p.shield = Math.min(def.shieldCap ?? SHIELD_MAX, p.shield + def.shield);
+        if (def.heal) p.hp = Math.min(PLAYER_HP, p.hp + def.heal);
+        p.use = null;
+      }
+    }
+
+    const w = p.axe ? null : this.weaponOf(p);
+    if (w) {
+      const def = WEAPONS[w];
+      if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) { p.reloadT = 0; p.mags[p.cur] = def.mag; } }
+      else if ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0)) { p.reloadT = def.reload; p.use = null; }
+    }
+
+    const impact = moveStep(this.world, p, inp, dt, !!p.use);
+    if (p.rideV) {
+      // crashes dent the vehicle; aircraft guns and bombs
+      const v = this.vehicles.find((x) => x.id === p.rideV);
+      if (v && v.kind === 'tank') { if (impact > 0) this.crashWorld(p, v, impact); } // tracks plough through walls, no damage to the tank
+      else if (v && impact > CRASH.minSpeed) { this.crashWorld(p, v, impact); this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), p.id, ev); }
+      if (covered(p.ride) && !p.seat) this.vehicleGuns(p, inp, ev);
+    } else this.autoPickup(p);
+    if (!p.alive || p.down > 0) return;
+
+    // the axe: left click swings, right click places a block
+    if (p.axe && !p.gliding && !p.ride && !p.use && !this.reviving.has(p.id) && p.axeCd === 0) {
+      if (inp.fire) { p.axeCd = AXE.cd; this.swing(p, ev); }
+      else if (inp.aim) { p.axeCd = BUILD.cd; this.place(p); }
+    }
+    // on foot, or leaning out of a car window (drive-by); never from inside an aircraft
+    if (w && !p.gliding && p.reloadT === 0 && !p.use && !this.reviving.has(p.id) && (!covered(p.ride) || p.seat > 0)) {
+      const def = WEAPONS[w];
+      if (def.spinUp) p.spin = inp.fire ? Math.min(def.spinUp, p.spin + dt) : Math.max(0, p.spin - dt * 2);
+      const spunUp = !def.spinUp || p.spin >= def.spinUp;
+      if (def.burst) {
+        if (inp.fire && p.fireCd === 0 && p.burstLeft === 0 && p.mags[p.cur] > 0) p.burstLeft = Math.min(def.burst, p.mags[p.cur]);
+        if (p.burstLeft > 0 && p.burstT === 0) {
+          this.shoot(p, w, inp, ev); p.burstLeft--; p.burstT = 0.075;
+          if (p.burstLeft === 0) p.fireCd = def.cd;
+        }
+      } else if (inp.fire && spunUp && p.fireCd === 0 && p.mags[p.cur] > 0) { p.fireCd = def.cd; this.shoot(p, w, inp, ev); }
+    }
+  }
+
+  step(dt: number, inputs: TickInputs): SimEvent[] {
     const ev: SimEvent[] = [];
     this.t += dt; this.tick++;
     this.stepRing();
@@ -1022,78 +1098,14 @@ export class Sim {
 
     for (const p of this.players.values()) {
       if (!p.alive) continue;
-      const inp = inputs.get(p.id) ?? { ...emptyInput(), yaw: p.yaw, pitch: p.pitch };
-      p.ack = inp.seq;
-      p.yaw = inp.yaw; p.pitch = inp.pitch;
-      p.fireCd = Math.max(0, p.fireCd - dt);
-      p.burstT = Math.max(0, p.burstT - dt);
-      if (p.down > 0) { // knocked: crawl, bleed, nothing else
-        moveStep(this.world, p, inp, dt);
-        if ((p.down -= dt) <= 0) { p.down = 0.001; this.eliminate(p.id, p.downBy, 'shot', ev); continue; }
-        if (Math.hypot(p.x - ring.x, p.z - ring.y) > ring.r) { this.hurt(p, ring.dps * dt, true); if (p.hp <= 0) this.fall(p, null, 'ring', ev); }
-        continue;
-      }
-
-      p.axeCd = Math.max(0, p.axeCd - dt);
-      if (inp.slot >= 1 && inp.slot <= SLOTS && p.slots[inp.slot - 1] && (inp.slot - 1 !== p.cur || p.axe)) {
-        p.cur = inp.slot - 1; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.fireCd = Math.max(p.fireCd, 0.25); p.axe = false;
-      } else if (inp.slot === SLOTS + 1 && !p.axe) { p.axe = true; p.reloadT = 0; p.spin = 0; p.burstLeft = 0; p.use = null; p.axeCd = 0.2; }
-      if (inp.interact && !p.gliding) this.interact(p, ev);
-      if (inp.perk && !p.gliding && (!p.ride || p.seat > 0)) this.usePerk(p, ev); // passengers can throw things too
-
-      // healing / shielding takes time and you walk slowly while doing it
-      if (inp.item && !p.use && !p.gliding && !p.ride) {
-        const it: ItemId | null = inp.item === 2 ? (p.items.med > 0 && p.hp < PLAYER_HP ? 'med' : null)
-          : p.items.big > 0 && p.shield < SHIELD_MAX ? 'big' : p.items.mini > 0 && p.shield < (ITEMS.mini.shieldCap ?? 50) ? 'mini' : null;
-        if (it) { p.use = { item: it, t: ITEMS[it].use }; p.reloadT = 0; }
-      }
-      if (p.use) {
-        if (inp.fire || inp.slot) p.use = null;
-        else if ((p.use.t -= dt) <= 0) {
-          const def = ITEMS[p.use.item];
-          p.items[p.use.item]--;
-          if (def.shield) p.shield = Math.min(def.shieldCap ?? SHIELD_MAX, p.shield + def.shield);
-          if (def.heal) p.hp = Math.min(PLAYER_HP, p.hp + def.heal);
-          p.use = null;
-        }
-      }
-
-      const w = p.axe ? null : this.weaponOf(p);
-      if (w) {
-        const def = WEAPONS[w];
-        if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) { p.reloadT = 0; p.mags[p.cur] = def.mag; } }
-        else if ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0)) { p.reloadT = def.reload; p.use = null; }
-      }
-
-      const impact = moveStep(this.world, p, inp, dt, !!p.use);
-      if (p.rideV) {
-        // crashes dent the vehicle; aircraft guns and bombs
-        const v = this.vehicles.find((x) => x.id === p.rideV);
-        if (v && v.kind === 'tank') { if (impact > 0) this.crashWorld(p, v, impact); } // tracks plough through walls, no damage to the tank
-        else if (v && impact > CRASH.minSpeed) { this.crashWorld(p, v, impact); this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), p.id, ev); }
-        if (covered(p.ride) && !p.seat) this.vehicleGuns(p, inp, ev);
-      } else this.autoPickup(p);
+      const got = inputs.get(p.id);
+      // an entry with no inputs: this player's input is late, their body waits the tick (the server
+      // catches up next tick). No entry at all (left, or a caller that doesn't track inputs): idle.
+      const list = got === undefined ? [{ ...emptyInput(), yaw: p.yaw, pitch: p.pitch, seq: p.ack }] : Array.isArray(got) ? got : [got];
+      for (const inp of list) { if (!p.alive) break; this.playerInput(p, inp, dt, ev); }
       if (!p.alive) continue;
-
-      // the axe: left click swings, right click places a block
-      if (p.axe && !p.gliding && !p.ride && !p.use && !this.reviving.has(p.id) && p.axeCd === 0) {
-        if (inp.fire) { p.axeCd = AXE.cd; this.swing(p, ev); }
-        else if (inp.aim) { p.axeCd = BUILD.cd; this.place(p); }
-      }
-      // on foot, or leaning out of a car window (drive-by); never from inside an aircraft
-      if (w && !p.gliding && p.reloadT === 0 && !p.use && !this.reviving.has(p.id) && (!covered(p.ride) || p.seat > 0)) {
-        const def = WEAPONS[w];
-        if (def.spinUp) p.spin = inp.fire ? Math.min(def.spinUp, p.spin + dt) : Math.max(0, p.spin - dt * 2);
-        const spunUp = !def.spinUp || p.spin >= def.spinUp;
-        if (def.burst) {
-          if (inp.fire && p.fireCd === 0 && p.burstLeft === 0 && p.mags[p.cur] > 0) p.burstLeft = Math.min(def.burst, p.mags[p.cur]);
-          if (p.burstLeft > 0 && p.burstT === 0) {
-            this.shoot(p, w, inp, ev); p.burstLeft--; p.burstT = 0.075;
-            if (p.burstLeft === 0) p.fireCd = def.cd;
-          }
-        } else if (inp.fire && spunUp && p.fireCd === 0 && p.mags[p.cur] > 0) { p.fireCd = def.cd; this.shoot(p, w, inp, ev); }
-      }
-
+      // world time, not the player's: bleeding out and the storm go on whether or not an input came
+      if (p.down > 0 && (p.down -= dt) <= 0) { p.down = 0.001; this.eliminate(p.id, p.downBy, 'shot', ev); continue; }
       if (Math.hypot(p.x - ring.x, p.z - ring.y) > ring.r) {
         this.hurt(p, ring.dps * dt, true);
         if (p.hp <= 0) this.fall(p, null, 'ring', ev);

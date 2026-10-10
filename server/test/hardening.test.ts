@@ -124,3 +124,66 @@ test('a worker that dies ends its matches and gets replaced', async () => {
   assert.ok(out.some((o) => o.roomId === 'r2'), 'the replacement worker runs matches');
   await host.stop();
 });
+
+// a client predicting with the same code as the browser, against the real Match, over a network
+// that delivers in order (TCP) with the given delay pattern
+async function predicted(plan: (k: number) => { gen: number; delay: number }, ticks = 600) {
+  const { Sim, moveStep, emptyInput } = await import('../../shared/src/sim.ts');
+  const KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down'] as const;
+  const copy = (f: Record<string, unknown>, t: Record<string, unknown>) => { for (const k of KEYS) t[k] = f[k]; };
+  const world = new Sim(77).world, m = new Match('p', 77, [1, 2], 0, { 1: 0, 2: 1 });
+  type In = ReturnType<typeof emptyInput>;
+  let pred: Record<string, unknown> | null = null, seq = 0, now = 0, lastAt = 0, worst = 0, n = 0;
+  const pending: In[] = [], net: { at: number; i: In }[] = [], snaps: { at: number; body: Record<string, unknown>; ack: number }[] = [];
+  for (let k = 0; k < ticks; k++) {
+    const { gen, delay } = plan(k);
+    for (let g = 0; g < gen && pred; g++) {
+      const i = { ...emptyInput(), seq: ++seq, fwd: 1, sprint: true, yaw: 0.3 + Math.sin(seq / 60) * 0.8, pitch: -0.4, jump: seq % 45 === 0 };
+      moveStep(world, pred as never, i, 1 / 30); pending.push(i); lastAt = Math.max(lastAt, k + delay); net.push({ at: lastAt, i });
+    }
+    while (net.length && net[0].at <= k) m.input(1, net.shift()!.i);
+    m.step((now += 1000 / 30));
+    const p = m.sim.players.get(1)!, body: Record<string, unknown> = {}; copy(p as never, body); snaps.push({ at: k + 2, body, ack: p.ack });
+    for (const s of snaps.filter((x) => x.at <= k)) {
+      const before = pred ? [pred.x as number, pred.y as number, pred.z as number] : null, base = { ...s.body };
+      for (let j = pending.length - 1; j >= 0; j--) if (pending[j].seq <= s.ack) pending.splice(j, 1);
+      for (const q of pending) moveStep(world, base as never, q, 1 / 30);
+      if (!pred) pred = base; else copy(base, pred);
+      if (before && k > 60) { const d = Math.hypot(before[0] - (pred.x as number), before[1] - (pred.y as number), before[2] - (pred.z as number)); if (d > 0.05) { n++; worst = Math.max(worst, d); } }
+    }
+    for (let j = snaps.length - 1; j >= 0; j--) if (snaps[j].at <= k) snaps.splice(j, 1);
+  }
+  return { corrections: n, worst, ack: m.sim.players.get(1)!.ack, seq };
+}
+
+test('prediction holds with no corrections through a stall, heavy jitter and a slow client timer', async () => {
+  for (const [name, plan] of [
+    ['steady', () => ({ gen: 1, delay: 2 })],
+    ['250 ms stall', (k: number) => ({ gen: 1, delay: k >= 300 && k < 308 ? 310 - k : 2 })],
+    ['jitter 1-5 ticks', (k: number) => ({ gen: 1, delay: 1 + ((k * 7919) % 5) })],
+    ['timer at 20 Hz, client catches up', (k: number) => ({ gen: k % 3 === 0 ? 0 : k % 3 === 1 ? 2 : 1, delay: 2 })],
+    ['client sending 20 inputs/s', (k: number) => ({ gen: k % 3 === 2 ? 0 : 1, delay: 2 })],
+  ] as [string, (k: number) => { gen: number; delay: number }][]) {
+    const r = await predicted(plan);
+    assert.equal(r.corrections, 0, `${name}: ${r.corrections} corrections, worst ${r.worst.toFixed(2)} m`);
+    assert.ok(r.seq - r.ack <= 6, `${name}: server ${r.seq - r.ack} inputs behind`);
+  }
+});
+
+test('a paused player stops, and moves again the moment they come back', async () => {
+  const { emptyInput } = await import('../../shared/src/sim.ts');
+  const m = new Match('pz', 77, [1, 2], 0, { 1: 0, 2: 1 });
+  const me = () => m.sim.players.get(1)!;
+  let seq = 0, now = 0;
+  const tick = (i?: Partial<ReturnType<typeof emptyInput>>) => { if (i) m.input(1, { ...emptyInput(), seq: ++seq, yaw: 0, ...i }); m.step((now += 1000 / 30)); };
+  for (let k = 0; k < 400; k++) tick({ fwd: 1 });                       // land and walk
+  for (let k = 0; k < 30; k++) tick({ fwd: 1, fire: true });
+  const at = { x: me().x, z: me().z };
+  for (let k = 0; k < 90; k++) tick();                                  // 3 s of nothing (Esc, alt-tab)
+  const drift = Math.hypot(me().x - at.x, me().z - at.z);
+  assert.ok(drift < 6, `kept running ${drift.toFixed(1)} m while paused`);
+  const back = { x: me().x, z: me().z };
+  for (let k = 0; k < 60; k++) tick({ strafe: 1 });
+  assert.ok(Math.hypot(me().x - back.x, me().z - back.z) > 5, 'moves again right away');
+  assert.equal(me().ack, seq);
+});

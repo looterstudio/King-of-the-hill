@@ -29,6 +29,7 @@ export class Client {
   skin = 0;            // character picked in the lobby (looks only)
   authing = false;     // a sign-in is waiting on the balance read
   private lastLobbyAction = 0;
+  private lobbyTokens = 5;
   constructor(public id: number, public ws: WebSocket, public num: string, public nonce: string, private rate: number) { this.tokens = rate; }
 
   send(msg: ServerMsg) { this.sendRaw(JSON.stringify(msg)); }
@@ -38,8 +39,15 @@ export class Client {
     if (droppable && this.ws.bufferedAmount > SOFT_BUFFER) return;
     this.ws.send(s);
   }
-  // queue / leave at most once a second: each one changes a room's seat list
-  lobbyAction(): boolean { const now = Date.now(); if (now - this.lastLobbyAction < 1000) return false; this.lastLobbyAction = now; return true; }
+  // a few quick ones are fine (leave, then drop in again); a socket toggling all day gets one a second
+  lobbyAction(): boolean {
+    const now = Date.now();
+    this.lobbyTokens = Math.min(5, this.lobbyTokens + (now - this.lastLobbyAction) / 1000);
+    this.lastLobbyAction = now;
+    if (this.lobbyTokens < 1) { this.send({ t: 'error', msg: 'slow down a moment and try again' }); return false; }
+    this.lobbyTokens -= 1;
+    return true;
+  }
   // token bucket: refuse floods without punishing a burst after a lag spike
   allow(): boolean {
     const now = Date.now();

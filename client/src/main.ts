@@ -559,13 +559,27 @@ net.on((m: ServerMsg) => {
 });
 
 // ---------- input upload, 30 Hz ----------
+// 30 inputs per second of real time, whatever the timer does: a busy main thread (a heavy frame, a slow
+// machine) delays setInterval, and a client sending fewer inputs than the server runs ticks fell out
+// of step with it (rubber-banding, or a frozen player). Missed ticks are caught up, a few at a time.
+let inputClock = performance.now();
+const STILL = { fwd: 0, strafe: 0, sprint: false, grapple: false, jump: false, slide: false, reload: false, slot: 0, up: 0, interact: false, perk: false, item: 0, hold: false, build: false, fire: false, aim: false };
 setInterval(() => {
-  if (state.screen !== 'game' || !input.locked) return;
-  const s = input.sample();
-  if (game.self && !game.self.alive && !state.over) { spectatorTick(s); return; }
-  const inp = game.tick(s);
-  if (inp) net.send({ t: 'in', ...inp });
-}, 1000 / TICK_HZ);
+  const now = performance.now();
+  let due = Math.floor((now - inputClock) / (1000 / TICK_HZ));
+  if (due <= 0) return;
+  if (due > 6) { inputClock = now - 1000 / TICK_HZ; due = 1; } // a long freeze: the server resyncs, don't flood it
+  inputClock += due * (1000 / TICK_HZ);
+  if (state.screen !== 'game') return;
+  for (let k = 0; k < due; k++) {
+    // paused (Esc, alt-tab, a permission prompt): keep the server fed with standing still, so the
+    // character doesn't keep running and shooting on the last keys held
+    const s = input.locked ? input.sample() : { ...STILL, yaw: input.yaw, pitch: input.pitch };
+    if (game.self && !game.self.alive && !state.over) { spectatorTick(s); return; }
+    const inp = game.tick(s);
+    if (inp) net.send({ t: 'in', ...inp });
+  }
+}, 1000 / TICK_HZ / 2);
 
 // ---------- spectating ----------
 function matesAlive() { return [...game.mates].filter((id) => !state.dead.has(id)); }

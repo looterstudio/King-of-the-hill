@@ -4,7 +4,8 @@ import {
   COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, KNOCK, matchPoints, MAP_HALF, MODES, MODE_IDS, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type Mode, type WeaponId,
 } from '../../shared/src/constants.ts';
 import type { ClientMsg, LobbyRoom, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
-import { Sim, emptyInput, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
+import { Sim, emptyInput, sanitizeInput, type Input, type PlayerState, type TickInputs } from '../../shared/src/sim.ts';
+import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
 
@@ -24,8 +25,7 @@ export class LocalNet {
   private teamPlace = new Map<number, number>();
   private me: RoomSeat | null = null;
   private myWallet = fakeWallet();
-  private queue: Input[] = [];
-  private last: Input = emptyInput();
+  private mine = new InputQueue(emptyInput(), TICK_HZ);
   room: { id: string; seed: number; mode: Mode; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
   private free: { x: number; z: number } | null = null;
   // the other rooms on the 'server', for the lobby list (simulated: this demo only runs yours)
@@ -97,7 +97,7 @@ export class LocalNet {
       }
       case 'spec': this.spectate(m); break;
       case 'leave': this.closeRoom(); break;
-      case 'in': this.queue.push(sanitizeInput(m)); if (this.queue.length > 10) this.queue.shift(); break;
+      case 'in': this.mine.push(sanitizeInput(m)); break;
     }
   }
 
@@ -135,7 +135,7 @@ export class LocalNet {
     // a team glides to the same spot
     const spot = new Map<number, { x: number; z: number }>();
     for (const b of r.bots) { const t = teams.get(b.id)!; const at = spot.get(t) ?? { x: b.dropX, z: b.dropZ }; spot.set(t, at); b.dropX = at.x + (Math.random() - 0.5) * 8; b.dropZ = at.z + (Math.random() - 0.5) * 8; }
-    this.queue = []; this.last = emptyInput(); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
+    this.mine = new InputQueue(emptyInput(), TICK_HZ); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
@@ -264,10 +264,8 @@ export class LocalNet {
     const r = this.room;
     if (!r || !r.sim) return;
     const sim = r.sim;
-    const inputs = new Map<number, Input>();
-    const mine = this.queue.shift();
-    if (mine) this.last = mine;
-    inputs.set(1, mine ?? { ...this.last, jump: false, slide: false, slot: 0, reload: false, interact: false, perk: false, item: 0 });
+    const inputs: TickInputs = new Map();
+    inputs.set(1, this.mine.next()); // the same rules as the server (shared/src/inputq.ts)
     for (const b of r.bots) if (sim.players.get(b.id)?.alive) inputs.set(b.id, this.botInput(b, sim));
     for (const e of sim.step(1 / TICK_HZ, inputs)) {
       if (e.kind === 'elim') {
