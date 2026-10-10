@@ -5,6 +5,36 @@ import { WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 import { INK_IDS, type InkRenderer } from './ink.ts';
 
 type Mat = THREE.Material;
+
+// Models are rebuilt all the time (every player that comes into view, loot, vehicles, forts) and each
+// one is a few dozen small primitives. intern() swaps every geometry of a freshly built model for an
+// identical shared one, so a figure costs no new GPU buffers after the first and nothing leaks when
+// it is thrown away. Shared geometries are flagged so dispose passes leave them alone.
+const shared = new Map<string, THREE.BufferGeometry>();
+function geoKey(g: THREE.BufferGeometry) {
+  const pos = g.getAttribute('position'), a = pos.array as ArrayLike<number>;
+  let h = 0; for (let i = 0; i < a.length; i += 7) h = (h * 31 + Math.round(a[i] * 1000)) | 0; // baked rotations/offsets too
+  return `${g.type}|${JSON.stringify((g as unknown as { parameters?: unknown }).parameters ?? null)}|${a.length}|${h}`;
+}
+export function intern<T extends THREE.Object3D>(root: T): T {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || (m as unknown as THREE.InstancedMesh).isInstancedMesh || m.geometry.userData.shared) return;
+    const k = geoKey(m.geometry), hit = shared.get(k);
+    if (hit) { m.geometry.dispose(); m.geometry = hit; }
+    else { m.geometry.userData.shared = true; shared.set(k, m.geometry); }
+  });
+  return root;
+}
+// what to free when a model leaves for good: its own geometries (shared ones stay), instanced buffers
+export function disposeTree(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if ((m as unknown as THREE.InstancedMesh).isInstancedMesh) (m as unknown as THREE.InstancedMesh).dispose();
+    if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
+  });
+}
+const attachIf = (parent: THREE.Object3D, o: THREE.Object3D, on: boolean) => { if (on && o.parent !== parent) parent.add(o); else if (!on && o.parent) o.parent.remove(o); };
 const box = (w: number, h: number, d: number, m: Mat, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); return o; };
 // cylinder lying along -z (barrels, scopes)
 const tube = (r: number, len: number, m: Mat, x = 0, y = 0, z = 0, seg = 10) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, seg).rotateX(Math.PI / 2), m); o.position.set(x, y, z); return o; };
@@ -227,6 +257,7 @@ export interface Figure {
   legL: THREE.Group; legR: THREE.Group; armL: THREE.Group; armR: THREE.Group;
   guns: Map<WeaponId, THREE.Group>; axe: THREE.Group; chute: THREE.Group; crown: THREE.Group;
   phase: number; lastX: number; lastZ: number; speed: number;
+  gunMats: GunMats; held: THREE.Group | null; // only what is in hand is in the scene (13 hidden guns cost every frame)
 }
 
 const SUIT_INKS = [INK_IDS.RED, INK_IDS.PINK, INK_IDS.ORANGE, INK_IDS.GREEN, INK_IDS.BROWN];
@@ -253,16 +284,10 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure
   const arm = (side: number) => pivot(side * 0.3, 0.55, 0, box(0.13, 0.13, 0.5, suit, 0, -0.03, -0.22), box(0.12, 0.12, 0.12, paper, side * -0.02, -0.03, -0.5));
   const armL = arm(-1), armR = arm(1);
   armL.rotation.y = -0.35; // left hand comes across to the handguard
-  const guns = new Map<WeaponId, THREE.Group>();
+  const guns = new Map<WeaponId, THREE.Group>(); // built the first time this player holds each one
   const gunMats = { body: ink.material(INK_IDS.BLUE), dark, accent: ink.material(INK_IDS.ORANGE) };
-  for (const w of WEAPON_IDS) {
-    const g = buildGun(w, gunMats);
-    g.scale.setScalar(1.15); g.position.set(0.02, -0.06, -0.48); g.visible = false;
-    armR.add(g); guns.set(w, g);
-  }
-  const axe = buildAxe(gunMats);
-  axe.scale.setScalar(1.3); axe.position.set(0.02, -0.04, -0.4); axe.visible = false;
-  armR.add(axe);
+  const axe = intern(buildAxe(gunMats));
+  axe.scale.setScalar(1.3); axe.position.set(0.02, -0.04, -0.4);
   torso.add(armL, armR);
 
   // head: each character has its own
@@ -303,18 +328,17 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure
     s.rotation.z = sx * 0.25; s.rotation.x = -sz * 0.25;
     chute.add(s);
   }
-  chute.visible = false;
-  root.add(chute);
+  // attached while gliding only
 
   // kill leader's crown
   const crown = new THREE.Group();
   const gold = ink.material(INK_IDS.ORANGE);
   crown.add(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.2, 0.12, 10, 1, true), gold));
   for (let i = 0; i < 5; i++) { const sp = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 4), gold); const a = (i / 5) * Math.PI * 2; sp.position.set(Math.cos(a) * 0.2, 0.12, Math.sin(a) * 0.2); crown.add(sp); }
-  crown.position.y = 2.08; crown.visible = false;
-  root.add(crown);
+  crown.position.y = 2.08; // attached for the kill leader only
 
-  return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0 };
+  intern(root); intern(chute); intern(crown);
+  return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0, gunMats, held: null };
 }
 
 // pose a figure for this frame from its interpolated state
@@ -324,11 +348,20 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   f.lastX = x; f.lastZ = z;
   f.root.position.set(x, y, z);
   f.root.rotation.y = yaw;
-  for (const [w, g] of f.guns) g.visible = w === weapon && !gliding;
-  f.axe.visible = axe && !gliding && !down;
-  f.chute.visible = gliding;
-  f.crown.visible = leader;
-  f.crown.rotation.y += dt * 1.5;
+  // what is in hand: the axe, the gun, or nothing (gliding, knocked)
+  let want: THREE.Group | null = null;
+  if (!gliding && !down) {
+    if (axe) want = f.axe;
+    else if (weapon) {
+      let g = f.guns.get(weapon);
+      if (!g) { g = intern(buildGun(weapon, f.gunMats)); g.scale.setScalar(1.15); g.position.set(0.02, -0.06, -0.48); f.guns.set(weapon, g); }
+      want = g;
+    }
+  }
+  if (want !== f.held) { if (f.held) f.armR.remove(f.held); if (want) f.armR.add(want); f.held = want; }
+  attachIf(f.root, f.chute, gliding);
+  attachIf(f.root, f.crown, leader);
+  if (leader) f.crown.rotation.y += dt * 1.5;
 
   const run = Math.min(1, f.speed / 7);
   f.phase += dt * (4 + f.speed * 1.4);
@@ -342,8 +375,6 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   f.armL.rotation.x = aim; f.armR.rotation.x = aim;
   f.head.rotation.x = gliding ? 0 : pitch * 0.6;
   if (down) { // knocked: flat on the belly, crawling on the elbows, no gun
-    for (const g of f.guns.values()) g.visible = false;
-    f.axe.visible = false;
     f.torso.rotation.x = 1.35; f.torso.position.y = 0.3;
     f.legL.rotation.x = 1.45 + swing * 0.3; f.legR.rotation.x = 1.45 - swing * 0.3;
     f.armL.rotation.x = 2.4 + swing * 0.5; f.armR.rotation.x = 2.4 - swing * 0.5; f.head.rotation.x = -0.9;

@@ -8,7 +8,7 @@ import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildAxe, buildCase, buildFigure, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, poseFigure, type Figure, type VehicleModel } from './models.ts';
+import { buildAxe, buildCase, buildFigure, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
@@ -111,6 +111,10 @@ export class Game3D {
     this.buildGuns();
   }
 
+  // a model leaving for good: out of the scene, and its own GPU buffers freed (they used to pile up
+  // every match and every time loot came back into view)
+  private drop(o: THREE.Object3D) { o.parent?.remove(o); disposeTree(o); }
+
   // ---------------- world ----------------
   setRoom(seed: number, seats: RoomSeat[], you: number) {
     this.you = you;
@@ -118,25 +122,25 @@ export class Game3D {
     const team = this.seats.get(you)?.team ?? 0;
     this.mates = new Set(seats.filter((s) => team > 0 && s.team === team && s.id !== you).map((s) => s.id));
     this.snaps = []; this.pending = []; this.self = null; this.pred = null; this.watch = null; this.free = null; this.tracers = []; this.nukes = [];
-    for (const a of this.avatars.values()) { this.ink.scene.remove(a.root); a.tag.remove(); }
+    for (const a of this.avatars.values()) { this.drop(a.root); a.tag.remove(); }
     this.avatars.clear();
-    for (const l of this.loot.values()) this.ink.scene.remove(l.g);
-    for (const c of this.cases.values()) this.ink.scene.remove(c.root);
-    for (const f of this.fx.values()) this.ink.scene.remove(f.g);
-    for (const b of this.builds.values()) for (const m of b.meshes) this.ink.scene.remove(m);
-    for (const b of this.booms) this.ink.scene.remove(b.m);
+    for (const l of this.loot.values()) this.drop(l.g);
+    for (const c of this.cases.values()) this.drop(c.root);
+    for (const f of this.fx.values()) this.drop(f.g);
+    for (const b of this.builds.values()) for (const m of b.meshes) this.drop(m);
+    for (const b of this.booms) this.drop(b.m);
     this.loot.clear(); this.cases.clear(); this.fx.clear(); this.builds.clear(); this.booms = [];
-    for (const f of this.falling) this.ink.scene.remove(f.g);
-    for (const d of this.debris) this.ink.scene.remove(d.m);
+    for (const f of this.falling) this.drop(f.g);
+    for (const d of this.debris) this.drop(d.m);
     this.falling = []; this.debris = []; this.shardCache = null;
-    for (const m of this.vmodels.values()) this.ink.scene.remove(m.root);
+    for (const m of this.vmodels.values()) this.drop(m.root);
     this.vmodels.clear(); this.drops = []; this.vehiclesNow = [];
     this.buildWorld(new World(seed)); // always fresh: forts from the last match must not linger
   }
 
   private buildWorld(w: World) {
     this.world = w;
-    this.worldGroup.clear();
+    for (const o of [...this.worldGroup.children]) { if (o === this.boxMesh) { this.boxMesh = null; this.boxInk = null; } this.drop(o); }
     const ink = this.ink;
     const boxGeo = new THREE.BoxGeometry(1, 1, 1);
     const instanced = (geo: THREE.BufferGeometry, items: { m: THREE.Matrix4; ink: number }[]) => {
@@ -214,7 +218,7 @@ export class Game3D {
 
   private makeBoxMesh() {
     const w = this.world!;
-    if (this.boxMesh) { this.worldGroup.remove(this.boxMesh); this.boxMesh.geometry.dispose(); }
+    if (this.boxMesh) { this.worldGroup.remove(this.boxMesh); this.boxMesh.geometry.dispose(); this.boxMesh.dispose(); }
     const cap = w.boxes.length + WRECK_BUDGET + BUILD.cap + 4000;
     const g = new THREE.BoxGeometry(1, 1, 1);
     const attr = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
@@ -230,6 +234,9 @@ export class Game3D {
     this.worldGroup.add(mesh);
   }
   private static ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+  // shared by every debris chunk and explosion (a falling building used to make a hundred new geometries)
+  private static CHUNK = (() => { const g = new THREE.BoxGeometry(0.35, 0.35, 0.35); g.userData.shared = true; return g; })();
+  private static BALL = (() => { const g = new THREE.IcosahedronGeometry(1, 2); g.userData.shared = true; return g; })();
   private static M = new THREE.Matrix4();
   private dirtyBoxes: number[] = [];
   private setBox(i: number) {
@@ -248,7 +255,8 @@ export class Game3D {
     const d = [...new Set(this.dirtyBoxes)].sort((a, b) => a - b);
     this.dirtyBoxes = [];
     if (!d.length) return;
-    mesh.instanceMatrix.clearUpdateRanges(); ink.clearUpdateRanges();
+    // three clears the ranges itself after uploading them; clearing here threw away the ranges of an
+    // earlier event in the same frame (dead blocks stayed drawn, new shards invisible: big fights)
     let s = d[0], e = d[0];
     const flush = () => { mesh.instanceMatrix.addUpdateRange(s * 16, (e - s + 1) * 16); ink.addUpdateRange(s, e - s + 1); };
     for (let k = 1; k < d.length; k++) { if (d[k] - e <= 32) e = d[k]; else { flush(); s = e = d[k]; } }
@@ -307,7 +315,7 @@ export class Game3D {
     for (const i of kill) {
       this.setBox(i);
       const fort = this.sepIdx.get(i);
-      if (fort) { this.ink.scene.remove(fort); this.sepIdx.delete(i); }
+      if (fort) { this.drop(fort); this.sepIdx.delete(i); }
       const b = w.boxes[i];
       // a few chunks fly off each broken block
       if (n < 36 && !(b.sid && fell.has(b.sid)) && !dropped.has(i) && World.isBlock(b)) {
@@ -315,7 +323,7 @@ export class Game3D {
         const cam = this.ink.camera.position, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, cz = (b.z0 + b.z1) / 2;
         if (Math.hypot(cam.x - cx, cam.z - cz) > 160) continue;
         for (let k = 0; k < 3; k++) {
-          const m = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), this.ink.material(b.ink));
+          const m = new THREE.Mesh(Game3D.CHUNK, this.ink.material(b.ink)); // one shared geometry for every chunk
           m.position.set(cx + (Math.random() - 0.5), cy + (Math.random() - 0.5), cz + (Math.random() - 0.5));
           this.ink.scene.add(m);
           this.debris.push({ m, vx: (Math.random() - 0.5) * 9, vy: 3 + Math.random() * 6, vz: (Math.random() - 0.5) * 9, t: 0 });
@@ -347,11 +355,11 @@ export class Game3D {
     this.world.killBoxes(all);
     for (const i of all) { this.sepIdx.delete(i); this.setBox(i); }
     this.boxesChanged();
-    for (const m of b.meshes) this.ink.scene.remove(m);
+    for (const m of b.meshes) this.drop(m);
     this.builds.delete(id);
   }
   onBoom(x: number, y: number, z: number, r: number, nuke: boolean) {
-    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), this.ink.material(nuke ? INK_IDS.RED : INK_IDS.ORANGE));
+    const m = new THREE.Mesh(Game3D.BALL, this.ink.material(nuke ? INK_IDS.RED : INK_IDS.ORANGE));
     m.position.set(x, y + (nuke ? 0 : 0.5), z);
     m.scale.setScalar(0.1);
     this.ink.scene.add(m);
@@ -402,7 +410,7 @@ export class Game3D {
   // ---------------- loot / cases / fx from snapshots ----------------
   private syncLoot(list: SnapLoot[]) {
     const keep = new Set(list.map((l) => l[0]));
-    for (const [id, v] of this.loot) if (!keep.has(id)) { this.ink.scene.remove(v.g); this.loot.delete(id); }
+    for (const [id, v] of this.loot) if (!keep.has(id)) { this.drop(v.g); this.loot.delete(id); }
     const gunMats = { body: this.ink.material(INK_IDS.BLUE), dark: this.ink.material(INK_IDS.GRAPHITE), accent: this.ink.material(INK_IDS.ORANGE) };
     for (const d of list) {
       let v = this.loot.get(d[0]);
@@ -411,7 +419,7 @@ export class Game3D {
         const rar = lootRarity(d[4], d[5]);
         const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.04, 16), this.ink.material(RARITY_INK[rar]));
         base.position.y = 0.02;
-        const item = d[4] === 0 ? buildGun(d[5] as WeaponId, gunMats) : buildItem(d[5], this.ink);
+        const item = intern(d[4] === 0 ? buildGun(d[5] as WeaponId, gunMats) : buildItem(d[5], this.ink));
         if (d[4] === 0) { item.rotation.set(0, Math.PI / 2, Math.PI / 2.3); item.position.y = 0.35; }
         item.name = 'item';
         g.add(base, item);
@@ -426,11 +434,11 @@ export class Game3D {
 
   private syncCases(list: SnapCase[]) {
     const keep = new Set(list.map((c) => c[0]));
-    for (const [id, v] of this.cases) if (!keep.has(id)) { this.ink.scene.remove(v.root); this.cases.delete(id); }
+    for (const [id, v] of this.cases) if (!keep.has(id)) { this.drop(v.root); this.cases.delete(id); }
     for (const d of list) {
       let v = this.cases.get(d[0]);
       if (!v) {
-        const { root, lid } = buildCase(this.ink, !!d[4]);
+        const { root, lid } = buildCase(this.ink, !!d[4]); intern(root);
         root.position.set(d[1], d[2], d[3]);
         root.rotation.y = (d[0] * 1.7) % Math.PI;
         this.ink.scene.add(root);
@@ -443,16 +451,16 @@ export class Game3D {
 
   private syncFx(list: Snap['fx']) {
     const keep = new Set(list.map((f) => f[1]));
-    for (const [id, v] of this.fx) if (!keep.has(id)) { this.ink.scene.remove(v.g); this.fx.delete(id); }
+    for (const [id, v] of this.fx) if (!keep.has(id)) { this.drop(v.g); this.fx.delete(id); }
     this.nukes = [];
     this.drops = [];
     for (const f of list) {
       const [kind, id, x, y, z, t] = f;
       let v = this.fx.get(id);
       if (!v) {
-        const g = kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink)
+        const g = intern(kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink)
           : kind === 'pad' ? buildPad(this.ink) : kind === 'c4' ? buildItem('c4', this.ink) : kind === 'bomb' ? buildItem('nuke', this.ink) : kind === 'drop' ? buildSupply(this.ink)
-          : kind === 'rocket' || kind === 'missile' ? buildItem('rocket', this.ink) : kind === 'molotov' ? buildItem('molotov', this.ink) : kind === 'shock' ? buildItem('shock', this.ink) : kind === 'fire' ? buildFire(this.ink) : buildNukeMarker(this.ink);
+          : kind === 'rocket' || kind === 'missile' ? buildItem('rocket', this.ink) : kind === 'molotov' ? buildItem('molotov', this.ink) : kind === 'shock' ? buildItem('shock', this.ink) : kind === 'fire' ? buildFire(this.ink) : buildNukeMarker(this.ink));
         this.ink.scene.add(g);
         v = { g, kind };
         this.fx.set(id, v);
@@ -649,7 +657,7 @@ export class Game3D {
     for (const v of out) {
       seen.add(v[0]);
       let m = this.vmodels.get(v[0]);
-      if (!m) { m = buildVehicle(this.ink, v[1], v[0]); this.ink.scene.add(m.root); this.vmodels.set(v[0], m); }
+      if (!m) { m = buildVehicle(this.ink, v[1], v[0]); intern(m.root); this.ink.scene.add(m.root); this.vmodels.set(v[0], m); }
       m.root.position.set(v[2], v[3], v[4]);
       // planes bank into turns, helicopters lean with their pitch
       let roll = 0;
@@ -668,7 +676,7 @@ export class Game3D {
         }
       }
     }
-    for (const [id, m] of this.vmodels) if (!seen.has(id)) { this.ink.scene.remove(m.root); this.vmodels.delete(id); }
+    for (const [id, m] of this.vmodels) if (!seen.has(id)) { this.drop(m.root); this.vmodels.delete(id); }
   }
 
   private updatePrompt() {
@@ -822,14 +830,14 @@ export class Game3D {
         f.v += 24 * dt; f.g.position.y -= f.v * dt;
         if (f.land + f.g.position.y <= 0.05 || f.t > 3) {
           if (f.dust) { const p = new THREE.Box3().setFromObject(f.g).getCenter(new THREE.Vector3()); this.onBoom(p.x, Math.max(0.5, p.y), p.z, 3.5, false); }
-          this.ink.scene.remove(f.g); return false;
+          this.drop(f.g); return false;
         }
         return true;
       }
       f.v += 7 * dt;
       f.g.position.y -= f.v * dt;
       f.g.rotation.x += f.rx * dt; f.g.rotation.z += f.rz * dt;
-      if (f.t > 4) { this.ink.scene.remove(f.g); return false; }
+      if (f.t > 4) { this.drop(f.g); return false; }
       return true;
     });
     this.debris = this.debris.filter((d) => {
@@ -837,14 +845,14 @@ export class Game3D {
       d.m.position.x += d.vx * dt; d.m.position.y += d.vy * dt; d.m.position.z += d.vz * dt;
       d.m.rotation.x += dt * 6; d.m.rotation.y += dt * 4;
       if (d.m.position.y < 0.15) { d.m.position.y = 0.15; d.vy = Math.abs(d.vy) * 0.3; d.vx *= 0.6; d.vz *= 0.6; }
-      if (d.t > 1.6) { this.ink.scene.remove(d.m); d.m.geometry.dispose(); return false; }
+      if (d.t > 1.6) { this.drop(d.m); return false; }
       return true;
     });
     this.booms = this.booms.filter((b) => {
       b.t += dt;
       const k = b.t / b.life;
       b.m.scale.setScalar(Math.max(0.1, b.r * Math.min(1, k * 2.5)) * (k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1));
-      if (k >= 1) { this.ink.scene.remove(b.m); return false; }
+      if (k >= 1) { this.drop(b.m); return false; }
       return true;
     });
 
