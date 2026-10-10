@@ -27,6 +27,8 @@ export class Client {
   wantRoom = '';       // a room picked from the lobby list
   team = 0;
   skin = 0;            // character picked in the lobby (looks only)
+  authing = false;     // a sign-in is waiting on the balance read
+  private lastLobbyAction = 0;
   constructor(public id: number, public ws: WebSocket, public num: string, public nonce: string, private rate: number) { this.tokens = rate; }
 
   send(msg: ServerMsg) { this.sendRaw(JSON.stringify(msg)); }
@@ -36,6 +38,8 @@ export class Client {
     if (droppable && this.ws.bufferedAmount > SOFT_BUFFER) return;
     this.ws.send(s);
   }
+  // queue / leave at most once a second: each one changes a room's seat list
+  lobbyAction(): boolean { const now = Date.now(); if (now - this.lastLobbyAction < 1000) return false; this.lastLobbyAction = now; return true; }
   // token bucket: refuse floods without punishing a burst after a lag spike
   allow(): boolean {
     const now = Date.now();
@@ -64,7 +68,9 @@ export class Room {
   startsAt: number | null = null;
   private overAt = 0;
   verifiedAtStart = 0;
+  teamsAtStart = 0;
   closed = false;
+  private dirty = false; // the seat list changed: sent once per lobby tick, not once per join/leave
   flagged = new Map<number, string>();
 
   constructor(private hooks: RoomHooks, private host: MatchHost, readonly mode: Mode = 'solo') {}
@@ -77,10 +83,18 @@ export class Room {
   }
 
   private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team, skin: c.skin })); }
-  private announce() {
-    const seats = this.seatList();
-    for (const c of this.seats) c.send({ t: 'room', roomId: this.id, you: c.id, seats, state: this.phase, startsAt: this.startsAt, seed: this.seed, mode: this.mode });
+  // queue/leave spam used to send the whole seat list to every seat on every toggle (one attacker
+  // turned 1.7 KB/s into 11.6 MB/s for a full room): now at most once per lobby tick, serialized once
+  private announce() { this.dirty = true; }
+  private flushAnnounce() {
+    if (!this.dirty) return;
+    this.dirty = false;
+    const head = `{"t":"room","roomId":${JSON.stringify(this.id)},"you":`;
+    const tail = `,"seats":${JSON.stringify(this.seatList())},"state":"${this.phase}","startsAt":${JSON.stringify(this.startsAt)},"seed":${this.seed},"mode":"${this.mode}"}`;
+    for (const c of this.seats) if (c.room === this) c.sendRaw(head + c.id + tail);
   }
+  // how many teams the current seats would make: a match needs two, or the only team "wins" on the first tick
+  private teamCount() { return new Set(makeTeams(this.seats.map((c) => ({ id: c.id, party: c.party })), MODES[this.mode].size).values()).size; }
   view(now: number): LobbyRoom {
     const at = this.startsAt ?? (this.fillDeadline !== null ? this.fillDeadline + COUNTDOWN_MS : null);
     return { id: this.id, mode: this.mode, n: this.seats.length, state: this.phase, startsIn: at === null ? null : Math.max(0, Math.ceil((at - now) / 1000)) };
@@ -117,22 +131,27 @@ export class Room {
     if (this.phase === 'waiting') {
       if (this.seats.length >= ROOM_MIN && this.fillDeadline === null) { this.fillDeadline = now + FILL_WAIT_MS; this.announce(); }
       if (this.seats.length < ROOM_MIN) this.fillDeadline = null;
-      if (this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) {
+      if ((this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) && this.teamCount() >= 2) {
         this.phase = 'countdown'; this.startsAt = now + COUNTDOWN_MS; this.announce();
       }
     } else if (this.phase === 'countdown') {
       if (this.startsAt !== null && now >= this.startsAt) {
-        this.phase = 'live';
-        this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
         const teams = makeTeams(this.seats.map((c) => ({ id: c.id, party: c.party })), MODES[this.mode].size);
-        for (const c of this.seats) c.team = teams.get(c.id) ?? c.id;
-        this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries(this.seats.map((c) => [c.id, c.team])));
-        this.announce();
+        this.teamsAtStart = new Set(teams.values()).size;
+        if (this.teamsAtStart < 2) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; this.announce(); } // someone left: wait for more
+        else {
+          this.phase = 'live';
+          this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
+          for (const c of this.seats) c.team = teams.get(c.id) ?? c.id;
+          this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries(this.seats.map((c) => [c.id, c.team])));
+          this.announce();
+        }
       }
     } else if (this.phase === 'over' && now >= this.overAt) {
       for (const c of this.seats) if (c.room === this) c.room = null;
       this.closed = true;
     }
+    this.flushAnnounce();
   }
 
   private finish(winnerIds: number[], places: Record<number, [number, number]>, now: number) {
@@ -143,7 +162,7 @@ export class Room {
     const counts = this.verifiedAtStart >= this.hooks.minVerifiedForTicket;
     for (const c of this.seats) {
       const [place, kills] = places[c.id] ?? [0, 0];
-      const pts = matchPoints(this.mode, place, kills, winnerIds.includes(c.id));
+      const pts = matchPoints(this.mode, place, kills, winnerIds.includes(c.id), this.teamsAtStart);
       points[c.id] = pts;
       if (!counts || !pts || !c.wallet || this.flagged.has(c.id)) continue;
       const r = this.hooks.onScore(this, c, pts);

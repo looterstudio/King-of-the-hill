@@ -17,8 +17,11 @@ export const MODES: Record<Mode, { name: string; size: number; tickets: number }
 // top 5 duos, top 3 squads), plus kills. Payouts split the pot by points.
 export const POINTS = { win: { solo: 100, duo: 50, squad: 25 } as Record<Mode, number>, top: 20, kill: 5, killCap: 10 };
 export const topPlaces = (mode: Mode) => Math.ceil(10 / MODES[mode].size);
-export function matchPoints(mode: Mode, place: number, kills: number, won: boolean) {
-  return (won ? POINTS.win[mode] : place > 0 && place <= topPlaces(mode) ? POINTS.top : 0) + Math.min(kills, POINTS.killCap) * POINTS.kill;
+// field: teams at the start. A top place only pays in the top half of the field, so a room of a
+// few of your own wallets doesn't hand placement points to everyone in it.
+export function matchPoints(mode: Mode, place: number, kills: number, won: boolean, field = Infinity) {
+  const top = Math.min(topPlaces(mode), Math.floor(field / 2));
+  return (won ? POINTS.win[mode] : place > 0 && place <= top ? POINTS.top : 0) + Math.min(kills, POINTS.killCap) * POINTS.kill;
 }
 // characters to pick from before a match: looks only, every one plays the same
 export const SKINS = ['Scribble', 'Crayon Knight', 'Ink Ninja', 'Robo Pen', 'Captain Blot'];

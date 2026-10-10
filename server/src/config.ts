@@ -12,6 +12,8 @@ export const config = {
 
   // capacity guards for one process; scale out by running more processes behind a router
   maxConnections: int(env.MAX_CONNECTIONS, 5000),
+  maxPerIp: int(env.MAX_PER_IP, 16),            // sockets per address (a household or a cafe shares one)
+  trustProxy: env.TRUST_PROXY === '1',          // behind Fly/nginx: take the client address from the proxy's header
   maxRooms: int(env.MAX_ROOMS, 10),       // 10 x 100 players per process, tested
   openRooms: int(env.OPEN_ROOMS, 5),      // rooms filling at the same time
   adminToken: env.ADMIN_TOKEN ?? '',      // reads /api/admin/flags

@@ -320,8 +320,9 @@ export class LocalNet {
     const winners = team === undefined ? [] : [...sim.players.values()].filter((p) => p.team === team).map((p) => p.id);
     if (team !== undefined) this.teamPlace.set(team, 1);
     const points: Record<number, number> = {};
+    const field = new Set([...sim.players.values()].map((p) => p.team)).size;
     for (const p of sim.players.values()) {
-      const pts = matchPoints(r.mode, this.teamPlace.get(p.team) ?? 0, p.kills, winners.includes(p.id));
+      const pts = matchPoints(r.mode, this.teamPlace.get(p.team) ?? 0, p.kills, winners.includes(p.id), field);
       points[p.id] = pts;
       if (!pts) continue;
       const seat = r.seats.find((s) => s.id === p.id)!;

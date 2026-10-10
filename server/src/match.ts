@@ -56,6 +56,7 @@ export class Match {
   private teamSize: number;
   private teamPlace = new Map<number, number>(); // team -> where it finished (set when its last member is out)
   ended = false;
+  private deserted = new Set<number>();
 
   constructor(public roomId: string, seed: number, ids: number[], now: number, teams?: Record<number, number>) {
     this.sim = new Sim(seed);
@@ -105,6 +106,9 @@ export class Match {
     const s = this.seats.get(id);
     if (!s || !s.present) return;
     s.present = false;
+    // walked out still in the fight: no placement points from wherever the team ends up (leaving at the
+    // drop and queueing again let one wallet collect top places from several rooms at once)
+    if (this.sim.players.get(id)?.alive) this.deserted.add(id);
     const ev: SimEvent[] = [];
     this.sim.eliminate(id, null, 'left', ev);
     this.emit(ev, out);
@@ -200,7 +204,7 @@ export class Match {
       // teams still standing at the time cap share second place behind the winner
       for (const t of teams) if (!this.teamPlace.has(t)) this.teamPlace.set(t, t === wonTeam ? 1 : 2);
       const places: Record<number, [number, number]> = {};
-      for (const p of this.sim.players.values()) places[p.id] = [this.teamPlace.get(p.team) ?? 0, p.kills];
+      for (const p of this.sim.players.values()) places[p.id] = [this.deserted.has(p.id) ? 0 : this.teamPlace.get(p.team) ?? 0, p.kills];
       return { roomId: this.roomId, sends: out, ended: { winners, places }, flags };
     }
     return { roomId: this.roomId, sends: out, flags };
@@ -232,14 +236,22 @@ export class MatchRunner {
 
   constructor(private deliver: (batch: Outbound[]) => void) {}
 
-  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>) { this.matches.set(roomId, new Match(roomId, seed, ids, Date.now(), teams)); }
-  input(roomId: string, id: number, i: Input) { this.matches.get(roomId)?.input(id, i); }
-  spectate(roomId: string, id: number, r: SpecRequest) { this.matches.get(roomId)?.spectate(id, r); }
+  // a bug in one match must not take the others (or the process) down: that match ends, nobody scores
+  private crashed(roomId: string, e: unknown): Outbound {
+    console.error(`[match ${roomId}] crashed, ending it without points:`, e);
+    this.matches.delete(roomId);
+    return { roomId, sends: [], ended: { winners: [], places: {} } };
+  }
+  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>) {
+    try { this.matches.set(roomId, new Match(roomId, seed, ids, Date.now(), teams)); } catch (e) { this.deliver([this.crashed(roomId, e)]); }
+  }
+  input(roomId: string, id: number, i: Input) { try { this.matches.get(roomId)?.input(id, i); } catch (e) { this.deliver([this.crashed(roomId, e)]); } }
+  spectate(roomId: string, id: number, r: SpecRequest) { try { this.matches.get(roomId)?.spectate(id, r); } catch (e) { this.deliver([this.crashed(roomId, e)]); } }
   leave(roomId: string, id: number) {
     const m = this.matches.get(roomId);
     if (!m) return;
     const sends: Send[] = [];
-    m.leave(id, sends);
+    try { m.leave(id, sends); } catch (e) { this.deliver([this.crashed(roomId, e)]); return; }
     if (sends.length) this.deliver([{ roomId, sends }]);
   }
   get players() { let n = 0; for (const m of this.matches.values()) n += m.seats.size; return n; }
@@ -248,11 +260,13 @@ export class MatchRunner {
     const t0 = performance.now(), now = Date.now();
     const batch: Outbound[] = [];
     for (const [id, m] of this.matches) {
-      const o = m.step(now);
-      batch.push(o);
-      if (m.ended) this.matches.delete(id);
+      try {
+        const o = m.step(now);
+        batch.push(o);
+        if (m.ended) this.matches.delete(id);
+      } catch (e) { batch.push(this.crashed(id, e)); }
     }
-    if (batch.length) this.deliver(batch);
+    if (batch.length) { try { this.deliver(batch); } catch (e) { console.error('[runner] deliver failed:', e); } }
     this.lastTickMs = performance.now() - t0;
   }
 

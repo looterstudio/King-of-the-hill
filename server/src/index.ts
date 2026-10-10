@@ -65,7 +65,16 @@ const json = (res: ServerResponse, code: number, body: unknown) => {
 };
 
 function handleHttp(req: IncomingMessage, res: ServerResponse) {
-  const url = new URL(req.url ?? '/', 'http://x');
+  // one malformed request line (`GET // HTTP/1.1`) used to throw here and kill every match
+  try { serveHttp(req, res); } catch (e) {
+    console.error('[http]', (e as Error).message);
+    if (!res.headersSent) res.writeHead(400);
+    res.end();
+  }
+}
+
+function serveHttp(req: IncomingMessage, res: ServerResponse) {
+  const url = new URL('http://x' + (req.url?.startsWith('/') ? req.url : '/'));
   if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
   if (url.pathname === '/api/pot') return json(res, 200, potView());
   if (url.pathname === '/api/rooms') return json(res, 200, mm.lobby(Date.now()));
@@ -108,6 +117,22 @@ async function holdStatus(wallet: string): Promise<string | null> {
   return `hold ${fromRaw(raw, h.decimals)} $${config.tokenSymbol} to score points for the pot (you have ${fromRaw(h.raw, h.decimals)})`;
 }
 
+async function signIn(c: Client, msg: Extract<ClientMsg, { t: 'auth' }>) {
+  let pk: Uint8Array, sig: Uint8Array;
+  try { pk = bs58.decode(String(msg.wallet)); sig = bs58.decode(String(msg.sig)); } catch { return c.send({ t: 'error', msg: 'bad signature encoding' }); }
+  if (pk.length !== 32 || sig.length !== 64) return c.send({ t: 'error', msg: 'bad signature' });
+  const ok = nacl.sign.detached.verify(new TextEncoder().encode(loginMessage(c.nonce)), sig, pk);
+  if (!ok) return c.send({ t: 'error', msg: 'signature does not match' });
+  const wallet = bs58.encode(pk);
+  const eligible = await holdStatus(wallet);
+  // one live seat per wallet: a second tab replaces the first
+  const prev = byWallet.get(wallet);
+  if (prev && prev !== c) { prev.send({ t: 'error', msg: 'signed in somewhere else' }); prev.ws.close(); }
+  byWallet.set(wallet, c);
+  c.wallet = wallet; c.name = shortWallet(wallet); c.authed = true;
+  return c.send({ t: 'authed', name: c.name, wallet, num: c.num, eligible });
+}
+
 async function onMessage(c: Client, msg: ClientMsg) {
   switch (msg.t) {
     case 'in': {
@@ -115,20 +140,9 @@ async function onMessage(c: Client, msg: ClientMsg) {
       return;
     }
     case 'auth': {
-      if (c.authed) return;
-      let pk: Uint8Array, sig: Uint8Array;
-      try { pk = bs58.decode(String(msg.wallet)); sig = bs58.decode(String(msg.sig)); } catch { return c.send({ t: 'error', msg: 'bad signature encoding' }); }
-      if (pk.length !== 32 || sig.length !== 64) return c.send({ t: 'error', msg: 'bad signature' });
-      const ok = nacl.sign.detached.verify(new TextEncoder().encode(loginMessage(c.nonce)), sig, pk);
-      if (!ok) return c.send({ t: 'error', msg: 'signature does not match' });
-      const wallet = bs58.encode(pk);
-      const eligible = await holdStatus(wallet);
-      // one live seat per wallet: a second tab replaces the first
-      const prev = byWallet.get(wallet);
-      if (prev && prev !== c) { prev.send({ t: 'error', msg: 'signed in somewhere else' }); prev.ws.close(); }
-      byWallet.set(wallet, c);
-      c.wallet = wallet; c.name = shortWallet(wallet); c.authed = true;
-      return c.send({ t: 'authed', name: c.name, wallet, num: c.num, eligible });
+      if (c.authed || c.authing) return; // a burst of auths with fresh keys used to queue one RPC read each
+      c.authing = true;
+      try { return await signIn(c, msg); } finally { c.authing = false; }
     }
     case 'guest': {
       if (c.authed) return;
@@ -140,6 +154,7 @@ async function onMessage(c: Client, msg: ClientMsg) {
     }
     case 'queue': {
       if (!c.authed) return c.send({ t: 'error', msg: 'sign in first' });
+      if (!c.lobbyAction()) return;
       if (c.room?.phase === 'over') c.room.remove(c);
       if (clients.size > config.maxConnections) return c.send({ t: 'error', msg: 'server full' });
       c.skin = Math.max(0, Math.min(SKINS.length - 1, Math.floor(Number(msg.skin)) || 0));
@@ -150,7 +165,7 @@ async function onMessage(c: Client, msg: ClientMsg) {
         at: msg.at === null ? null : Array.isArray(msg.at) ? [Number(msg.at[0]), Number(msg.at[1])] as [number, number] : undefined };
       return c.room?.spectate(c, r);
     }
-    case 'leave': return mm.leave(c);
+    case 'leave': if (c.lobbyAction()) mm.leave(c); return;
     case 'rtc': {
       // squad voice: relay offers, answers and ICE candidates to a teammate in the same live match,
       // nobody else. Audio itself goes peer to peer and never touches the server.
@@ -165,8 +180,23 @@ async function onMessage(c: Client, msg: ClientMsg) {
   }
 }
 
-wss.on('connection', (ws) => {
+// behind a proxy (Fly, nginx) the socket address is the proxy's: trust its forwarded header only when told to
+const ipOf = (req: IncomingMessage) => (config.trustProxy ? String(req.headers['fly-client-ip'] ?? String(req.headers['x-forwarded-for'] ?? '').split(',')[0]).trim() : '') || req.socket.remoteAddress || '?';
+const perIp = new Map<string, number>();
+
+wss.on('error', (e) => console.error('[wss]', e.message));
+wss.on('connection', (ws, req) => {
+  // a protocol error (frame over maxPayload, bad UTF-8, unmasked frame) is emitted on the socket:
+  // without a listener Node throws and the whole server goes down with it
+  ws.on('error', () => ws.terminate());
   if (clients.size >= config.maxConnections) { ws.close(1013, 'server full'); return; }
+  const ip = ipOf(req), n = perIp.get(ip) ?? 0;
+  if (n >= config.maxPerIp) { ws.close(1013, 'too many connections from this address'); return; }
+  perIp.set(ip, n + 1);
+  ws.on('close', () => { const k = (perIp.get(ip) ?? 1) - 1; if (k > 0) perIp.set(ip, k); else perIp.delete(ip); });
+  // idle sockets that never sign in don't get to hold a slot
+  const signInTimer = setTimeout(() => { if (!c.authed) ws.close(1008, 'sign in timeout'); }, 20_000);
+  ws.on('close', () => clearTimeout(signInTimer));
   const id = nextId++;
   const c = new Client(id, ws, playerNumber(randomBytes(2).readUInt16LE()), randomBytes(16).toString('hex'), config.msgsPerSecond);
   clients.add(c);
@@ -207,4 +237,8 @@ http.listen({ port: config.port, backlog: 4096 }, () => {
 
 const shutdown = () => { price.stop(); mm.stop(); epochs.stop(); pot.stop(); wss.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); };
 process.on('SIGINT', shutdown);
+// last resort: a bug in one handler must not take every match down with it; the specific failure
+// paths are handled where they happen, this only logs whatever slips through
+process.on('unhandledRejection', (e) => console.error('[unhandled]', e));
+process.on('uncaughtException', (e) => console.error('[uncaught]', e));
 process.on('SIGTERM', shutdown);
