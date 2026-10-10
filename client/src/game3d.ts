@@ -92,6 +92,7 @@ export class Game3D {
   private bob = 0;
   private localCd = 0;
   private spinLocal = 0;   // minigun barrels, predicted from our own trigger
+  private spinW: WeaponId | null = null;
   private fireHeld = false;
   get spinK() { const w = this.weapon, s = w ? WEAPONS[w].spinUp : 0; return s ? this.spinLocal / s : 0; }
   private time = 0;
@@ -377,7 +378,7 @@ export class Game3D {
 
   // ---------------- the fallen ----------------
   // a player is out: leave their body on the ground where they fell (where we last saw them; one we
-  // never saw leaves nothing). Bodies stay 90 s, the oldest go first past 24
+  // never saw leaves nothing). Bodies stay 75 s, the oldest go first past 16 (each is ~20 draw calls)
   onElim(victim: number) {
     let x: number, y: number, z: number, yaw: number;
     const a = this.avatars.get(victim), o = this.infoOf(victim);
@@ -394,15 +395,15 @@ export class Game3D {
     g.position.set(x, y, z);
     this.ink.scene.add(g);
     this.corpses.push({ g, t: 0 });
-    if (this.corpses.length > 24) this.drop(this.corpses.shift()!.g);
+    if (this.corpses.length > 16) this.drop(this.corpses.shift()!.g);
     if (victim === this.you) this.deathCam = { x, y, z, yaw, t: 0 };
   }
   private stepCorpses(dt: number) {
     for (const c of this.corpses) {
       c.t += dt;
-      if (c.t > 88) c.g.position.y -= dt * 0.6; // the last two seconds: sink away
+      if (c.t > 73) c.g.position.y -= dt * 0.6; // the last two seconds: sink away
     }
-    while (this.corpses.length && this.corpses[0].t > 90) this.drop(this.corpses.shift()!.g);
+    while (this.corpses.length && this.corpses[0].t > 75) this.drop(this.corpses.shift()!.g);
   }
 
   // ---------------- avatars ----------------
@@ -585,15 +586,17 @@ export class Game3D {
     // cosmetic: kick the gun and draw our tracer right away
     this.localCd = Math.max(0, this.localCd - DT);
     this.axeLocal = Math.max(0, this.axeLocal - DT);
-    if (this.self.axe && c.fire && this.axeLocal === 0 && !this.pred.gliding && !this.pred.ride && !this.self.use) { this.axeLocal = AXE.cd; this.axeSwing = 1; sfx.swing(); }
+    if (this.self.axe && c.fire && this.axeLocal === 0 && !this.pred.gliding && !this.pred.ride && !this.self.use && this.pred.down === 0) { this.axeLocal = AXE.cd; this.axeSwing = 1; sfx.swing(); }
     const w = this.weapon, mag = this.self.mags[this.self.cur] ?? 0;
-    const ready = !!w && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use && (!covered(this.pred.ride) || this.pred.seat > 0);
+    const ready = !!w && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use && this.pred.down === 0 && !this.self.reviving && (!covered(this.pred.ride) || this.pred.seat > 0); // knocked or picking someone up: the sim won't shoot
     // the minigun spins up while the trigger is held (the same rule as the sim), and you hear it
     const spinUp = w ? WEAPONS[w].spinUp ?? 0 : 0;
-    const was = this.spinLocal;
-    this.spinLocal = spinUp && ready && mag > 0 && c.fire ? Math.min(spinUp, this.spinLocal + DT) : spinUp && ready ? Math.max(0, this.spinLocal - DT * 2) : 0;
-    if (spinUp && was < spinUp && this.spinLocal >= spinUp) sfx.spunUp();
-    sfx.spin(spinUp ? this.spinLocal / spinUp : 0);
+    // (the sim keeps the spin through a reload, a heal or a glide, and drops it only on a weapon change)
+    const was = w === this.spinW ? this.spinLocal : 0;
+    this.spinW = w;
+    this.spinLocal = !spinUp || this.pred.down > 0 ? 0 : !ready || (c.fire && mag === 0) ? was : c.fire ? Math.min(spinUp, was + DT) : Math.max(0, was - DT * 2);
+    if (spinUp && ready && was < spinUp && this.spinLocal >= spinUp) sfx.spunUp();
+    sfx.spin(spinUp && ready ? this.spinLocal / spinUp : 0); // quiet while reloading or healing
     if (c.fire && !this.fireHeld && w && mag === 0 && this.self.reloadT === 0) sfx.dry(); // click: empty (the sim starts the reload)
     this.fireHeld = c.fire;
     if (w && c.fire && this.localCd === 0 && mag > 0 && ready) {
