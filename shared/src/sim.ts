@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AXE, BOMB, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AIR_CRASH, AXE, BOMB, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -410,13 +410,42 @@ export class Sim {
     v.hp -= dmg;
     if (this.players.has(by) && by !== v.driver) ev.push({ kind: 'vhit', vehicle: v.id, by, dmg });
     if (v.hp > 0) return;
-    // wrecked: throw the driver out, then it blows up on them and everyone near
+    this.wreck(v, by, ev, VEH_BOOM.radius, VEH_BOOM.dmg);
+  }
+  // wrecked: throw the crew out, then it blows up on them and everyone near. An aircraft crash brings its
+  // own blast (and does its own world damage); `hit` collects who it caught
+  private wreck(v: Vehicle, by: number, ev: SimEvent[], radius: number, dmg: number, core = 0, hit?: Set<number>) {
+    v.hp = 0;
     const d = v.driver ? this.players.get(v.driver) : null;
     if (d) this.exitVehicle(d);
     for (const id of [...v.seats]) { const q = this.players.get(id); if (q) this.exitVehicle(q); }
     this.vehicles = this.vehicles.filter((x) => x !== v);
     const b = v.body;
-    this.explode(b.x, b.y + 1, b.z, VEH_BOOM.radius, VEH_BOOM.dmg, by || v.last || (d?.id ?? 0), ev, false);
+    this.explode(b.x, b.y + 1, b.z, radius, dmg, by || v.last || (d?.id ?? 0), ev, false, core, !hit, hit);
+  }
+
+  // an aircraft flown into something at speed (b: the body that hit, v0: its velocity just before):
+  // wrecked on the spot, its crew thrown into the blast, and the fireball goes on through whatever it
+  // hit along the way it was flying (gut). A house comes down whole; a tower too big for that loses the
+  // floors it went through, and everything above them falls (dropLoose)
+  private airCrash(v: Vehicle, b: Body, impact: number, v0: { x: number; y: number; z: number }, by: number, ev: SimEvent[]) {
+    const def = AIR_CRASH[v.kind as 'plane' | 'heli'], s = clamp((impact - AIR_CRASH.minSpeed) / (def.at - AIR_CRASH.minSpeed), 0.15, 1.3);
+    const sp = Math.hypot(v0.x, v0.y, v0.z), cp = Math.cos(b.vpitch);
+    const [dx, dy, dz] = sp > 2 ? [v0.x / sp, v0.y / sp, v0.z / sp] : [-Math.sin(b.head) * cp, Math.sin(b.vpitch), -Math.cos(b.head) * cp];
+    const vr = VEHICLES[v.kind].r, ox = b.x + dx * vr, oy = b.y + VEHICLES[v.kind].h / 2 + dy * vr, oz = b.z + dz * vr;
+    const r = def.r * (0.55 + 0.45 * s), k = Math.min(1, s), dmg = def.dmg * (0.6 + 0.4 * k);
+    let depth = Math.max(1.5, def.depth * s);
+    if (dy < -0.05) depth = Math.min(depth, Math.max(0, oy) / -dy); // never on underground
+    for (let t = 1; t < depth; t += 2) if (this.inRock(ox + dx * t, oy + dy * t, oz + dz * t)) { depth = t; break; } // nor through a hillside
+    const hit = new Set<number>();
+    this.wreck(v, by, ev, def.boom * (0.7 + 0.3 * k), dmg, 3, hit); // walls still up: whoever is inside is behind them
+    this.gut(ox, oy, oz, dx, dy, dz, depth, r, def.flat, def.struct * s, by);
+    // the fireball through the floors it gutted, for whoever was in them (the crew already took theirs)
+    this.explode(ox + dx * depth / 2, oy + dy * depth / 2, oz + dz * depth / 2, r, dmg, by || v.last, ev, false, r * 0.4, false, hit);
+  }
+  private inRock(x: number, y: number, z: number) {
+    for (const i of this.world.near(x, z, x, z)) { const q = this.world.boxes[i]; if (q.hard && !q.dead && x > q.x0 && x < q.x1 && z > q.z0 && z < q.z1 && y > q.y0 && y < q.y1) return true; }
+    return false;
   }
 
   private enterVehicle(p: PlayerState, v: Vehicle) {
@@ -517,14 +546,18 @@ export class Sim {
 
   private stepVehicles(dt: number, ev: SimEvent[]) {
     for (const v of [...this.vehicles]) {
+      if (v.hp <= 0) continue; // wrecked earlier this loop (another one's crash)
       v.gunCd = Math.max(0, v.gunCd - dt); v.bombCd = Math.max(0, v.bombCd - dt);
       const b = v.body;
       if (v.driver) {
         const d = this.players.get(v.driver)!;
         Object.assign(b, { x: d.x, y: d.y, z: d.z, vx: d.vx, vy: d.vy, vz: d.vz, head: d.head, vpitch: d.vpitch, spd: d.spd, grounded: d.grounded });
       } else if (!b.grounded || Math.abs(b.spd) > 0.05 || Math.hypot(b.vx, b.vz) > 0.05) {
+        // nobody at the controls: a plane you bailed out of, a helicopter dropping off a roof
+        const vx0 = b.vx, vy0 = b.vy, vz0 = b.vz, was = b.grounded;
         const impact = moveVehicle(this.world, b, NO_INPUT, dt, GRAVITY, false);
-        if (impact > CRASH.minSpeed) this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), v.last, ev);
+        if (isAir(b.ride) && impact > (b.grounded && !was ? AIR_CRASH.land : AIR_CRASH.minSpeed)) this.airCrash(v, b, impact, { x: vx0, y: vy0, z: vz0 }, v.last, ev);
+        else if (impact > CRASH.minSpeed) this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), v.last, ev);
       }
     }
     // passengers sit in their seats: beside / behind the driver, moving with the vehicle
@@ -571,7 +604,8 @@ export class Sim {
   }
 
   // core: inside it the blast does full damage (C4), then it falls off toward the edge
-  private explode(x: number, y: number, z: number, radius: number, dmg: number, owner: number, ev: SimEvent[], nuke: boolean, core = 0) {
+  // world: false when the caller breaks the walls itself; hit: who it caught (and who to leave alone)
+  private explode(x: number, y: number, z: number, radius: number, dmg: number, owner: number, ev: SimEvent[], nuke: boolean, core = 0, world = true, hit?: Set<number>) {
     ev.push({ kind: 'boom', x, y, z, r: radius, nuke });
     const team = this.players.get(owner)?.team;
     for (const v of [...this.vehicles]) {
@@ -579,7 +613,7 @@ export class Sim {
       if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * (1.3 / LIFE_SCALE) * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
     }
     for (const q of this.players.values()) {
-      if (!q.alive || (q.id !== owner && q.team === team) || (covered(q.ride) && !q.seat)) continue; // pilots and tank crews: the vehicle takes it
+      if (!q.alive || (q.id !== owner && q.team === team) || (covered(q.ride) && !q.seat) || hit?.has(q.id)) continue; // pilots and tank crews: the vehicle takes it
       const dx = q.x - x, dy = q.y + 1 - y, dz = q.z - z, d = Math.hypot(dx, dy, dz);
       if (d > radius) continue;
       if (!nuke) { // walls stop grenade blasts
@@ -588,20 +622,79 @@ export class Sim {
       }
       const amount = Math.round(dmg * (nuke || d <= core ? 1 : 1 - ((d - core) / (radius - core)) * 0.7));
       const h = this.hurt(q, amount);
+      hit?.add(q.id);
       if (owner !== q.id) ev.push({ kind: 'hit', victim: q.id, by: owner, dmg: amount, head: false, ...h });
       if (q.hp <= 0) this.fall(q, owner, 'boom', ev);
     }
     // and the walls around it: blocks break, buildings take structural damage
-    this.damageWorld(x, y, z, nuke ? radius * 0.8 : radius * 0.85, dmg * 1.15, dmg * (nuke ? 30 : 1.5), owner, nuke);
+    if (world) this.damageWorld(x, y, z, nuke ? radius * 0.8 : radius * 0.85, dmg * 1.15, dmg * (nuke ? 30 : 1.5), owner, nuke);
   }
 
-  // a vehicle slamming into something breaks it: a car punches through a wall, a plane can bring
-  // a tower down
+  // a vehicle slamming into something breaks it: a car punches through a wall (an aircraft only gets
+  // here bumping into things too slowly to crash: a dent, nothing comes down)
   private crashWorld(p: PlayerState, v: Vehicle, impact: number) {
     const def = VEHICLES[v.kind], fx = -Math.sin(p.head) * Math.cos(p.vpitch), fy = Math.sin(p.vpitch), fz = -Math.cos(p.head) * Math.cos(p.vpitch);
-    const reach = def.r + 0.6, r = v.kind === 'plane' ? 5 : v.kind === 'heli' ? 3.5 : v.kind === 'tank' ? 2.6 : 2.2;
-    const k = v.kind === 'plane' ? 130 : v.kind === 'heli' ? 60 : v.kind === 'tank' ? 20 : 15;
+    const reach = def.r + 0.6, r = v.kind === 'plane' ? 2.6 : v.kind === 'heli' ? 2.4 : v.kind === 'tank' ? 2.6 : 2.2;
+    const k = v.kind === 'plane' ? 25 : v.kind === 'heli' ? 20 : v.kind === 'tank' ? 20 : 15;
     this.damageWorld(p.x + fx * reach, p.y + def.h / 2 + fy * reach, p.z + fz * reach, r, v.kind === 'tank' ? 45 : impact * 8, impact * k, p.id);
+  }
+
+  // the fireball of an aircraft crash, swept along its path from (ox, oy, oz): a squashed sphere (r
+  // across, r * flat tall) dragged `depth` along (dx, dy, dz). Every box it reaches breaks: wholly inside
+  // it, gone outright (no rubble to track or budget to spend); at its edge, broken into blocks first so
+  // the hole is ragged. Every building it reaches takes structural damage, and a tall one whose floor
+  // at the impact it mostly went through loses the rest of that floor too: what is left can't carry the
+  // floors above. Terrain never breaks.
+  private gut(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, depth: number, r: number, flat: number, structDmg: number, by: number) {
+    const w = this.world, rv = r * flat, n = Math.max(2, Math.ceil(depth / (r * 0.5)) + 1), cs: number[] = [];
+    for (let k = 0; k < n; k++) { const t = (depth * k) / (n - 1); cs.push(ox + dx * t, oy + dy * t, oz + dz * t); }
+    // squared distance of a box (its nearest point, or with far its farthest corner) from the shape: < 1 inside
+    const reach = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, far = false) => {
+      let best = Infinity;
+      for (let k = 0; k < cs.length; k += 3) {
+        const cx = cs[k], cy = cs[k + 1], cz = cs[k + 2];
+        const ex = far ? Math.max(cx - x0, x1 - cx) : Math.max(x0 - cx, 0, cx - x1);
+        const ey = far ? Math.max(cy - y0, y1 - cy) : Math.max(y0 - cy, 0, cy - y1);
+        const ez = far ? Math.max(cz - z0, z1 - cz) : Math.max(z0 - cz, 0, cz - z1);
+        best = Math.min(best, (ex * ex + ez * ez) / (r * r) + (ey * ey) / (rv * rv));
+      }
+      return best;
+    };
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let k = 0; k < cs.length; k += 3) {
+      x0 = Math.min(x0, cs[k] - r); y0 = Math.min(y0, cs[k + 1] - rv); z0 = Math.min(z0, cs[k + 2] - r);
+      x1 = Math.max(x1, cs[k] + r); y1 = Math.max(y1, cs[k + 1] + rv); z1 = Math.max(z1, cs[k + 2] + r);
+    }
+    for (const i of w.near3(x0, y0, z0, x1, y1, z1, [])) {
+      const b = w.boxes[i];
+      if (b.dead || b.hard || reach(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1) >= 1) continue;
+      if (World.isBlock(b) || reach(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1, true) < 1) { this.killBox(i); continue; }
+      const kids = this.shatter(i);
+      if (!kids.length) { // out of wreck budget: a big box goes whole or not at all
+        const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, cz = (b.z0 + b.z1) / 2;
+        if (reach(cx, cy, cz, cx, cy, cz) < 1) this.killBox(i);
+        continue;
+      }
+      for (const k of kids) { const c = w.boxes[k]; if (reach(c.x0, c.y0, c.z0, c.x1, c.y1, c.z1) < 1) this.killBox(k); }
+    }
+    for (const s of w.structures) {
+      if (s.down || x1 < s.x0 || x0 > s.x1 || z1 < s.z0 || z0 > s.z1 || y1 < s.y0 || y0 > s.y1) continue;
+      const d = Math.sqrt(reach(s.x0, s.y0, s.z0, s.x1, s.y1, s.z1));
+      if (d >= 1) continue;
+      s.dmg += structDmg * (1 - d * 0.6); this.structBy.set(s.id, by);
+      if (s.dmg >= s.hp) { this.collapse(s); continue; }
+      if (s.y1 - oy < 4 || oy < s.y0 - 1) continue; // nothing above the impact to come down
+      let got = 0;
+      for (let a = 0; a < 6; a++) for (let c = 0; c < 6; c++) {
+        const x = s.x0 + ((a + 0.5) / 6) * (s.x1 - s.x0), z = s.z0 + ((c + 0.5) / 6) * (s.z1 - s.z0);
+        if (reach(x, oy, z, x, oy, z) < 1) got++;
+      }
+      if (got < 26) continue; // under three quarters of the floor gone (a gash in one side): the rest holds
+      for (const i of w.near3(s.x0, oy - 1.8, s.z0, s.x1, oy + 1.8, s.z1, [])) {
+        const b = w.boxes[i];
+        if (!b.dead && !b.hard && b.sid === s.id && b.y1 > oy - 1.8 && b.y0 < oy + 1.8) this.killBox(i);
+      }
+    }
   }
 
   // ---------------- destruction ----------------
@@ -684,41 +777,62 @@ export class Sim {
     if (!this.dirty.length) return;
     // the walk goes lowest box first, so a piece that stands reaches the ground in a few steps; only a
     // piece bigger than LIMIT (nothing but The Needle) is taken as standing without proof. It used to be
-    // 500 breadth-first: a Needle cut through at the base floated
-    const e = 0.06, LIMIT = 6000, supported = new Set<number>(), loose: number[] = [], hit: { x0: number; z0: number; x1: number; z1: number; y: number }[] = [];
-    const touching = (a: Box) => {
-      const out: number[] = [];
-      for (const j of w.near3(a.x0 - e, a.y0 - e, a.z0 - e, a.x1 + e, a.y1 + e, a.z1 + e, [])) {
-        const b = w.boxes[j];
-        if (!b.dead && a.x0 <= b.x1 + e && b.x0 <= a.x1 + e && a.z0 <= b.z1 + e && b.z0 <= a.z1 + e && a.y0 <= b.y1 + e && b.y0 <= a.y1 + e) out.push(j);
-      }
-      return out;
-    };
+    // 500 breadth-first: a Needle cut through at the base floated. A plane through The Needle leaves a
+    // 2 500-box top to walk: marks live in typed arrays (they were Sets) and bounds come from the world's
+    // flat copy (box objects come in many shapes: every read was slow)
+    const e = 0.06, LIMIT = 6000, loose: number[] = [], hit: { x0: number; z0: number; x1: number; z1: number; y: number; y1: number }[] = [];
+    const boxes = w.boxes, B = w.bounds, n = boxes.length, walkOf = new Int32Array(n), state = new Uint8Array(n); // state: 1 standing, 2 loose
+    const near: number[] = [], piece: number[] = [];
     // a small binary heap of box indices by height
-    const heap: number[] = [], y0 = (i: number) => w.boxes[i].y0;
-    const push = (i: number) => { heap.push(i); let k = heap.length - 1; while (k > 0) { const up = (k - 1) >> 1; if (y0(heap[up]) <= y0(heap[k])) break; [heap[up], heap[k]] = [heap[k], heap[up]]; k = up; } };
-    const pop = () => { const top = heap[0], last = heap.pop()!; if (heap.length) { heap[0] = last; let k = 0; for (;;) { const a = 2 * k + 1, b = a + 1; let m = k; if (a < heap.length && y0(heap[a]) < y0(heap[m])) m = a; if (b < heap.length && y0(heap[b]) < y0(heap[m])) m = b; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
-    const done = new Set<number>();
+    const heap: number[] = [];
+    const push = (i: number) => {
+      heap.push(i);
+      for (let k = heap.length - 1; k > 0;) { const up = (k - 1) >> 1, a = heap[up], b = heap[k]; if (B[a * 6 + 1] <= B[b * 6 + 1]) break; heap[up] = b; heap[k] = a; k = up; }
+    };
+    const pop = () => {
+      const top = heap[0], last = heap.pop()!;
+      if (heap.length) {
+        heap[0] = last;
+        for (let k = 0; ;) {
+          const a = 2 * k + 1, b = a + 1; let m = k;
+          if (a < heap.length && B[heap[a] * 6 + 1] < B[heap[m] * 6 + 1]) m = a;
+          if (b < heap.length && B[heap[b] * 6 + 1] < B[heap[m] * 6 + 1]) m = b;
+          if (m === k) break;
+          const t = heap[m]; heap[m] = heap[k]; heap[k] = t; k = m;
+        }
+      }
+      return top;
+    };
+    let walk = 0;
     for (const d of this.dirty) for (const start of w.near3(d.x0 - 3, d.y0 - 3, d.z0 - 3, d.x1 + 3, d.y1 + 3, d.z1 + 3, [])) {
-      const s = w.boxes[start];
-      if (s.dead || s.hard || s.y0 <= 0.05 || done.has(start) || s.y1 < d.y0 - 3 || s.y0 > d.y1 + 3) continue;
+      const s = boxes[start];
+      if (s.dead || s.hard || s.y0 <= 0.05 || state[start] || s.y1 < d.y0 - 3 || s.y0 > d.y1 + 3) continue;
       // walk the piece this box belongs to until something in it stands on the ground
-      const seen = new Set([start]);
+      walk++; walkOf[start] = walk; piece.length = 0; piece.push(start);
       let ok = false;
       heap.length = 0; push(start);
       while (heap.length) {
-        const i = pop(), b = w.boxes[i];
-        if (b.hard || b.y0 <= 0.05 || supported.has(i) || seen.size > LIMIT) { ok = true; break; }
-        for (const j of touching(b)) if (!seen.has(j)) { seen.add(j); push(j); }
+        const i = pop(), o = i * 6, ax0 = B[o], ay0 = B[o + 1], az0 = B[o + 2], ax1 = B[o + 3], ay1 = B[o + 4], az1 = B[o + 5];
+        if (ay0 <= 0.05 || state[i] === 1 || piece.length > LIMIT || boxes[i].hard) { ok = true; break; }
+        for (const j of w.near3(ax0 - e, ay0 - e, az0 - e, ax1 + e, ay1 + e, az1 + e, near)) {
+          if (walkOf[j] === walk) continue;
+          const p = j * 6;
+          if (ax0 <= B[p + 3] + e && B[p] <= ax1 + e && az0 <= B[p + 5] + e && B[p + 2] <= az1 + e && ay0 <= B[p + 4] + e && B[p + 1] <= ay1 + e && !boxes[j].dead) { walkOf[j] = walk; piece.push(j); push(j); }
+        }
       }
-      const piece = [...seen];
-      for (const i of piece) { done.add(i); if (ok) supported.add(i); }
+      for (const i of piece) if (!state[i]) state[i] = ok ? 1 : 2;
       if (ok) continue;
-      const box = { x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity, y: Infinity };
-      for (const i of piece) { const b = w.boxes[i]; loose.push(i); box.x0 = Math.min(box.x0, b.x0); box.z0 = Math.min(box.z0, b.z0); box.x1 = Math.max(box.x1, b.x1); box.z1 = Math.max(box.z1, b.z1); box.y = Math.min(box.y, b.y0); }
+      const box = { x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity, y: Infinity, y1: -Infinity };
+      for (const i of piece) {
+        const o = i * 6; loose.push(i);
+        box.x0 = Math.min(box.x0, B[o]); box.y = Math.min(box.y, B[o + 1]); box.z0 = Math.min(box.z0, B[o + 2]);
+        box.x1 = Math.max(box.x1, B[o + 3]); box.y1 = Math.max(box.y1, B[o + 4]); box.z1 = Math.max(box.z1, B[o + 5]);
+      }
       hit.push(box);
     }
-    for (const i of loose) { this.killBox(i); this.wreckDrop.push(i); }
+    // gone (one dirty region per piece: a tower top marked box by box was another 1.5 ms)
+    for (const i of loose) { boxes[i].dead = true; this.wreckKill.push(i); this.wreckDrop.push(i); }
+    for (const h of hit) this.markDirty(h.x0, h.y, h.z0, h.x1, h.y1, h.z1);
     for (const h of hit) for (const q of this.players.values()) {
       if (!q.alive || q.x < h.x0 || q.x > h.x1 || q.z < h.z0 || q.z > h.z1 || q.y > h.y) continue;
       this.hurt(q, 60);
@@ -1098,11 +1212,13 @@ export class Sim {
       else if ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0)) { p.reloadT = def.reload; p.use = null; }
     }
 
+    const vx0 = p.vx, vy0 = p.vy, vz0 = p.vz, was = p.grounded;
     const impact = moveStep(this.world, p, inp, dt, !!p.use);
     if (p.rideV) {
-      // crashes dent the vehicle; aircraft guns and bombs
+      // crashes dent the vehicle (an aircraft fast enough is wrecked and blows up); aircraft guns and bombs
       const v = this.vehicles.find((x) => x.id === p.rideV);
       if (v && v.kind === 'tank') { if (impact > 0) this.crashWorld(p, v, impact); } // tracks plough through walls, no damage to the tank
+      else if (v && isAir(p.ride) && impact > (p.grounded && !was ? AIR_CRASH.land : AIR_CRASH.minSpeed)) this.airCrash(v, p, impact, { x: vx0, y: vy0, z: vz0 }, p.id, ev);
       else if (v && impact > CRASH.minSpeed) { this.crashWorld(p, v, impact); this.damageVehicle(v, Math.round((impact - CRASH.minSpeed) * CRASH.dmgPerMs), p.id, ev); }
       if (covered(p.ride) && !p.seat) this.vehicleGuns(p, inp, ev);
     } else this.autoPickup(p);

@@ -108,8 +108,14 @@ export class World {
   // a hand-built world, for tests
   static custom(boxes: Box[]) { return new World(0, boxes); }
 
-  private index() { this.boxes.forEach((b, i) => this.indexBox(b, i)); }
+  private index() { this.bounds = new Float64Array(this.boxes.length * 6 + 6144); this.boxes.forEach((b, i) => this.indexBox(b, i)); }
+  // every box's bounds, flat (x0 y0 z0 x1 y1 z1 per box; boxes never move): hot loops read these, not the
+  // box objects, whose shapes vary (dead, hard, sid, root, hp come and go) and make every read slow
+  bounds = new Float64Array(0);
   private indexBox(b: Box, i: number) {
+    if (this.bounds.length < (i + 1) * 6) { const nb = new Float64Array(Math.max(6144, (i + 1) * 9)); nb.set(this.bounds); this.bounds = nb; }
+    const o = i * 6, B = this.bounds;
+    B[o] = b.x0; B[o + 1] = b.y0; B[o + 2] = b.z0; B[o + 3] = b.x1; B[o + 4] = b.y1; B[o + 5] = b.z1;
     const [cx0, cz0] = this.cell(b.x0, b.z0), [cx1, cz1] = this.cell(b.x1, b.z1);
     const cy0 = this.ycell(b.y0), cy1 = this.ycell(b.y1);
     for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
@@ -299,12 +305,19 @@ export class World {
     return best;
   }
 
-  // height of the highest surface under (x, z) at or below y (for dropping things onto floors)
+  // height of the highest surface under (x, z) at or below y (for dropping things onto floors). Layer by
+  // layer down from y: once something is found as high as the layer's floor, nothing lower can beat it
+  // (the 2D cell under The Needle holds all 80 floors: loot dropping out of it cost 50 us a call)
   groundAt(x: number, z: number, y: number): number {
     let best = 0;
-    for (const i of this.near(x, z, x, z)) {
-      const b = this.boxes[i];
-      if (!b.dead && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1 && b.y1 <= y + 0.01 && b.y1 > best) best = b.y1;
+    const [cx, cz] = this.cell(x, z), col = (cz * GRID + cx) * YCELLS;
+    for (let cy = this.ycell(y + 0.01); cy >= 0; cy--) {
+      const l = this.grid3.get(col + cy);
+      if (l) for (const i of l) {
+        const b = this.boxes[i];
+        if (!b.dead && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1 && b.y1 <= y + 0.01 && b.y1 > best) best = b.y1;
+      }
+      if (best >= cy * CELL) break;
     }
     return best;
   }
