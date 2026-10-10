@@ -504,7 +504,7 @@ test('teams: no friendly fire, grenades spare teammates, the last team standing 
   const m = new Match('r2', 9, [1, 2, 3, 4], Date.now(), { 1: 1, 2: 1, 3: 2, 4: 2 });
   m.sim.world = World.custom([]);
   const sim = m.sim, [a, b, c] = [1, 2, 3].map((id) => sim.players.get(id)!);
-  for (const p of sim.players.values()) { p.gliding = false; p.y = 0; p.grounded = true; }
+  for (const p of sim.players.values()) { p.gliding = false; p.bus = 0; p.y = 0; p.grounded = true; }
   a.x = 0; a.z = 0; b.x = 0; b.z = -6; c.x = 0; c.z = -12;
   a.slots[0] = 'scar'; a.mags[0] = 30; a.fireCd = 0;
   const ev = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.05, fire: true })]]));
@@ -684,7 +684,7 @@ test('teammates ride along as passengers: they move with the vehicle and can sho
   const sim = m.sim;
   sim.world = World.custom([]);
   sim.vehicles = [{ id: 999, kind: 'plane', hp: 350, driver: 0, last: 0, body: { ...newBody(0, 0, 0), ride: 3, grounded: true }, gunCd: 0, bombCd: 0, seats: [] }];
-  for (const p of sim.players.values()) { p.gliding = false; p.y = 0; p.grounded = true; }
+  for (const p of sim.players.values()) { p.gliding = false; p.bus = 0; p.y = 0; p.grounded = true; }
   const [a, b, c] = [1, 2, 3].map((id) => sim.players.get(id)!);
   a.x = 2; a.z = 0; b.x = -2; b.z = 0; c.x = 3; c.z = 1;
   sim.step(DT, new Map([[1, inp({ interact: true, seq: 1 })]]));

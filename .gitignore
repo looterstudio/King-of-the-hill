@@ -8,3 +8,4 @@ dist-demo
 dist-server
 dist-vercel
 .vercel
+.env*
