@@ -1,20 +1,19 @@
 // Offline demo transport: plays the server's role inside the browser with bots and a simulated
 // fee stream. Same Sim, same snapshots, same input queue semantics, so the UI under test is real.
 import {
-  COUNTDOWN_MS, EYE_H, HEAD_Y, INTERACT_R, KNOCK, matchPoints, MAP_HALF, MODES, MODE_IDS, RARITY_ORDER, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, WEAPONS, epochEnd, epochOf, playerNumber, type Mode, type WeaponId,
+  COUNTDOWN_MS, matchPoints, MAP_HALF, MODES, MODE_IDS, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, epochEnd, epochOf, playerNumber, type Mode,
 } from '../../shared/src/constants.ts';
 import type { ClientMsg, LobbyRoom, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
-import { Sim, emptyInput, sanitizeInput, type Input, type PlayerState, type TickInputs } from '../../shared/src/sim.ts';
+import { Sim, emptyInput, sanitizeInput, type TickInputs } from '../../shared/src/sim.ts';
 import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
+import { botInput, newBot, teamDrops, type Bot } from './bots.ts';
 
 type Handler = (m: ServerMsg) => void;
 const NAMES = ['degen.sol', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl'];
 const fakeWallet = () => Array.from({ length: 44 }, () => '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[Math.floor(Math.random() * 58)]).join('');
 export const DEMO_PLAYERS = 40;
-
-interface Bot { id: number; skill: number; strafe: number; aimErr: number; reaction: number; target: number | null; los: boolean; losT: number; wp: { x: number; z: number }; stuck: number; seq: number; dropX: number; dropZ: number }
 
 export class LocalNet {
   private handlers: Handler[] = [];
@@ -119,7 +118,7 @@ export class LocalNet {
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
         room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * 5) });
-        room.bots.push({ id, skill: 0.3 + Math.random() * 0.55, strafe: Math.random() < 0.5 ? 1 : -1, aimErr: 0, reaction: 0, target: null, los: false, losT: 0, wp: { x: 0, z: 0 }, stuck: 0, seq: 0, dropX: (Math.random() - 0.5) * 640, dropZ: (Math.random() - 0.5) * 640 });
+        room.bots.push(newBot(id, Math.random));
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }
       }, delay));
@@ -132,132 +131,10 @@ export class LocalNet {
     const teams = makeTeams(r.seats.map((s) => ({ id: s.id, party: '' })), MODES[r.mode].size);
     r.seats = r.seats.map((s) => ({ ...s, team: teams.get(s.id)! }));
     r.sim.spawn(r.seats.map((s) => s.id), teams);
-    // a team glides to the same spot
-    const spot = new Map<number, { x: number; z: number }>();
-    for (const b of r.bots) { const t = teams.get(b.id)!; const at = spot.get(t) ?? { x: b.dropX, z: b.dropZ }; spot.set(t, at); b.dropX = at.x + (Math.random() - 0.5) * 8; b.dropZ = at.z + (Math.random() - 0.5) * 8; }
+    teamDrops(r.bots, teams, Math.random);
     this.mine = new InputQueue(emptyInput(), TICK_HZ); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
-  }
-
-  // bots: glide to a drop spot, roam, rotate ahead of the storm, fight what they can see
-  private botInput(b: Bot, sim: Sim): Input {
-    const self = sim.players.get(b.id)!, g = sim.ring;
-    const inp: Input = { ...emptyInput(), seq: ++b.seq, yaw: self.yaw, pitch: self.pitch };
-    const yawTo = (x: number, z: number) => Math.atan2(-(x - self.x), -(z - self.z));
-    if (self.gliding) { inp.yaw = yawTo(b.dropX, b.dropZ); inp.fwd = Math.hypot(b.dropX - self.x, b.dropZ - self.z) > 4 ? 1 : 0; return inp; }
-    // driving: head for the circle, swerve into anyone close enough to run over, hop out when there
-    if (self.ride === 1) {
-      const enemy = [...sim.players.values()].find((q) => q.alive && !q.ride && q.team !== self.team && Math.hypot(q.x - self.x, q.z - self.z) < 35);
-      const gx = enemy ? enemy.x : g.nx, gz = enemy ? enemy.z : g.ny;
-      let d = yawTo(gx, gz) - self.head; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
-      inp.strafe = Math.max(-1, Math.min(1, -d * 2)); inp.fwd = 1; inp.sprint = !!enemy || Math.abs(d) < 0.4; inp.yaw = self.head;
-      if (self.spd < 2 && Math.random() < 0.02) inp.fwd = -1;
-      if (!enemy && Math.hypot(self.x - g.nx, self.z - g.ny) < g.nr * 0.6) inp.interact = true;
-      return inp;
-    }
-    if (self.ride) { inp.interact = true; return inp; }
-    const mateNear = (down: boolean, r: number) => {
-      let best: PlayerState | null = null, bd = r;
-      for (const q of sim.players.values()) { if (!q.alive || q.id === b.id || q.team !== self.team || (q.down > 0) !== down) continue; const d = Math.hypot(q.x - self.x, q.z - self.z); if (d < bd) { bd = d; best = q; } }
-      return best;
-    };
-    // knocked: crawl to the nearest teammate still standing
-    if (self.down > 0) { const m = mateNear(false, 200); if (m) { inp.yaw = yawTo(m.x, m.z); inp.fwd = Math.hypot(m.x - self.x, m.z - self.z) > 1.2 ? 1 : 0; } return inp; }
-
-    // re-pick the nearest enemy a few times a second and check line of sight
-    b.losT -= 1 / TICK_HZ;
-    if (b.losT <= 0) {
-      b.losT = 0.4 + Math.random() * 0.3;
-      let best: PlayerState | null = null, bd = 130;
-      // gliders can't shoot back, so bots leave them alone
-      for (const q of sim.players.values()) { if (!q.alive || q.id === b.id || q.gliding || q.team === self.team) continue; const d = Math.hypot(q.x - self.x, q.z - self.z); if (d < bd) { bd = d; best = q; } }
-      b.target = best ? best.id : null;
-      b.los = false;
-      if (best) {
-        const ox = self.x, oy = self.y + EYE_H, oz = self.z, tx = best.x - ox, ty = best.y + HEAD_Y - 0.4 - oy, tz = best.z - oz, d = Math.hypot(tx, ty, tz);
-        b.los = sim.world.raycast(ox, oy, oz, tx / d, ty / d, tz / d, d) >= d - 0.5;
-      }
-    }
-    const tgt = b.target !== null ? sim.players.get(b.target) : null;
-    const inNext = Math.hypot(self.x - g.nx, self.z - g.ny) < g.nr * 0.8;
-    const inRing = Math.hypot(self.x - g.x, self.z - g.y) < g.r * 0.92;
-    const rank = (w: WeaponId | null) => (w ? RARITY_ORDER.indexOf(WEAPONS[w].rarity) : -1);
-    const fighting = !!(tgt && tgt.alive && b.los);
-    // a knocked teammate and nobody shooting at us up close: go and pick them up
-    const hurt = mateNear(true, 45);
-    if (hurt && !(fighting && tgt && Math.hypot(tgt.x - self.x, tgt.z - self.z) < 20)) {
-      const d = Math.hypot(hurt.x - self.x, hurt.z - self.z);
-      inp.yaw = yawTo(hurt.x, hurt.z); inp.fwd = d > 1.3 ? 1 : 0; inp.sprint = d > 6; inp.hold = d < KNOCK.reach - 0.2;
-      return inp;
-    }
-
-    if (self.use) { inp.fwd = 0; inp.strafe = b.strafe * 0.3; return inp; } // stand still and finish healing
-    if (!fighting && self.shield < 150 && (self.items.big || self.items.mini) && Math.random() < 0.2) inp.item = 1;
-    else if (!fighting && self.hp < 150 && self.items.med && Math.random() < 0.2) inp.item = 2;
-
-    // far from the circle: grab a car if one is close
-    const car = Math.hypot(self.x - g.nx, self.z - g.ny) > g.nr + 70 && !fighting ? sim.vehicles.find((v) => v.kind === 'car' && !v.driver && Math.hypot(v.body.x - self.x, v.body.z - self.z) < 30) : null;
-    if (car) {
-      const dc = Math.hypot(car.body.x - self.x, car.body.z - self.z);
-      inp.yaw = yawTo(car.body.x, car.body.z); inp.fwd = 1; inp.sprint = true;
-      if (dc < 2.8) inp.interact = true;
-    } else if (!inRing || ((g.closing || g.nextAt - sim.t < 12) && !inNext)) {
-      inp.yaw = yawTo(g.nx, g.ny); inp.fwd = 1; inp.sprint = true;
-      if (self.perk?.kind === 'launch' && Math.hypot(self.x - g.nx, self.z - g.ny) > g.nr + 40) inp.perk = true; // pad, then run onto it
-    } else if (fighting && tgt) {
-      const d = Math.hypot(tgt.x - self.x, tgt.z - self.z);
-      // pick the right gun for the range from what we carry
-      const has = self.slots.map((w, i) => ({ w, i })).filter((x) => x.w) as { w: WeaponId; i: number }[];
-      const shotgun = has.find((x) => x.w === 'pump' || x.w === 'tac'), sniper = has.find((x) => x.w === 'heavy' || x.w === 'hunting');
-      const rifle = has.filter((x) => !['pump', 'tac', 'heavy', 'hunting', 'stinger'].includes(x.w)).sort((a, z) => rank(z.w) - rank(a.w))[0];
-      const want = d < 12 && shotgun ? shotgun : d > 70 && sniper ? sniper : rifle ?? has[0];
-      if (want && want.i !== self.cur) inp.slot = want.i + 1;
-      if (b.reaction <= 0) { b.aimErr = (Math.random() - 0.5) * (1 - b.skill) * 0.12; b.reaction = 0.3 + Math.random() * 0.4; if (Math.random() < 0.15) b.strafe *= -1; }
-      b.reaction -= 1 / TICK_HZ;
-      const ty = tgt.y + HEAD_Y - 0.45 - (self.y + EYE_H);
-      inp.yaw = yawTo(tgt.x, tgt.z) + b.aimErr;
-      inp.pitch = Math.atan2(ty, d) + b.aimErr * 0.5;
-      inp.strafe = b.strafe; inp.fwd = d > 25 ? 0.6 : d < 8 ? -0.5 : 0;
-      const w = self.slots[self.cur];
-      inp.fire = Math.random() < 0.3 + b.skill * 0.5 && (!w || WEAPONS[w].auto || Math.random() < 0.4);
-      inp.aim = d > 30;
-      if (self.perk) {
-        const k = self.perk.kind;
-        if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && Math.random() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
-        if (k === 'kit') inp.perk = true;
-        if ((k === 'smoke' || k === 'fort') && self.hp < 110 && Math.random() < 0.08) inp.perk = true;
-        if (k === 'nuke' && d > 40 && Math.random() < 0.05) inp.perk = true;
-      }
-    } else {
-      // loot run: open the nearest case, or grab a better gun
-      let goal: { x: number; y: number; z: number } | null = null, gd = 45, open = false;
-      for (const c of sim.cases) { if (c.open || Math.abs(c.y - self.y) > 3) continue; const d = Math.hypot(c.x - self.x, c.z - self.z); if (d < gd) { gd = d; goal = c; open = true; } }
-      const worst = self.slots.includes(null) ? -1 : Math.min(...self.slots.map(rank));
-      for (const l of sim.loot) {
-        if (Math.abs(l.y - self.y) > 3) continue;
-        const d = Math.hypot(l.x - self.x, l.z - self.z);
-        const useful = l.kind === 'weapon' ? rank(l.what as WeaponId) > worst && !self.slots.includes(l.what as WeaponId) : l.kind === 'item' ? true : !self.perk;
-        if (useful && d < gd * 0.8) { gd = d; goal = l; open = l.kind === 'weapon' && !self.slots.includes(null); }
-      }
-      if (goal && gd < INTERACT_R && open) inp.interact = true;
-      if (goal) { inp.yaw = yawTo(goal.x, goal.z); inp.fwd = gd > 0.6 ? 1 : 0; inp.sprint = gd > 6; }
-      else {
-        if (Math.hypot(b.wp.x - self.x, b.wp.z - self.z) < 4 || Math.random() < 0.004) {
-          const a = Math.random() * Math.PI * 2, rr = Math.random() * g.r * 0.7;
-          b.wp = { x: g.x + Math.cos(a) * rr, z: g.y + Math.sin(a) * rr };
-        }
-        inp.yaw = yawTo(b.wp.x, b.wp.z); inp.fwd = 1; inp.sprint = true;
-        if (tgt && !b.los) inp.yaw = yawTo(tgt.x, tgt.z);
-      }
-      const w = self.slots[self.cur];
-      if (w && self.mags[self.cur] < WEAPONS[w].mag / 2) inp.reload = true;
-    }
-    // stuck against something: hop it, or swing round it
-    const sp = Math.hypot(self.vx, self.vz);
-    b.stuck = inp.fwd > 0 && sp < 1.5 && self.grounded ? b.stuck + 1 : 0;
-    if (b.stuck > 6) { inp.jump = true; if (b.stuck > 20) { inp.yaw += 1.6; b.wp = { x: self.x + Math.sin(-inp.yaw) * 30, z: self.z + Math.cos(-inp.yaw) * 30 }; b.stuck = 0; } }
-    return inp;
   }
 
   private step() {
@@ -266,7 +143,7 @@ export class LocalNet {
     const sim = r.sim;
     const inputs: TickInputs = new Map();
     inputs.set(1, this.mine.next()); // the same rules as the server (shared/src/inputq.ts)
-    for (const b of r.bots) if (sim.players.get(b.id)?.alive) inputs.set(b.id, this.botInput(b, sim));
+    for (const b of r.bots) if (sim.players.get(b.id)?.alive) inputs.set(b.id, botInput(b, sim));
     for (const e of sim.step(1 / TICK_HZ, inputs)) {
       if (e.kind === 'elim') {
         if (e.victim === 1) this.killer = e.by;

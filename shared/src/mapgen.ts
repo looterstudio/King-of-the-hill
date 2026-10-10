@@ -689,8 +689,11 @@ export function generate(w: World, seed: number) {
       const y0 = f * FH, y1 = y0 + FH, ink = f % 10 === 9 ? INK.ORANGE : f % 2 ? INK.BLUE : INK.PAPER;
       for (const side of SIDES) {
         const alongX = side === 'n' || side === 's', fixed = side === 'n' || side === 'w' ? -H : H;
-        const ops = f === 0 ? [{ a: -8, b: -5, lo: 0.9, hi: 2.8 }, { a: -2, b: 2, lo: 0, hi: 3.0 }, { a: 5, b: 8, lo: 0.9, hi: 2.8 }]
-          : [-8.5, -3.5, 1.5, 6.5].map((a) => ({ a, b: a + 2.2, lo: 0.9, hi: 2.8 }));
+        // windows run up to just under the floor above: a sill to jump onto (nobody falls out by walking into
+        // one) and 2.2 m of room over it, so any jump carries you out. At 1.9 m (a 1.8 m body) you had to be
+        // between 0.9 and 1.0 m up to fit, a band a falling body skips in one tick: getting out was luck
+        const ops = f === 0 ? [{ a: -8, b: -5, lo: 0.9, hi: 3.1 }, { a: -2, b: 2, lo: 0, hi: 3.1 }, { a: 5, b: 8, lo: 0.9, hi: 3.1 }]
+          : [-8.5, -3.5, 1.5, 6.5].map((a) => ({ a, b: a + 2.2, lo: 0.9, hi: 3.1 }));
         wall(alongX, fixed, -H, H, y0, y1, ops, ink);
       }
       // the floor above, with the updraft shaft through the middle
