@@ -6,6 +6,8 @@ import { Sim, emptyInput, type Input, type PlayerState, type SimEvent, type Tick
 import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, frameJson, snapJsonFor, type Viewer } from '../../shared/src/snap.ts';
 import { Watchdog, type Flag } from './anticheat.ts';
+import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
+import { rng } from '../../shared/src/rng.ts';
 
 // targets: 'all' = everyone still in the match; otherwise player ids. drop = may be skipped for a slow client
 export interface Send { to: 'all' | number[]; json: string; drop?: boolean }
@@ -40,11 +42,16 @@ export class Match {
   ended = false;
   private deserted = new Set<number>();
 
-  constructor(public roomId: string, seed: number, ids: number[], now: number, teams?: Record<number, number>) {
+  // the bots filling the room: played here, every tick, by the same brain as the offline demo's
+  private bots: Bot[] = [];
+
+  constructor(public roomId: string, seed: number, ids: number[], now: number, teams?: Record<number, number>, bots: number[] = []) {
     this.sim = new Sim(seed);
     const teamOf = teams ? new Map(Object.entries(teams).map(([k, v]) => [Number(k), v])) : undefined;
-    this.sim.spawn(ids, teamOf);
+    this.sim.spawn([...ids, ...bots], teamOf);
     for (const id of ids) this.seats.set(id, new Seat());
+    this.bots = bots.map((id) => newBot(id, rng(seed * 7919 + id)));
+    teamDrops(this.bots, teamOf ?? new Map([...ids, ...bots].map((id) => [id, id])), rng(seed ^ 0x5eed));
     const sizes = new Map<number, number>();
     for (const p of this.sim.players.values()) sizes.set(p.team, (sizes.get(p.team) ?? 0) + 1);
     this.teamSize = Math.max(1, ...sizes.values());
@@ -175,6 +182,7 @@ export class Match {
     const out: Send[] = [];
     const inputs: TickInputs = new Map();
     for (const [id, s] of this.seats) if (s.present) inputs.set(id, s.inputs.next());
+    for (const b of this.bots) if (this.sim.players.get(b.id)?.alive) inputs.set(b.id, botInput(b, this.sim));
     this.emit(this.sim.step(1 / TICK_HZ, inputs), out);
     if (this.sim.tick % SNAP_EVERY === 0) this.snapshot(out);
     const drained = this.watchdog.drain(), flags = drained.length ? drained : undefined;
@@ -224,8 +232,8 @@ export class MatchRunner {
     this.matches.delete(roomId);
     return { roomId, sends: [], ended: { winners: [], places: {} } };
   }
-  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>) {
-    try { this.matches.set(roomId, new Match(roomId, seed, ids, Date.now(), teams)); } catch (e) { this.deliver([this.crashed(roomId, e)]); }
+  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>, bots?: number[]) {
+    try { this.matches.set(roomId, new Match(roomId, seed, ids, Date.now(), teams, bots)); } catch (e) { this.deliver([this.crashed(roomId, e)]); }
   }
   input(roomId: string, id: number, i: Input) { try { this.matches.get(roomId)?.input(id, i); } catch (e) { this.deliver([this.crashed(roomId, e)]); } }
   spectate(roomId: string, id: number, r: SpecRequest) { try { this.matches.get(roomId)?.spectate(id, r); } catch (e) { this.deliver([this.crashed(roomId, e)]); } }

@@ -32,6 +32,7 @@ const flags: { at: number; room: string; mode: string; wallet: string | null; na
 mkdirSync(config.dataDir, { recursive: true });
 const mm = new Matchmaker({
   minVerifiedForTicket: MIN_VERIFIED,
+  fillWithBots: config.botFill,
   onScore: (_room, c, points) => ({ awarded: true, epoch: epochs.recordWin(c.wallet!, c.name, points) }),
   onResult: (_room, c, place, kills) => { profiles.match(c.wallet!, place, kills); void sendProfile(c); },
   onFlag: (room, c, f) => {

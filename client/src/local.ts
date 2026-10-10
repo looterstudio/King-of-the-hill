@@ -8,13 +8,13 @@ import { Sim, emptyInput, sanitizeInput, type TickInputs } from '../../shared/sr
 import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
-import { botInput, newBot, teamDrops, type Bot } from './bots.ts';
+import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
 import { TOKEN } from '../../shared/src/token.ts';
 
 type Handler = (m: ServerMsg) => void;
 const NAMES = ['degen.sol', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl'];
 const fakeWallet = () => Array.from({ length: 44 }, () => '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[Math.floor(Math.random() * 58)]).join('');
-export const DEMO_PLAYERS = 40;
+export const DEMO_PLAYERS = 100; // a full room, like the live server (bots fill the empty seats)
 
 export class LocalNet {
   private handlers: Handler[] = [];
@@ -151,10 +151,10 @@ export class LocalNet {
     let delay = 200;
     const total = Math.min(ROOM_MAX, DEMO_PLAYERS);
     for (let i = 0; i < total - 1; i++) {
-      delay += 40 + Math.random() * 90;
+      delay += 12 + Math.random() * 30;
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
-        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * 5) });
+        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * 5), bot: true });
         room.bots.push(newBot(id, Math.random));
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }

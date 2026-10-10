@@ -6,7 +6,7 @@ import { MatchRunner, type Outbound, type SpecRequest } from './match.ts';
 import type { ToWorker } from './matchworker.ts';
 
 export interface MatchHost {
-  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>): void;
+  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>, bots?: number[]): void; // bots: ids the match plays itself
   input(roomId: string, id: number, i: Input): void;
   spectate(roomId: string, id: number, r: SpecRequest): void;
   leave(roomId: string, id: number): void;
@@ -16,7 +16,7 @@ export interface MatchHost {
 export class InProcessHost implements MatchHost {
   private runner: MatchRunner;
   constructor(deliver: (b: Outbound[]) => void) { this.runner = new MatchRunner(deliver); this.runner.run(); }
-  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>) { this.runner.start(roomId, seed, ids, teams); }
+  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>, bots?: number[]) { this.runner.start(roomId, seed, ids, teams, bots); }
   input(roomId: string, id: number, i: Input) { this.runner.input(roomId, id, i); }
   spectate(roomId: string, id: number, r: SpecRequest) { this.runner.spectate(roomId, id, r); }
   leave(roomId: string, id: number) { this.runner.leave(roomId, id); }
@@ -64,13 +64,13 @@ export class WorkerHost implements MatchHost {
   // tests: what happens when a worker dies
   kill(i: number) { return this.workers[i].w.terminate(); }
   async stop() { this.stopped = true; await Promise.all(this.workers.map((s) => s.w.terminate())); }
-  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>) {
+  start(roomId: string, seed: number, ids: number[], teams?: Record<number, number>, bots?: number[]) {
     // the least busy worker takes the new match
     let best = 0;
     this.workers.forEach((w, i) => { if (w.players < this.workers[best].players) best = i; });
-    this.workers[best].players += ids.length;
+    this.workers[best].players += ids.length + (bots?.length ?? 0);
     this.where.set(roomId, best);
-    this.send(best, { t: 'start', roomId, seed, ids, teams });
+    this.send(best, { t: 'start', roomId, seed, ids, teams, bots });
   }
   // inputs are coalesced for a few ms so 30 000 inputs/s become a few hundred messages
   input(roomId: string, id: number, i: Input) {

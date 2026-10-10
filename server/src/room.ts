@@ -4,7 +4,8 @@
 // routed to the right sockets.
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, matchPoints, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
+import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, matchPoints, playerNumber, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
+import { BOT_NAMES } from '../../shared/src/bots.ts';
 import type { LobbyRoom, RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import type { MatchHost } from './host.ts';
 import type { Outbound, SpecRequest } from './match.ts';
@@ -12,6 +13,8 @@ import type { Flag } from './anticheat.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
 
 const SOFT_BUFFER = 256 * 1024;      // skip snapshots to a client this far behind
+const BOT_FILL_WAIT_MS = 20_000;     // with bots to fill the room, how long it waits for more people
+let nextBot = 900_000;               // bot ids, apart from the clients' (which count up from 1)
 const HARD_BUFFER = 2 * 1024 * 1024; // drop a client this far behind
 
 export class Client {
@@ -62,6 +65,7 @@ export class Client {
 export interface RoomHooks {
   onScore(room: Room, c: Client, points: number): { awarded: boolean; epoch: number };
   onResult?(room: Room, c: Client, place: number, kills: number): void; // every wallet's match, for its profile
+  fillWithBots?: boolean; // every match starts with 100: bots take the seats nobody did (they never score)
   onFlag?(room: Room, c: Client | null, f: Flag): void;
   minVerifiedForTicket: number;
 }
@@ -81,6 +85,8 @@ export class Room {
   closed = false;
   private dirty = false; // the seat list changed: sent once per lobby tick, not once per join/leave
   flagged = new Map<number, string>();
+  private botSeats: RoomSeat[] = [];
+  private get minPlayers() { return this.hooks.fillWithBots ? 1 : ROOM_MIN; }
 
   constructor(private hooks: RoomHooks, private host: MatchHost, readonly mode: Mode = 'solo') {}
 
@@ -91,7 +97,7 @@ export class Room {
     for (const c of this.seats) if (c.room === this) c.sendRaw(s, droppable);
   }
 
-  private seatList(): RoomSeat[] { return this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team, skin: c.skin })); }
+  private seatList(): RoomSeat[] { return [...this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team, skin: c.skin })), ...this.botSeats]; }
   // queue/leave spam used to send the whole seat list to every seat on every toggle (one attacker
   // turned 1.7 KB/s into 11.6 MB/s for a full room): now at most once per lobby tick, serialized once
   private announce() { this.dirty = true; }
@@ -117,7 +123,7 @@ export class Room {
     c.room = null;
     if (this.phase === 'live') { this.host.leave(this.id, c.id); return; } // the seat stays so the winner check stays honest
     this.seats = this.seats.filter((s) => s !== c);
-    if (this.phase === 'countdown' && this.seats.length < ROOM_MIN) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; }
+    if (this.phase === 'countdown' && this.seats.length < this.minPlayers) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; }
     if (this.seats.length === 0) this.closed = true;
     else if (this.phase !== 'over') this.announce();
   }
@@ -138,21 +144,24 @@ export class Room {
   update(now: number) {
     if (this.closed) return;
     if (this.phase === 'waiting') {
-      if (this.seats.length >= ROOM_MIN && this.fillDeadline === null) { this.fillDeadline = now + FILL_WAIT_MS; this.announce(); }
-      if (this.seats.length < ROOM_MIN) this.fillDeadline = null;
-      if ((this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) && this.teamCount() >= 2) {
+      if (this.seats.length >= this.minPlayers && this.fillDeadline === null) { this.fillDeadline = now + (this.hooks.fillWithBots ? BOT_FILL_WAIT_MS : FILL_WAIT_MS); this.announce(); }
+      if (this.seats.length < this.minPlayers) this.fillDeadline = null;
+      if ((this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) && (this.hooks.fillWithBots || this.teamCount() >= 2)) {
         this.phase = 'countdown'; this.startsAt = now + COUNTDOWN_MS; this.announce();
       }
     } else if (this.phase === 'countdown') {
       if (this.startsAt !== null && now >= this.startsAt) {
-        const teams = makeTeams(this.seats.map((c) => ({ id: c.id, party: c.party })), MODES[this.mode].size);
+        // the empty seats go to bots: a full 100 every match
+        const bots = this.hooks.fillWithBots ? Array.from({ length: Math.max(0, ROOM_MAX - this.seats.length) }, () => nextBot++) : [];
+        const teams = makeTeams([...this.seats.map((c) => ({ id: c.id, party: c.party })), ...bots.map((id) => ({ id, party: '' }))], MODES[this.mode].size);
         this.teamsAtStart = new Set(teams.values()).size;
         if (this.teamsAtStart < 2) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; this.announce(); } // someone left: wait for more
         else {
           this.phase = 'live';
           this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
           for (const c of this.seats) c.team = teams.get(c.id) ?? c.id;
-          this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries(this.seats.map((c) => [c.id, c.team])));
+          this.botSeats = bots.map((id, i) => ({ id, num: playerNumber(id * 7 + this.seed), name: BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? String(Math.floor(i / BOT_NAMES.length)) : ''), verified: false, team: teams.get(id) ?? id, skin: id % 5, bot: true }));
+          this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries([...this.seats.map((c) => [c.id, c.team]), ...this.botSeats.map((b) => [b.id, b.team])]), bots);
           this.announce();
         }
       }

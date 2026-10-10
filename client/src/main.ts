@@ -572,8 +572,8 @@ net.on((m: ServerMsg) => {
       $('queueInfo').textContent = '';
       state.roomMode = m.mode;
       $('roomMode').textContent = MODES[m.mode].name; $('roomMode').className = `mode-tag ${m.mode}`;
-      $('roomFoot').textContent = m.mode === 'solo' ? `Up to 100 drop in. A win is ${POINTS.win.solo} points, top ${topPlaces('solo')} +${POINTS.top}, every kill +${POINTS.kill}.`
-        : `Up to 100 drop in, in ${m.mode === 'duo' ? 'teams of 2' : 'squads of 4'}. A win is ${POINTS.win[m.mode]} points each, top ${topPlaces(m.mode)} teams +${POINTS.top}, every kill +${POINTS.kill}. Knocked teammates can be picked up.`;
+      $('roomFoot').textContent = m.mode === 'solo' ? `100 drop in every match: empty spots are filled with bots (they never score). A win is ${POINTS.win.solo} points, top ${topPlaces('solo')} +${POINTS.top}, every kill +${POINTS.kill}.`
+        : `100 drop in every match (bots fill the empty spots), in ${m.mode === 'duo' ? 'teams of 2' : 'squads of 4'}. A win is ${POINTS.win[m.mode]} points each, top ${topPlaces(m.mode)} teams +${POINTS.top}, every kill +${POINTS.kill}. Knocked teammates can be picked up.`;
       if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); drawPreview(m.seed); }
       if (m.state === 'live') {
         state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set(); howtoDone = false;

@@ -1,8 +1,8 @@
 // The offline demo's bots: a pure function of the bot's memory and the simulation (no DOM), so the
-// same brain runs in the browser and in headless tests (server/test/bots.test.ts).
-import { EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from '../../shared/src/constants.ts';
-import { emptyInput, type Case, type Input, type Loot, type PlayerState, type Sim } from '../../shared/src/sim.ts';
-import { rayBox, type World } from '../../shared/src/world.ts';
+// same brain runs in the browser and in headless tests (server/test/bots.test.ts); the server fills its rooms with them too.
+import { EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
+import { emptyInput, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
+import { rayBox, type World } from './world.ts';
 
 const DT = 1 / TICK_HZ;
 interface Pt { x: number; z: number }
@@ -10,6 +10,9 @@ interface Waypoint { x: number; z: number; hop: number; drop: boolean }
 interface Plan { gx: number; gz: number; y: number; at: number; pts: Waypoint[]; i: number; noWay: boolean } // noWay: can't get any closer than here
 // steering answer: which way to walk (world space), whether to jump something, and whether the goal can't be reached
 interface Dir { x: number; z: number; hop: boolean; stuck: boolean }
+
+// names for the bots that fill a room
+export const BOT_NAMES = ['degen', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl', 'pixel', 'scribble', 'inky', 'doodle', 'crayon'];
 
 export interface Bot {
   id: number; rand: () => number; skill: number; strafe: number; aimErr: number; reaction: number;

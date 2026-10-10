@@ -42,6 +42,7 @@ export const config = {
   vaultReserveLamports: BigInt(env.VAULT_RESERVE_LAMPORTS ?? '1000000'), // rent + fees buffer, never paid out
 
   // payout policy
+  botFill: bool(env.BOT_FILL, true), // fill every room to 100 with bots (they never score points)
   payoutMode: (env.PAYOUT_MODE ?? 'winner') as 'winner' | 'prorata' | 'draw', // winner: the hour's top scorer takes the pot
   rolloverBps: int(env.ROLLOVER_BPS, 1000), // 10% of every pot seeds the next one
   drawTiersBps: (env.DRAW_TIERS_BPS ?? '6000,2500,1500').split(',').map((s) => Number(s)),

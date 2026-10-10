@@ -204,3 +204,28 @@ test('a wallet profile keeps its record across restarts and knows where it stand
   assert.deepEqual(ep.standing('A'), { points: 40, rank: 2 }, 'a tie shares the place');
   assert.deepEqual(ep.standing('nobody'), { points: 0, rank: null });
 });
+
+test('with bots on, one player is enough: the room fills to 100 and the bots never score', () => {
+  const started: { ids: number[]; teams?: Record<number, number>; bots?: number[] }[] = [];
+  const host = { start: (_r: string, _s: number, ids: number[], teams?: Record<number, number>, bots?: number[]) => started.push({ ids, teams, bots }), input() {}, spectate() {}, leave() {}, stats: () => ({ tickMs: 0, workers: 0 }) } as MatchHost;
+  let scored = 0;
+  for (const mode of ['solo', 'duo', 'squad'] as const) {
+    const room = new Room({ ...hooks, fillWithBots: true, onScore: () => { scored++; return { awarded: true, epoch: 1 }; } }, host, mode);
+    const me = fakeClient(1);
+    room.add(me.c);
+    let now = Date.now();
+    for (let t = 0; t < 20 && room.phase !== 'live'; t++) { room.update(now); now += 5_000; }
+    assert.equal(room.phase, 'live', `${mode}: a lone player gets a match`);
+    const s = started.at(-1)!;
+    assert.equal(s.ids.length + s.bots!.length, 100, `${mode}: 100 in the match`);
+    assert.equal(Object.keys(s.teams!).length, 100, 'everyone has a team');
+    const size = { solo: 1, duo: 2, squad: 4 }[mode], counts = new Map<number, number>();
+    for (const t of Object.values(s.teams!)) counts.set(t, (counts.get(t) ?? 0) + 1);
+    assert.ok([...counts.values()].every((n) => n <= size), `${mode}: teams of at most ${size}`);
+    const seats = JSON.parse(me.sent.filter((m) => m.includes('"t":"room"')).at(-1)!).seats as { bot?: boolean }[];
+    assert.equal(seats.length, 100); assert.equal(seats.filter((x) => x.bot).length, 99);
+    // a bot wins: nobody scores for it
+    room.deliver({ roomId: room.id, sends: [], ended: { winners: [s.bots![0]], places: { [s.bots![0]]: [1, 9], 1: [37, 0] } } }, now);
+  }
+  assert.equal(scored, 0, 'bots have no wallet and the player finished 37th with no kills');
+});

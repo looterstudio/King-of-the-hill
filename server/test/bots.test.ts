@@ -7,7 +7,7 @@ import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
 import { MODES, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
 import { rng } from '../../shared/src/rng.ts';
-import { botInput, newBot, teamDrops, type Bot } from '../../client/src/bots.ts';
+import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
 
 const DT = 1 / TICK_HZ;
 

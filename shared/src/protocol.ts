@@ -75,7 +75,7 @@ export type SnapFx = [string, number, number, number, number, number];
 export interface SnapRing { x: number; y: number; r: number; nx: number; ny: number; nr: number; closing: boolean; nextIn: number; phase: number }
 
 // team: who you drop and win with (0 until the match starts; in solo everyone is their own team)
-export interface RoomSeat { id: number; num: string; name: string; verified: boolean; team: number; skin?: number }
+export interface RoomSeat { id: number; num: string; name: string; verified: boolean; team: number; skin?: number; bot?: boolean }
 // rooms filling or playing right now, for the lobby's room list
 export interface LobbyRoom { id: string; mode: Mode; n: number; state: RoomPhase; startsIn: number | null }
 
