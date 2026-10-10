@@ -124,6 +124,14 @@ class Sfx {
   jump() { if (this.ctx && this.enabled) this.tone(300, 520, 0.08, 0.12, 'sine'); }
   swing() { if (this.ctx && this.enabled) this.burst(900, 0.8, 0.12, 0.12, 'bandpass'); }
   chop(broke: boolean) { if (!this.ctx || !this.enabled) return; this.burst(broke ? 500 : 1800, 2, broke ? 0.35 : 0.25, broke ? 0.3 : 0.08); if (broke) this.tone(160, 60, 0.18, 0.3, 'triangle'); }
+  // you won: a short brass-ish fanfare, up a major arpeggio to a held chord
+  fanfare() {
+    if (!this.ctx || !this.enabled) return;
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((f, i) => { this.tone(f, f, 0.22, 0.32, 'sawtooth', i * 0.14); this.tone(f / 2, f / 2, 0.12, 0.32, 'square', i * 0.14); });
+    for (const f of [523, 659, 784, 1047]) this.tone(f, f, 0.14, 1.6, 'triangle', 0.62);
+    this.burst(5000, 1, 0.2, 0.6, 'highpass');
+  }
   // a building coming down: a long low rumble
   crumble(distance: number) {
     if (!this.ctx || !this.enabled) return;

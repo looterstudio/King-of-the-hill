@@ -733,3 +733,30 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .keys-table kbd { justify-self: start; font-family: var(--f-hand); font-size: 12.5px; font-weight: 800; border: 1.8px solid var(--ink); border-radius: 5px; padding: 1px 7px; background: var(--paper); box-shadow: 0 2px 0 var(--ink); }
 .keys-table span { color: var(--ink-soft); font-weight: 600; }
 @media (max-width: 560px) { .keys-table { grid-template-columns: minmax(0, 1fr); } .keys-table div { grid-template-columns: 100px minmax(0, 1fr); } }
+
+/* ---------- KING OF THE HILL · VICTORY ---------- */
+.victory { position: absolute; inset: 0; display: grid; place-items: center; mix-blend-mode: normal !important; background: radial-gradient(ellipse at center, rgba(255,214,70,.38) 0%, rgba(255,214,70,.12) 45%, rgba(20,20,40,.35) 100%); z-index: 20; animation: vFade .4s ease-out; }
+@keyframes vFade { from { opacity: 0; } }
+.victory canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.v-card { position: relative; display: grid; justify-items: center; gap: 2px; padding: 22px 40px 24px; background: var(--card); border: 4px solid var(--ink); border-radius: 16px 22px 15px 21px; box-shadow: 10px 10px 0 #f2b51c, 10px 10px 0 4px var(--ink); rotate: -1.5deg; animation: vPop .6s cubic-bezier(.2, 1.6, .4, 1); text-align: center; max-width: 92vw; }
+@keyframes vPop { from { transform: scale(.3) rotate(-8deg); opacity: 0; } }
+.v-crown { font-size: 64px; line-height: 1; color: #e8a317; filter: drop-shadow(3px 3px 0 var(--ink)); animation: vBob 1.4s ease-in-out infinite; margin-top: -60px; }
+@keyframes vBob { 50% { transform: translateY(-8px) rotate(4deg); } }
+.v-kicker { font-weight: 800; font-size: clamp(22px, 3vw, 34px); letter-spacing: .12em; color: var(--red); }
+.v-title { font-weight: 800; font-size: clamp(64px, 11vw, 150px); line-height: .9; letter-spacing: -0.03em; color: transparent; -webkit-text-stroke: 4px var(--ink);
+  background: linear-gradient(100deg, #f2b51c 0%, #ffe45c 30%, #fff6c8 45%, #ffd23f 55%, #f2b51c 75%, #e09600 100%) 0 0 / 220% 100%; -webkit-background-clip: text; background-clip: text; filter: drop-shadow(5px 6px 0 var(--red)); animation: goldShine 2.5s ease-in-out infinite; }
+.v-sub { font-family: var(--f-note); font-size: clamp(22px, 2.6vw, 30px); font-weight: 700; color: var(--ink); margin-top: 4px; }
+.v-stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }
+.v-stats div { min-width: 110px; padding: 6px 12px; border: 2.4px solid var(--ink); border-radius: 9px 12px 8px 11px; }
+.v-stats div.gold { background: linear-gradient(135deg, #fff6c8, #ffe45c); }
+.v-stats b { display: block; font-size: 28px; font-weight: 800; line-height: 1.1; }
+.v-stats span { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
+.v-stats p { flex-basis: 100%; margin: 6px 0 0; font-size: 14px; color: var(--ink-soft); }
+
+.wallet-pick { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.wallet-note { margin: -4px 0 0; font-size: 12.5px; color: var(--ink-soft); text-align: center; }
+.profile-chip .pf-w { font-size: 12px; font-weight: 800; color: #b07a00; }
+
+/* the pig's vault: a framed stage */
+.hero .jar-wrap { border: 3px solid var(--ink); border-radius: 18px 24px 17px 23px; overflow: hidden; box-shadow: 7px 7px 0 #f2b51c, 7px 7px 0 3px var(--ink); background: #0c0e22; margin-top: 8px; }
+.hero .jar-wrap .stamp { stroke: #ffd23f; } .hero .jar-wrap .stamp text { fill: #ffd23f; }

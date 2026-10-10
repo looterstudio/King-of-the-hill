@@ -116,6 +116,8 @@
         <div class="who">
           <div id="me" class="me">not connected</div>
           <button id="connectBtn" class="btn ink">Connect Phantom</button>
+          <div id="walletPick" class="wallet-pick hidden"></div>
+          <p class="wallet-note">Phantom, Solflare or Backpack · signing in is free, no transaction</p>
           <div class="or"><span>or</span></div>
           <div class="guest">
             <input id="guestName" maxlength="14" placeholder="your nickname" autocomplete="off" aria-label="guest nickname" />
@@ -298,6 +300,16 @@
   <div id="flash" class="flash"></div>
   <div id="hint" class="hint"></div>
   <div id="banner" class="banner hidden"></div>
+  <div id="victory" class="victory hidden" aria-live="assertive">
+    <canvas id="confetti"></canvas>
+    <div class="v-card">
+      <div class="v-crown">♛</div>
+      <div class="v-kicker">KING OF THE HILL</div>
+      <div class="v-title">VICTORY</div>
+      <div id="vSub" class="v-sub"></div>
+      <div id="vStats" class="v-stats"></div>
+    </div>
+  </div>
   <div id="specBar" class="spec-bar hidden"></div>
   <div id="vehHud" class="veh-hud hidden"></div>
 </section>

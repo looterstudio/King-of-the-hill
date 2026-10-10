@@ -30,7 +30,7 @@ const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidde
 // `vite build --mode demo` runs the whole game in the browser with bots; otherwise talk to the server
 const DEMO = import.meta.env.MODE === 'demo';
 const net: Net | LocalNet = DEMO ? new LocalNet() : new Net();
-const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: true, crown: true, rays: true, pipe: true });
+const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: true, crown: true, rays: true, pipe: true, stage: true });
 jar.scaleSol = 12; // an hour's pot: a few SOL already fills the glass a good way
 const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false, crown: true });
 const canvas = $<HTMLCanvasElement>('arena');
@@ -155,17 +155,41 @@ $('guestBtn').onclick = () => {
 $('guestName').addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') $('guestBtn').click(); });
 try { $<HTMLInputElement>('guestName').value = localStorage.getItem('pr_name') ?? ''; } catch { /* storage blocked */ }
 
-interface Phantom { connect(): Promise<{ publicKey: { toString(): string } }>; signMessage(m: Uint8Array, enc: 'utf8'): Promise<{ signature: Uint8Array }> }
-$('connectBtn').onclick = async () => {
-  const w = window as unknown as { phantom?: { solana?: Phantom }; solana?: Phantom };
-  const prov = w.phantom?.solana ?? w.solana;
-  if (!prov) return err('Phantom not found. Install it from phantom.app and reload.');
+// Solana wallets: Phantom first, Solflare and Backpack too. Each proves the wallet by signing the
+// login message (free, no transaction); the server checks the signature and reads the token balance
+interface SolWallet { connect(): Promise<unknown>; signMessage(m: Uint8Array, enc?: 'utf8'): Promise<unknown>; publicKey?: { toString(): string } | null }
+type WalletId = 'phantom' | 'solflare' | 'backpack';
+function wallets(): { id: WalletId; name: string; w: SolWallet }[] {
+  const g = window as unknown as { phantom?: { solana?: SolWallet }; solana?: SolWallet & { isPhantom?: boolean }; solflare?: SolWallet & { isSolflare?: boolean }; backpack?: { solana?: SolWallet } & SolWallet };
+  const out: { id: WalletId; name: string; w: SolWallet }[] = [];
+  const ph = g.phantom?.solana ?? (g.solana?.isPhantom ? g.solana : undefined);
+  if (ph) out.push({ id: 'phantom', name: 'Phantom', w: ph });
+  if (g.solflare) out.push({ id: 'solflare', name: 'Solflare', w: g.solflare });
+  const bp = g.backpack?.solana ?? (g.backpack?.connect ? g.backpack : undefined);
+  if (bp) out.push({ id: 'backpack', name: 'Backpack', w: bp });
+  return out;
+}
+async function signInWith(w: SolWallet) {
   try {
-    const { publicKey } = await prov.connect();
-    const { signature } = await prov.signMessage(new TextEncoder().encode(loginMessage(state.nonce)), 'utf8');
+    const r = await w.connect() as { publicKey?: { toString(): string } } | undefined;
+    const pk = (r?.publicKey ?? w.publicKey)?.toString();
+    if (!pk) throw new Error('the wallet did not share its address');
+    const s = await w.signMessage(new TextEncoder().encode(loginMessage(state.nonce)), 'utf8') as Uint8Array | { signature: Uint8Array };
+    const sig = s instanceof Uint8Array ? s : s.signature;
     state.authMode = 'wallet';
-    net.send({ t: 'auth', wallet: publicKey.toString(), sig: bs58.encode(signature) });
+    net.send({ t: 'auth', wallet: pk, sig: bs58.encode(sig) });
+    $('walletPick').classList.add('hidden');
   } catch (e) { err((e as Error).message || 'Signature cancelled.'); }
+}
+$('connectBtn').onclick = async () => {
+  const list = wallets();
+  if (!list.length) return err('No Solana wallet found. Install Phantom (phantom.app) and reload.');
+  if (list.length === 1) return signInWith(list[0].w);
+  // several installed: pick one
+  const pick = $('walletPick');
+  pick.innerHTML = list.map((x) => `<button type="button" class="btn ghost small" data-wallet="${x.id}">${x.name}</button>`).join('');
+  pick.classList.remove('hidden');
+  pick.onclick = (e) => { const id = (e.target as HTMLElement).closest<HTMLElement>('[data-wallet]')?.dataset.wallet; const w = list.find((x) => x.id === id); if (w) void signInWith(w.w); };
 };
 
 const touchOnly = () => matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
@@ -306,7 +330,7 @@ function renderProfile() {
   chip.classList.toggle('hidden', !profile);
   if (!profile) { pop.classList.add('hidden'); return; }
   const p = profile, short = `${p.wallet.slice(0, 4)}…${p.wallet.slice(-4)}`, hue = parseInt(p.wallet.slice(0, 6), 36) % 360;
-  setHTML(chip, `<span class="pf-av" style="background:hsl(${hue} 70% 45%)">${p.wallet[0]}</span>${short}<span class="pf-q ${p.qualified ? 'ok' : 'no'}">${p.qualified ? 'qualified' : 'not qualified'}</span>`);
+  setHTML(chip, `<span class="pf-av" style="background:hsl(${hue} 70% 45%)">${p.wallet[0]}</span>${short}${p.wins ? `<span class="pf-w">♛ ${p.wins}</span>` : ''}<span class="pf-q ${p.qualified ? 'ok' : 'no'}">${p.qualified ? 'qualified' : 'not qualified'}</span>`);
   chip.setAttribute('aria-expanded', String(!pop.classList.contains('hidden')));
   const won = sol(p.prizeLamports);
   setHTML(pop, `<h4>Your profile <button type="button" data-close aria-label="close">✕</button></h4><div class="pf-wallet">${esc(p.wallet)}</div>`
@@ -542,7 +566,7 @@ net.on((m: ServerMsg) => {
       break;
     case 'error': err(m.msg); $('queueInfo').textContent = ''; break;
     case 'pot': renderPot(m.pot); break;
-    case 'profile': profile = m.profile; renderProfile(); break;
+    case 'profile': profile = m.profile; renderProfile(); if (!$('victory').classList.contains('hidden')) victoryStats(); break;
     case 'inflow': {
       const v = sol(m.inflow.lamports); jar.inflow(v); miniJar.inflow(v); toast(`+${v.toFixed(3)} SOL · ${m.inflow.source}`);
       if (v >= 0.3) ticker(`<span class="gold">🐷 <b>+${v.toFixed(2)} SOL</b> ${esc(m.inflow.source)}</span>`);
@@ -665,13 +689,57 @@ net.on((m: ServerMsg) => {
       const sub = !m.awarded ? (mine ? `${mine} points · not counted: not enough verified wallets in this match` : '')
         : mine ? `+${mine} points this hour · the top scorer takes the pot${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
       if (winners.length) ticker(`<span class="gold">♛ <b>${esc(winners.map((w) => seatOf(w)?.name ?? label(w)).join(' + '))}</b> won a ${MODES[state.roomMode].name.toLowerCase()} match</span>`);
-      banner(word, sub, won);
+      if (won) victory(team, mine, sub); else banner(word, sub, won);
       voice.stop();
-      setTimeout(() => { $('banner').classList.add('hidden'); show('lobby'); }, RESULT_MS);
+      setTimeout(() => { $('banner').classList.add('hidden'); $('victory').classList.add('hidden'); stopConfetti(); show('lobby'); }, RESULT_MS);
       break;
     }
   }
 });
+
+// ---------- KING OF THE HILL · VICTORY ----------
+// the win: a full-screen card, gold and crowns raining down, a fanfare, and your running total of wins
+// when a wallet is connected (the server's updated profile lands a moment after the result)
+let vPoints = 0, vKills = 0;
+function victory(team: boolean, points: number, sub: string) {
+  vPoints = points; vKills = game.self?.kills ?? 0;
+  setHTML($('vSub'), `${team ? 'Your squad holds the hill' : 'You hold the hill'} · last ${team ? 'team' : 'one'} standing of ${state.seats.length}`);
+  victoryStats(sub);
+  $('victory').classList.remove('hidden');
+  startConfetti();
+  sfx.fanfare();
+}
+function victoryStats(sub?: string) {
+  const wins = profile ? profile.wins : null;
+  setHTML($('vStats'), `<div><b>${vKills}</b><span>kills</span></div><div><b>+${vPoints}</b><span>points this hour</span></div>`
+    + (wins !== null ? `<div class="gold"><b>${wins}</b><span>wins on your wallet</span></div>` : `<div><b>♛</b><span>connect Phantom to keep your wins</span></div>`)
+    + (sub ? `<p>${esc(sub)}</p>` : ''));
+}
+let confettiRaf = 0;
+function startConfetti() {
+  const c = $<HTMLCanvasElement>('confetti'), ctx = c.getContext('2d')!;
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  c.width = innerWidth * dpr; c.height = innerHeight * dpr;
+  const COLORS = ['#ffd23f', '#f2b51c', '#d32336', '#1d33b8', '#fff6c8', '#13897f'];
+  const bits = Array.from({ length: 220 }, () => ({ x: Math.random() * innerWidth, y: -Math.random() * innerHeight, vx: (Math.random() - 0.5) * 60, vy: 80 + Math.random() * 160, r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 8, s: 6 + Math.random() * 9, k: Math.random() < 0.18 ? 2 : Math.random() < 0.5 ? 1 : 0, col: COLORS[Math.floor(Math.random() * COLORS.length)] }));
+  let last = performance.now();
+  const tick = (now: number) => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, innerWidth, innerHeight);
+    for (const b of bits) {
+      b.x += b.vx * dt + Math.sin(now / 400 + b.r) * 0.6; b.y += b.vy * dt; b.r += b.vr * dt;
+      if (b.y > innerHeight + 20) { b.y = -20; b.x = Math.random() * innerWidth; }
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.r);
+      if (b.k === 2) { ctx.font = `${b.s * 2.2}px serif`; ctx.fillStyle = '#e8a317'; ctx.fillText('♛', -b.s, b.s); } // crowns
+      else if (b.k === 1) { ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#1d33b8'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(0, 0, b.s * 0.7, b.s * 0.7 * Math.abs(Math.cos(b.r * 2)) + 1, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); } // coins
+      else { ctx.fillStyle = b.col; ctx.fillRect(-b.s / 2, -b.s / 4, b.s, b.s / 2); } // paper strips
+      ctx.restore();
+    }
+    confettiRaf = requestAnimationFrame(tick);
+  };
+  cancelAnimationFrame(confettiRaf); confettiRaf = requestAnimationFrame(tick);
+}
+function stopConfetti() { cancelAnimationFrame(confettiRaf); confettiRaf = 0; }
 
 // ---------- teaching while you play ----------
 // the training list ticks itself off from what you actually do; the ammo line under the crosshair
