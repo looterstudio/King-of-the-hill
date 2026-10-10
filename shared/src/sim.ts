@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AIR_CRASH, AXE, BOMB, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AIR_CRASH, AXE, BOMB, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -16,7 +16,7 @@ export { rng };
 export type LootKind = 'weapon' | 'item' | 'perk';
 export interface Loot { id: number; x: number; y: number; z: number; kind: LootKind; what: string; n: number; mag?: number; up?: number }
 export interface Case { id: number; x: number; y: number; z: number; golden: boolean; open: boolean; supply?: boolean }
-export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; r?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
+export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'guided' | 'spell' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; r?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
 export interface Effect { id: number; kind: 'smoke' | 'pad' | 'nuke' | 'drop' | 'fire'; owner: number; x: number; y: number; z: number; t: number }
 // a vehicle: its own body (the physics state while nobody drives), hp, who is in it
 export interface Vehicle { id: number; kind: VehicleKind; hp: number; driver: number; last: number; body: Body; gunCd: number; bombCd: number; seats: number[] }
@@ -56,6 +56,8 @@ export type SimEvent =
   | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { kind: 'elim'; victim: number; by: number | null; cause: ElimCause; head: boolean }
   | { kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
+  | { kind: 'zap'; x: number; y: number; z: number } // a spell went off (no blast)
+  | { kind: 'slash'; by: number; hit: boolean }     // a blade swung
   | { kind: 'build'; id: number; boxes: Box[] }
   | { kind: 'unbuild'; id: number }
   | { kind: 'nuke'; x: number; z: number; by: number; at: number }
@@ -360,10 +362,11 @@ export class Sim {
 
   private shoot(p: PlayerState, w: WeaponId, inp: Input, ev: SimEvent[]) {
     const def = WEAPONS[w];
+    if (def.melee) { this.slash(p, def, ev); return; }
     p.mags[p.cur]--;
     if (def.proj) {
       const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
-      const sp = def.proj === 'rocket' ? ROCKET.speed : MISSILE.speed, dmg = def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]);
+      const sp = def.proj === 'rocket' ? ROCKET.speed : def.proj === 'guided' ? GUIDED.speed : def.proj === 'spell' ? SPELL.speed : MISSILE.speed, dmg = def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]);
       let tgt: number | undefined;
       if (def.proj === 'missile') { // lock onto the aircraft closest to the crosshair
         let best = MISSILE.cone;
@@ -379,7 +382,8 @@ export class Sim {
       }
       // in third person it leaves on the crosshair's own ray and flies straight down the middle of the screen
       const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp), drop = p.tp ? 0 : 0.1;
-      this.projectiles.push({ id: this.nextId++, kind: def.proj, owner: p.id, x: ox + dx * 0.9, y: oy - drop + dy * 0.9, z: oz + dz * 0.9, vx: dx * sp, vy: dy * sp, vz: dz * sp, t: def.proj === 'rocket' ? ROCKET.life : MISSILE.life, tgt, dmg });
+      const life = def.proj === 'rocket' ? ROCKET.life : def.proj === 'guided' ? GUIDED.life : def.proj === 'spell' ? SPELL.life : MISSILE.life;
+      this.projectiles.push({ id: this.nextId++, kind: def.proj, owner: p.id, x: ox + dx * 0.9, y: oy - drop + dy * 0.9, z: oz + dz * 0.9, vx: dx * sp, vy: dy * sp, vz: dz * sp, t: life, tgt, dmg, r: def.proj === 'guided' ? GUIDED.radius : undefined });
       this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
       return;
     }
@@ -431,6 +435,35 @@ export class Sim {
       ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg, head: hit.head, ...h });
       if (hit.q.hp <= 0) this.fall(hit.q, p.id, 'shot', ev, hit.head);
     }
+  }
+
+  // a blade swing: everyone in the arc in front of you within reach (and in sight) takes it and is shoved
+  // back; with nobody there, it cuts into the block you aim at like a heavy pickaxe
+  private slash(p: PlayerState, def: (typeof WEAPONS)[WeaponId], ev: SimEvent[]) {
+    const m = def.melee!, fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw), dmg = def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]);
+    const ex = p.x, ey = p.y + EYE_H, ez = p.z;
+    let hit = false;
+    for (const q of this.players.values()) {
+      if (!q.alive || q.id === p.id || q.team === p.team || (covered(q.ride) && !q.seat)) continue;
+      const dx = q.x - p.x, dz = q.z - p.z, d = Math.hypot(dx, dz);
+      if (d > m.reach + PLAYER_R || Math.abs(q.y - p.y) > 2.2) continue;
+      if (d > 0.8 && Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)) > m.arc) continue;
+      const cx = q.x - ex, cy = q.y + 1.1 - ey, cz = q.z - ez, L = Math.hypot(cx, cy, cz);
+      if (L > 0.5 && this.world.raycast(ex, ey, ez, cx / L, cy / L, cz / L, L) < L - 0.35) continue; // not through a wall
+      const amount = Math.round(dmg), h = this.hurt(q, amount);
+      ev.push({ kind: 'hit', victim: q.id, by: p.id, dmg: amount, head: false, ...h });
+      if (!q.ride) { q.vx += fx * 7; q.vz += fz * 7; q.vy = Math.max(q.vy, 3.5); q.grounded = false; q.mantleT = 0; }
+      if (q.hp <= 0) this.fall(q, p.id, 'shot', ev);
+      hit = true;
+    }
+    for (const v of this.vehicles) {
+      if (v.id === p.rideV) continue;
+      const r = VEHICLES[v.kind].r, dx = v.body.x - p.x, dz = v.body.z - p.z, d = Math.hypot(dx, dz);
+      if (d > m.reach + r || (d > r && Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)) > m.arc)) continue;
+      this.damageVehicle(v, Math.round(dmg * 1.2), p.id, ev); hit = true;
+    }
+    if (!hit) { const cp = Math.cos(p.pitch); hit = this.chopAt(p, -Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp, m.reach, m.block, ev); }
+    ev.push({ kind: 'slash', by: p.id, hit });
   }
 
   // ---------------- vehicles ----------------
@@ -907,7 +940,22 @@ export class Sim {
       if (t >= 0 && t < best) { best = t; hitV = v; hitP = null; }
     }
     const wb = this.world.raycastBox(ox, oy, oz, dx, dy, dz, AXE.reach);
-    if (wb.i >= 0 && wb.t < best) {
+    if (wb.i >= 0 && wb.t < best) { this.chopAt(p, dx, dy, dz, AXE.reach, AXE.block, ev); return; }
+    if (hitV) { this.damageVehicle(hitV, AXE.vehicle, p.id, ev); return; }
+    if (hitP) {
+      const dmg = Math.round(AXE.player * (hitP.head ? 1.5 : 1)), h = this.hurt(hitP.q, dmg);
+      ev.push({ kind: 'hit', victim: hitP.q.id, by: p.id, dmg, head: hitP.head, ...h });
+      if (hitP.q.hp <= 0) this.fall(hitP.q, p.id, 'shot', ev, hitP.head);
+    }
+  }
+
+  // a pickaxe (or blade) into the block under the crosshair: breaks it off its wall, hurts it, maybe breaks
+  // it (giving material); the building it belongs to takes a little structural damage. false: nothing there
+  private chopAt(p: PlayerState, dx: number, dy: number, dz: number, reach: number, blockDmg: number, ev: SimEvent[]): boolean {
+    const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp);
+    const wb = this.world.raycastBox(ox, oy, oz, dx, dy, dz, reach);
+    if (wb.i < 0) return false;
+    {
       const hx = ox + dx * (wb.t + 0.05), hy = oy + dy * (wb.t + 0.05), hz = oz + dz * (wb.t + 0.05);
       let i = wb.i, broke = false, left = 1;
       const b = this.world.boxes[i];
@@ -915,7 +963,7 @@ export class Sim {
         if (!World.isBlock(b)) i = this.shatter(i).find((k) => { const c = this.world.boxes[k]; return hx >= c.x0 - 0.01 && hx <= c.x1 + 0.01 && hy >= c.y0 - 0.01 && hy <= c.y1 + 0.01 && hz >= c.z0 - 0.01 && hz <= c.z1 + 0.01; }) ?? -1;
         if (i >= 0) {
           const mat = this.material(this.world.boxes[i]);
-          broke = this.hitBlock(i, AXE.block);
+          broke = this.hitBlock(i, blockDmg);
           left = broke ? 0 : Math.max(0, (this.world.boxes[i].hp ?? mat.hp) / mat.hp);
           if (broke) p.mats = Math.min(BUILD.maxMats, p.mats + mat.yield);
           const s = b.sid ? this.world.structures[b.sid - 1] : null;
@@ -924,14 +972,8 @@ export class Sim {
       }
       const c = this.world.boxes[i >= 0 ? i : wb.i];
       ev.push({ kind: 'chop', by: p.id, x: hx, y: hy, z: hz, broke, left: Math.round(left * 100) / 100, b: [c.x0, c.y0, c.z0, c.x1, c.y1, c.z1] });
-      return;
     }
-    if (hitV) { this.damageVehicle(hitV, AXE.vehicle, p.id, ev); return; }
-    if (hitP) {
-      const dmg = Math.round(AXE.player * (hitP.head ? 1.5 : 1)), h = this.hurt(hitP.q, dmg);
-      ev.push({ kind: 'hit', victim: hitP.q.id, by: p.id, dmg, head: hitP.head, ...h });
-      if (hitP.q.hp <= 0) this.fall(hitP.q, p.id, 'shot', ev, hitP.head);
-    }
+    return true;
   }
 
   // right click with the axe: a 1 m block where you look (on the face you aimed at, or the ground)
@@ -1101,22 +1143,43 @@ export class Sim {
   private stepRocket(g: Projectile, dt: number, ev: SimEvent[]): boolean {
     const radius = g.r ?? (g.kind === 'rocket' ? ROCKET.radius : MISSILE.radius), dmg = g.dmg ?? 100; // tank shells carry their own blast
     const tgt = g.tgt !== undefined ? this.vehicles.find((v) => v.id === g.tgt) : null;
-    if (tgt) {
-      const tx = tgt.body.x - g.x, ty = tgt.body.y + 1 - g.y, tz = tgt.body.z - g.z, d = Math.hypot(tx, ty, tz) || 1, sp = Math.hypot(g.vx, g.vy, g.vz);
-      const k = Math.min(1, MISSILE.turn * dt);
+    let aim: { x: number; y: number; z: number } | null = tgt ? { x: tgt.body.x, y: tgt.body.y + 1, z: tgt.body.z } : null;
+    const pilot = g.kind === 'guided' ? this.players.get(g.owner) : null;
+    if (pilot?.alive && pilot.slots[pilot.cur] === 'guided' && !pilot.axe && !pilot.down) {
+      // guided: toward whatever the pilot's crosshair is on right now
+      const [ox, oy, oz] = aimFrom(this.world, pilot.x, pilot.y, pilot.z, pilot.yaw, pilot.pitch, pilot.tp);
+      const cp = Math.cos(pilot.pitch), dx = -Math.sin(pilot.yaw) * cp, dy = Math.sin(pilot.pitch), dz = -Math.cos(pilot.yaw) * cp;
+      const t = Math.max(8, this.world.raycast(ox, oy, oz, dx, dy, dz, 450));
+      aim = { x: ox + dx * t, y: oy + dy * t, z: oz + dz * t };
+    }
+    if (aim) {
+      const tx = aim.x - g.x, ty = aim.y - g.y, tz = aim.z - g.z, d = Math.hypot(tx, ty, tz) || 1, sp = Math.hypot(g.vx, g.vy, g.vz);
+      const k = Math.min(1, (g.kind === 'guided' ? GUIDED.turn : MISSILE.turn) * dt);
       g.vx += ((tx / d) * sp - g.vx) * k; g.vy += ((ty / d) * sp - g.vy) * k; g.vz += ((tz / d) * sp - g.vz) * k;
+      const s2 = Math.hypot(g.vx, g.vy, g.vz) || 1; g.vx *= sp / s2; g.vy *= sp / s2; g.vz *= sp / s2; // turning doesn't slow it
     }
     for (let s = 0; s < 4; s++) {
       const nx = g.x + (g.vx * dt) / 4, ny = g.y + (g.vy * dt) / 4, nz = g.z + (g.vz * dt) / 4;
       const hitWorld = ny < 0.05 || this.world.near(nx, nz, nx, nz).some((i) => { const q = this.world.boxes[i]; return !q.dead && nx > q.x0 && nx < q.x1 && nz > q.z0 && nz < q.z1 && ny > q.y0 && ny < q.y1; });
       const owner = this.players.get(g.owner); // a passenger's own rocket doesn't blow up on their own vehicle
       const hitVeh = this.vehicles.some((v) => v.driver !== g.owner && v.id !== owner?.rideV && Math.hypot(v.body.x - nx, v.body.z - nz) < VEHICLES[v.kind].r + 0.8 && ny > v.body.y - 0.5 && ny < v.body.y + VEHICLES[v.kind].h + 0.8);
-      const hitPlayer = [...this.players.values()].some((q) => q.alive && q.id !== g.owner && (!owner || q.team !== owner.team) && Math.hypot(q.x - nx, q.z - nz) < 0.7 && ny > q.y && ny < q.y + 1.9);
+      const victim = [...this.players.values()].find((q) => q.alive && q.id !== g.owner && (!owner || q.team !== owner.team) && !(covered(q.ride) && !q.seat) && Math.hypot(q.x - nx, q.z - nz) < (g.kind === 'spell' ? 0.8 : 0.7) && ny > q.y && ny < q.y + 1.9);
       g.x = nx; g.y = ny; g.z = nz;
-      if (hitWorld || hitVeh || hitPlayer) { this.explode(g.x, Math.max(0.3, g.y), g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
+      if (g.kind === 'spell' && (hitWorld || hitVeh || victim)) { if (victim) this.spellHit(g, victim, ev); ev.push({ kind: 'zap', x: g.x, y: g.y, z: g.z }); return false; }
+      if (hitWorld || hitVeh || victim) { this.explode(g.x, Math.max(0.3, g.y), g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
     }
-    if ((g.t -= dt) <= 0) { this.explode(g.x, g.y, g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
+    if ((g.t -= dt) <= 0) { if (g.kind === 'spell') ev.push({ kind: 'zap', x: g.x, y: g.y, z: g.z }); else this.explode(g.x, g.y, g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
     return true;
+  }
+  // the wand's spell landed on someone: it hurts, and throws them back the way it was flying, off their feet
+  private spellHit(g: Projectile, q: PlayerState, ev: SimEvent[]) {
+    const amount = Math.round(g.dmg ?? 40), h = this.hurt(q, amount), sp = Math.hypot(g.vx, g.vz) || 1;
+    ev.push({ kind: 'hit', victim: q.id, by: g.owner, dmg: amount, head: false, ...h });
+    if (!q.ride) {
+      q.vx = (g.vx / sp) * SPELL.push; q.vz = (g.vz / sp) * SPELL.push; q.vy = Math.max(q.vy, SPELL.lift);
+      q.grounded = false; q.gliding = false; q.slideT = 0; q.mantleT = 0; q.hook = false; q.dashT = 0;
+    }
+    if (q.hp <= 0) this.fall(q, g.owner, 'shot', ev);
   }
 
   // a shockwave grenade: no damage, it throws everyone nearby (you too) through the air
@@ -1134,7 +1197,7 @@ export class Sim {
   private stepProjectiles(dt: number, ev: SimEvent[]) {
     const keep: Projectile[] = [];
     for (const g of this.projectiles) {
-      if (g.kind === 'rocket' || g.kind === 'missile') { if (this.stepRocket(g, dt, ev)) keep.push(g); continue; }
+      if (g.kind === 'rocket' || g.kind === 'missile' || g.kind === 'guided' || g.kind === 'spell') { if (this.stepRocket(g, dt, ev)) keep.push(g); continue; }
       if (g.stuck) { if ((g.t -= dt) > 0) keep.push(g); else this.explode(g.x, g.y, g.z, C4.radius, C4.dmg, g.owner, ev, false, C4.core); continue; }
       g.vy -= GRAVITY * dt;
       const nx = g.x + g.vx * dt, ny = g.y + g.vy * dt, nz = g.z + g.vz * dt;

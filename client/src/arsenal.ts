@@ -40,13 +40,15 @@ export function renderArsenal(el: HTMLElement) {
   renderer.setClearColor(0x000000, 0);
   const mats = COLORS.map((c) => new THREE.MeshLambertMaterial({ color: c }));
   const fakeInk = { material: (id: number) => mats[id] } as unknown as InkRenderer;
-  const gm = { body: mats[0], dark: mats[2], accent: mats[3] };
+  const gm = { body: mats[0], dark: mats[2], accent: mats[3], gem: mats[8], wood: mats[6] };
   const card = (img: string, name: string, color: string, tag: string, stats: string) =>
     `<article class="arm-card"><img src="${img}" alt=""><b style="color:${color}">${name}</b><em style="background:${color}">${tag}</em><small>${stats}</small></article>`;
   const guns = WEAPON_IDS.map((id) => {
     const d = WEAPONS[id], rps = d.burst ? (d.burst / (d.cd + d.burst * 0.075)) : 1 / d.cd;
     return card(picture(renderer, buildGun(id, gm), -Math.PI / 2 + 0.25), d.name, RARITY_CSS[d.rarity], d.rarity,
-      `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : ''}${id === 'heavy' ? ' · headshot kills' : ''}`);
+      d.melee ? `${d.dmg} a slash · ${rps.toFixed(1)}/s · no ammo · cuts everyone in front of you, and walls`
+        : d.proj === 'spell' ? `${d.dmg} dmg + throws them back · ${rps.toFixed(1)}/s · ${d.mag} charges`
+        : `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : d.proj === 'guided' ? ' · steer it with your crosshair' : ''}${id === 'heavy' ? ' · headshot kills' : ''}`);
   });
   guns.push(card(picture(renderer, buildPickaxe(mats[6], mats[8]), -Math.PI / 2 + 0.25), 'Diamond Pickaxe', '#0fa3c4', 'always yours', 'X · left click breaks walls, cars, people (gives ▦) · right click builds a block'));
   const perks = (Object.keys(PERKS) as PerkId[]).map((k) => card(picture(renderer, buildItem(k, fakeInk), 0.6, 0.5), PERKS[k].name, RARITY_CSS[PERKS[k].rarity], `×${PERKS[k].count}`, PERK_TEXT[k]));

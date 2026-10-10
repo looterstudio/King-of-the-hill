@@ -73,12 +73,13 @@ export const RING_DPS_START = 2.5;
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 
-export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy' | 'rocket' | 'stinger';
-export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy', 'rocket', 'stinger'];
+export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy' | 'rocket' | 'stinger' | 'guided' | 'blade' | 'wand';
+export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy', 'rocket', 'stinger', 'guided', 'blade', 'wand'];
 export interface WeaponDef {
   name: string; rarity: Rarity; dmg: number; cd: number; range: number; pellets: number; spread: number;
   mag: number; reload: number; zoom: number; auto: boolean; burst?: number; spinUp?: number; headMult?: number;
-  proj?: 'rocket' | 'missile'; // fires a projectile instead of a bullet
+  proj?: 'rocket' | 'missile' | 'guided' | 'spell'; // fires a projectile instead of a bullet
+  melee?: { reach: number; arc: number; block: number }; // swung, not fired: everyone in the arc in front of you (no ammo)
 }
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   pistol: { name: 'Pistol', rarity: 'common', dmg: 22, cd: 0.22, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.2, auto: false },
@@ -93,11 +94,18 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 300, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
   rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 285, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.4, auto: false, proj: 'rocket' },
   stinger: { name: 'Stinger', rarity: 'rare', dmg: 500, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.8, auto: false, proj: 'missile' },
+  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 300, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.4, auto: false, proj: 'guided' },
+  blade: { name: 'Plasma Blade', rarity: 'epic', dmg: 72, cd: 0.42, range: 3.6, pellets: 1, spread: 0, mag: 1, reload: 0, zoom: 1, auto: true, melee: { reach: 3.4, arc: 0.8, block: 75 } },
+  wand: { name: 'Magic Wand', rarity: 'rare', dmg: 46, cd: 0.55, range: 220, pellets: 1, spread: 0.006, mag: 6, reload: 2.4, zoom: 1.3, auto: false, proj: 'spell' },
 };
 // rockets fly straight and blow up on whatever they touch; Stinger missiles lock onto the nearest
 // helicopter or plane in front of you and chase it
 export const ROCKET = { speed: 58, radius: 6, life: 7 };
 export const MISSILE = { speed: 64, turn: 2.6, cone: 0.45, range: 420, radius: 5, life: 8 };
+// the guided missile flies (slowly) toward whatever your crosshair is on, as long as you hold the launcher;
+// the wand's spell is a fast bolt that hurts and throws whoever it hits back through the air
+export const GUIDED = { speed: 36, turn: 3.2, radius: 6.5, life: 10 };
+export const SPELL = { speed: 72, push: 19, lift: 7.5, life: 3 };
 // weapon upgrades: each level adds damage; benches upgrade once per player, kits anywhere
 export const UPGRADE = { max: 3, perLevel: 0.22, benchReach: 2.4 };
 export const MOLOTOV = { radius: 4.5, life: 7, dps: 38 };

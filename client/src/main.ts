@@ -659,6 +659,15 @@ net.on((m: ServerMsg) => {
         if (m.nuke && d < 220) { const f = $('flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 60); }
         break;
       }
+      if (m.kind === 'zap') { // a spell went off: a purple burst, a crackle
+        game.onZap(m.x, m.y, m.z);
+        const cam = game.ink.camera.position; sfx.zap(Math.hypot(m.x - cam.x, m.z - cam.z));
+        break;
+      }
+      if (m.kind === 'slash') { // someone else's blade (ours was heard when we swung)
+        if (m.by !== state.you) { const at = game.positionOf(m.by), cam = game.ink.camera.position; if (at) sfx.shot('blade', Math.max(1, Math.hypot(at.x - cam.x, at.z - cam.z))); }
+        break;
+      }
       if (m.kind === 'build') { game.onBuild(m.id, m.boxes); break; }
       if (m.kind === 'unbuild') { game.onUnbuild(m.id); break; }
       if (m.kind === 'nuke') { sfx.siren(); feed(`<b style="color:var(--red)">☢ ${esc(label(m.by))} launched an atomic bomb</b>`, m.by === state.you); break; }
@@ -797,6 +806,9 @@ function learnFrame(me: NonNullable<typeof game.self>, dt: number, w: string | n
     training.update();
     // first time with a gun, and with the minigun: how it works
     if (def && w !== 'minigun') tipOnce('gun', 'left click shoot · right click aim · R reload', 3500);
+    if (w === 'guided') tipOnce('guided', 'guided missile · fire it, then steer it with your crosshair: it flies to whatever you point at while you hold the launcher', 6500, 4);
+    if (w === 'blade') tipOnce('blade', 'plasma blade · get close and left click: it cuts everyone in front of you, and through walls', 6000, 4);
+    if (w === 'wand') tipOnce('wand', 'magic wand · the spell hurts and throws whoever it hits back through the air', 6000, 4);
     if (w === 'minigun') tipOnce('minigun', `minigun · hold left click: it spins up, then shreds · ${def!.reload} s reload: do it in cover`, 6000, 4);
     // a quiet moment with a half-empty gun: that is when to reload
     if (def && def.mag > 4 && mag < def.mag / 2 && me.reloadT === 0 && performance.now() - learn.combat > 3500 && !body.gliding) tipOnce('calm', 'quiet moment · reload now (R) so the next fight starts full', 3500, 4);
@@ -914,10 +926,10 @@ function frame(now: number) {
       setText($('shNum'), String(me.shield));
       document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 75);
       for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
-      setText($('ammo'), def ? String(mag) : '–');
-      setText($('ammoMax'), def ? `/${def.mag}` : '');
+      setText($('ammo'), def ? (def.melee ? '∞' : String(mag)) : '–'); // a blade has no ammo
+      setText($('ammoMax'), def && !def.melee ? `/${def.mag}` : '');
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
-      setHTML($('magTally'), def ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
+      setHTML($('magTally'), def && !def.melee ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
       setText($('weapon'), me.axe ? 'Diamond Pickaxe' : def ? def.name : 'unarmed');
       $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
       setHTML($('weapons'), `<li class="axe ${me.axe ? 'on' : ''}"><span><kbd>X</kbd> pickaxe</span><em>▦ ${me.mats}</em></li>` + me.slots.map((s, i) => s

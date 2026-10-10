@@ -90,7 +90,9 @@ class Sfx {
     if (!this.ctx || !this.enabled) return;
     const v = distance === 0 ? 1 : Math.max(0, 0.5 - distance / 220);
     if (v <= 0.01) return;
-    if (w === 'rocket' || w === 'stinger') { this.burst(500, 0.6, 0.8 * v, 0.6); this.tone(160, 50, 0.4 * v, 0.5, 'sawtooth'); return; }
+    if (w === 'rocket' || w === 'stinger' || w === 'guided') { this.burst(500, 0.6, 0.8 * v, 0.6); this.tone(160, 50, 0.4 * v, 0.5, 'sawtooth'); return; }
+    if (w === 'blade') { this.burst(1400, 1.5, 0.45 * v, 0.22, 'bandpass'); this.tone(110, 220, 0.3 * v, 0.24, 'sawtooth'); this.tone(330, 165, 0.12 * v, 0.2, 'square', 0.04); return; } // a humming swoosh
+    if (w === 'wand') { this.tone(700, 2400, 0.3 * v, 0.18, 'sine'); this.tone(1400, 3800, 0.16 * v, 0.22, 'triangle', 0.03); this.burst(6000, 2, 0.15 * v, 0.12, 'highpass'); return; } // a rising sparkle
     if (w === 'heavy' || w === 'hunting') { this.burst(900, 0.7, 0.9 * v, w === 'heavy' ? 0.8 : 0.5); this.tone(w === 'heavy' ? 80 : 120, 35, 0.55 * v, 0.45, 'triangle'); }
     else if (w === 'tac' || w === 'pump') { this.burst(1400, 0.5, 0.85 * v, 0.35); this.tone(90, 45, 0.35 * v, 0.25, 'triangle'); }
     else if (w === 'minigun') { this.burst(1900, 0.8, 0.5 * v, 0.07); this.tone(150, 70, 0.16 * v, 0.05, 'square'); }
@@ -122,6 +124,13 @@ class Sfx {
     this.burst(3000, 3, 0.25, 0.04, 'bandpass');
     setTimeout(() => this.ctx && this.burst(2400, 3, 0.25, 0.05, 'bandpass'), Math.min(600, secs * 300));
     setTimeout(() => { if (this.ctx) { this.burst(1800, 2.5, 0.3, 0.06, 'bandpass'); this.tone(700, 500, 0.05, 0.05, 'square'); } }, Math.max(250, secs * 1000 - 120));
+  }
+  // a spell landing: a crackle and a falling chime
+  zap(distance = 0) {
+    if (!this.ctx || !this.enabled) return;
+    const v = distance === 0 ? 1 : Math.max(0, 0.6 - distance / 160);
+    if (v <= 0.01) return;
+    this.burst(4500, 3, 0.35 * v, 0.14, 'bandpass'); this.tone(2600, 900, 0.22 * v, 0.25, 'sine'); this.tone(1800, 600, 0.14 * v, 0.3, 'triangle', 0.05);
   }
   boom(nuke: boolean, distance: number) {
     if (!this.ctx || !this.enabled) return;

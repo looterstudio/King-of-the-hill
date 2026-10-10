@@ -4,7 +4,7 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, covered, isAir, EYE_H, KNOCK, MATERIAL, MISSILE, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { AXE, BUILD, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
 import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
@@ -70,8 +70,9 @@ export class Game3D {
   kick(amp: number) { this.kickAmp = Math.max(amp, this.kickT > 0.3 ? this.kickAmp : 0); this.kickT = 1; }
   // our own rockets, drawn the moment we fire: out of the launcher onto the true line, until the
   // server's own rocket shows up in a snapshot
-  private ownRockets: { g: THREE.Group; ox: number; oy: number; oz: number; mx: number; my: number; mz: number; dx: number; dy: number; dz: number; sp: number; t: number }[] = [];
+  private ownRockets: { g: THREE.Group; spell?: boolean; ox: number; oy: number; oz: number; mx: number; my: number; mz: number; dx: number; dy: number; dz: number; sp: number; t: number }[] = [];
   private puffs: { m: THREE.Mesh; t: number; life: number; s: number }[] = [];
+  private slashT = 0; // the blade's swing on screen (1: just started)
   private hitUntil = new Map<number, number>(); // enemies you just hit show their health over their head
   markHit(id: number) { this.hitUntil.set(id, this.time + 2.2); }
   private viewChute: THREE.Group | null = null;
@@ -403,6 +404,18 @@ export class Game3D {
     for (const m of b.meshes) this.drop(m);
     this.builds.delete(id);
   }
+  // a spell went off: a burst of purple sparks and a little flash of light
+  onZap(x: number, y: number, z: number) {
+    const cam = this.ink.camera.position;
+    if (Math.hypot(cam.x - x, cam.z - z) > 160) return;
+    for (let k = 0; k < 10 && this.puffs.length < 180; k++) {
+      const m = new THREE.Mesh(Game3D.SPARK, this.ink.material(k % 3 ? INK_IDS.PURPLE : INK_IDS.DIAMOND));
+      const a = Math.random() * Math.PI * 2, r = 0.2 + Math.random() * 0.6;
+      m.position.set(x + Math.cos(a) * r, y + (Math.random() - 0.3) * 0.8, z + Math.sin(a) * r);
+      this.ink.scene.add(m);
+      this.puffs.push({ m, t: 0, life: 0.35 + Math.random() * 0.3, s: 1.2 + Math.random() });
+    }
+  }
   onBoom(x: number, y: number, z: number, r: number, nuke: boolean) {
     const m = new THREE.Mesh(Game3D.BALL, this.ink.material(nuke ? INK_IDS.RED : INK_IDS.ORANGE));
     m.position.set(x, y + (nuke ? 0 : 0.5), z);
@@ -473,7 +486,7 @@ export class Game3D {
   }
 
   private buildGuns() {
-    const mats = { body: this.ink.material(INK_IDS.BLUE, true), dark: this.ink.material(INK_IDS.GRAPHITE, true), accent: this.ink.material(INK_IDS.ORANGE, true) };
+    const mats = { body: this.ink.material(INK_IDS.BLUE, true), dark: this.ink.material(INK_IDS.GRAPHITE, true), accent: this.ink.material(INK_IDS.ORANGE, true), gem: this.ink.material(INK_IDS.DIAMOND, true), wood: this.ink.material(INK_IDS.BROWN, true) };
     for (const id of WEAPON_IDS) {
       const g = buildGun(id, mats);
       g.scale.setScalar(0.62); g.position.set(0.2, -0.2, -0.5); g.visible = false;
@@ -526,7 +539,7 @@ export class Game3D {
   private syncLoot(list: SnapLoot[]) {
     const keep = new Set(list.map((l) => l[0]));
     for (const [id, v] of this.loot) if (!keep.has(id)) { this.drop(v.g); this.loot.delete(id); }
-    const gunMats = { body: this.ink.material(INK_IDS.BLUE), dark: this.ink.material(INK_IDS.GRAPHITE), accent: this.ink.material(INK_IDS.ORANGE) };
+    const gunMats = { body: this.ink.material(INK_IDS.BLUE), dark: this.ink.material(INK_IDS.GRAPHITE), accent: this.ink.material(INK_IDS.ORANGE), gem: this.ink.material(INK_IDS.DIAMOND), wood: this.ink.material(INK_IDS.BROWN) };
     for (const d of list) {
       let v = this.loot.get(d[0]);
       if (!v) {
@@ -584,7 +597,7 @@ export class Game3D {
       if (!v) {
         const g = intern(kind === 'grenade' ? buildItem('grenade', this.ink) : kind === 'smoke' && t > 2 ? buildSmoke(this.ink) : kind === 'smoke' ? buildItem('smoke', this.ink)
           : kind === 'pad' ? buildPad(this.ink) : kind === 'c4' ? buildItem('c4', this.ink) : kind === 'bomb' ? buildItem('nuke', this.ink) : kind === 'drop' ? buildSupply(this.ink)
-          : kind === 'rocket' || kind === 'missile' ? buildItem('rocket', this.ink) : kind === 'molotov' ? buildItem('molotov', this.ink) : kind === 'shock' ? buildItem('shock', this.ink) : kind === 'fire' ? buildFire(this.ink) : buildNukeMarker(this.ink));
+          : kind === 'rocket' || kind === 'missile' || kind === 'guided' ? buildItem('rocket', this.ink) : kind === 'spell' ? buildItem('spell', this.ink) : kind === 'molotov' ? buildItem('molotov', this.ink) : kind === 'shock' ? buildItem('shock', this.ink) : kind === 'fire' ? buildFire(this.ink) : buildNukeMarker(this.ink));
         this.ink.scene.add(g);
         v = { g, kind };
         this.fx.set(id, v);
@@ -592,7 +605,7 @@ export class Game3D {
       // rockets: point the way they fly (the model's nose is its -z), and between snapshots carry on at
       // the speed they were going (they jumped 4 m at a time, 15 times a second)
       const u = v.g.userData, now = performance.now() / 1000;
-      if (kind === 'rocket' || kind === 'missile') {
+      if (kind === 'rocket' || kind === 'missile' || kind === 'guided' || kind === 'spell') {
         if (fresh) { // the server's copy of a rocket we already drew: it takes over from ours
           let best = 9, k = -1;
           this.ownRockets.forEach((r, i) => { const d = Math.hypot(r.ox + r.dx * r.sp * r.t - x, r.oy + r.dy * r.sp * r.t - y, r.oz + r.dz * r.sp * r.t - z); if (d < best) { best = d; k = i; } });
@@ -705,11 +718,12 @@ export class Game3D {
         const ex = this.pred.x, ey = this.pred.y + EYE_H, ez = this.pred.z;
         const view = new THREE.Euler(c.pitch, c.yaw, 0, 'YXZ');
         const muzzle = (tp ? new THREE.Vector3(0.3, -0.3, -0.75) : new THREE.Vector3(0.22, -0.18, -0.6)).applyEuler(view).add(new THREE.Vector3(ex, ey, ez));
-        if (def.proj) { // a rocket: drawn now, flying out of the launcher onto its line
+        if (def.melee) this.slashT = 1; // a blade: the swing is all there is to draw
+        else if (def.proj) { // a rocket (or a spell): drawn now, flying out of the launcher onto its line
           const cp = Math.cos(c.pitch), dx = -Math.sin(c.yaw) * cp, dy = Math.sin(c.pitch), dz = -Math.cos(c.yaw) * cp, drop = tp ? 0 : 0.1;
-          const g = intern(buildItem('rocket', this.ink));
+          const spell = def.proj === 'spell', g = intern(buildItem(spell ? 'spell' : 'rocket', this.ink));
           this.ink.scene.add(g);
-          this.ownRockets.push({ g, ox: ox + dx * 0.9, oy: oy - drop + dy * 0.9, oz: oz + dz * 0.9, mx: muzzle.x, my: muzzle.y, mz: muzzle.z, dx, dy, dz, sp: def.proj === 'rocket' ? ROCKET.speed : MISSILE.speed, t: 0 });
+          this.ownRockets.push({ g, spell, ox: ox + dx * 0.9, oy: oy - drop + dy * 0.9, oz: oz + dz * 0.9, mx: muzzle.x, my: muzzle.y, mz: muzzle.z, dx, dy, dz, sp: def.proj === 'rocket' ? ROCKET.speed : def.proj === 'guided' ? GUIDED.speed : spell ? SPELL.speed : MISSILE.speed, t: 0 });
         } else for (let i = 0; i < Math.min(def.pellets, 5); i++) {
           const yaw = c.yaw + (Math.random() - 0.5) * 2 * spread, pitch = c.pitch + (Math.random() - 0.5) * 2 * spread;
           const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
@@ -1042,10 +1056,11 @@ export class Game3D {
     const nowS = performance.now() / 1000;
     for (const f of this.fx.values()) {
       if (f.kind === 'grenade') f.g.rotation.x += dt * 8;
-      else if ((f.kind === 'rocket' || f.kind === 'missile') && f.g.userData.vx !== undefined) {
+      else if ((f.kind === 'rocket' || f.kind === 'missile' || f.kind === 'guided' || f.kind === 'spell') && f.g.userData.vx !== undefined) {
         const u = f.g.userData, e = Math.min(0.12, nowS - u.at);
         f.g.position.set(u.px + u.vx * e, u.py + u.vy * e, u.pz + u.vz * e);
-        this.smoke(f.g.position, u.vx, u.vy, u.vz, dt);
+        if (f.kind === 'spell') f.g.rotation.y += dt * 9;
+        this.smoke(f.g.position, u.vx, u.vy, u.vz, dt, f.kind === 'spell' ? INK_IDS.PURPLE : INK_IDS.GRAPHITE);
       }
     }
     this.ownRockets = this.ownRockets.filter((r) => {
@@ -1054,7 +1069,7 @@ export class Game3D {
       if (r.t > 0.7 || this.world!.raycast(r.ox, r.oy, r.oz, r.dx, r.dy, r.dz, d + 0.5) < d) { this.drop(r.g); return false; }
       r.g.position.set(r.ox + r.dx * d + (r.mx - r.ox) * k, r.oy + r.dy * d + (r.my - r.oy) * k, r.oz + r.dz * d + (r.mz - r.oz) * k);
       r.g.lookAt(r.g.position.x - r.dx, r.g.position.y - r.dy, r.g.position.z - r.dz);
-      this.smoke(r.g.position, r.dx * r.sp, r.dy * r.sp, r.dz * r.sp, dt);
+      this.smoke(r.g.position, r.dx * r.sp, r.dy * r.sp, r.dz * r.sp, dt, r.spell ? INK_IDS.PURPLE : INK_IDS.GRAPHITE);
       return true;
     });
     this.puffs = this.puffs.filter((p) => {
@@ -1185,6 +1200,12 @@ export class Game3D {
       const ads = look.aim ? 1 : 0;
       g.position.set(0.2 * (1 - ads), -0.2 + ads * 0.1 - reload * 0.22 + Math.sin(this.bob) * 0.012, -0.5 + this.gunKick * 0.06 + ads * 0.08);
       g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, w === 'minigun' ? 0 : 0);
+      if (WEAPONS[w].melee) { // the blade: held up and out, a sweep from right to left on every swing
+        this.slashT = Math.max(0, this.slashT - dt * 3.6);
+        const k = Math.sin((1 - this.slashT) * Math.PI) * (this.slashT > 0 ? 1 : 0);
+        g.position.set(0.28 - k * 0.32, -0.26 + k * 0.08, -0.55);
+        g.rotation.set(0.35 - k * 0.25, 0.25 + k * 1.3, -0.5 + k * 0.9);
+      }
     }
 
     this.drawVehicles(dt);
@@ -1201,9 +1222,9 @@ export class Game3D {
   }
 
   // a puff of rocket smoke left behind (vx..: the way it flies), a few per frame per rocket
-  private smoke(at: THREE.Vector3, vx: number, vy: number, vz: number, dt: number) {
+  private smoke(at: THREE.Vector3, vx: number, vy: number, vz: number, dt: number, ink: number = INK_IDS.GRAPHITE) {
     if (this.puffs.length > 160 || Math.random() > dt * 40) return;
-    const sp = Math.hypot(vx, vy, vz) || 1, m = new THREE.Mesh(Game3D.BALL, this.ink.material(INK_IDS.GRAPHITE));
+    const sp = Math.hypot(vx, vy, vz) || 1, m = new THREE.Mesh(Game3D.BALL, this.ink.material(ink));
     m.position.set(at.x - (vx / sp) * 0.45 + (Math.random() - 0.5) * 0.1, at.y - (vy / sp) * 0.45 + (Math.random() - 0.5) * 0.1, at.z - (vz / sp) * 0.45 + (Math.random() - 0.5) * 0.1);
     m.scale.setScalar(0.05);
     this.ink.scene.add(m);

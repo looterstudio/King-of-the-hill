@@ -103,6 +103,8 @@ export type ServerMsg =
   | { t: 'event'; kind: 'upgrade'; by: number; level: number }
   | { t: 'event'; kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { t: 'event'; kind: 'boom'; x: number; y: number; z: number; r: number; nuke: boolean }
+  | { t: 'event'; kind: 'zap'; x: number; y: number; z: number }
+  | { t: 'event'; kind: 'slash'; by: number; hit: boolean }
   | { t: 'event'; kind: 'build'; id: number; boxes: Box[] }
   | { t: 'event'; kind: 'unbuild'; id: number }
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }

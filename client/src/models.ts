@@ -39,7 +39,7 @@ const box = (w: number, h: number, d: number, m: Mat, x = 0, y = 0, z = 0) => { 
 // cylinder lying along -z (barrels, scopes)
 const tube = (r: number, len: number, m: Mat, x = 0, y = 0, z = 0, seg = 10) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, seg).rotateX(Math.PI / 2), m); o.position.set(x, y, z); return o; };
 
-export interface GunMats { body: Mat; dark: Mat; accent: Mat }
+export interface GunMats { body: Mat; dark: Mat; accent: Mat; gem?: Mat; wood?: Mat } // gem: glowing parts (the blade, the wand's tip); wood: the wand
 
 // guns are modelled pointing down -z with the grip at the origin, about 1 unit = 1 m
 export function buildGun(id: WeaponId, m: GunMats): THREE.Group {
@@ -91,6 +91,20 @@ export function buildGun(id: WeaponId, m: GunMats): THREE.Group {
     case 'rocket':
       add(tube(0.09, 1.1, m.body, 0, 0.06, -0.2, 12), tube(0.1, 0.12, m.accent, 0, 0.06, -0.78, 12), tube(0.1, 0.1, m.dark, 0, 0.06, 0.34, 12));
       add(box(0.05, 0.16, 0.06, m.dark, 0, -0.08, -0.05), box(0.05, 0.14, 0.06, m.dark, 0, -0.08, -0.35), box(0.06, 0.08, 0.14, m.accent, 0.1, 0.12, -0.15));
+      break;
+    case 'guided': // a launcher with a guidance screen and a little antenna
+      add(tube(0.095, 1.15, m.dark, 0, 0.06, -0.2, 12), tube(0.105, 0.12, m.accent, 0, 0.06, -0.8, 12), tube(0.105, 0.1, m.body, 0, 0.06, 0.36, 12));
+      add(box(0.05, 0.16, 0.06, m.dark, 0, -0.08, -0.05), box(0.16, 0.12, 0.04, m.dark, -0.13, 0.16, -0.1), box(0.13, 0.09, 0.045, m.gem ?? m.accent, -0.13, 0.16, -0.1));
+      add(box(0.015, 0.22, 0.015, m.dark, 0.08, 0.26, 0.1));
+      break;
+    case 'blade': { // a hilt and a long glowing blade, held point forward
+      add(tube(0.03, 0.26, m.dark, 0, 0, 0.02, 10), box(0.11, 0.035, 0.035, m.accent, 0, 0, -0.12), tube(0.034, 0.04, m.body, 0, 0, 0.1, 10));
+      const blade = box(0.045, 0.045, 1.05, m.gem ?? m.body, 0, 0, -0.66); blade.name = 'blade'; add(blade);
+      break;
+    }
+    case 'wand': // a wooden wand with a handle and a glowing tip
+      add(tube(0.022, 0.16, m.dark, 0, 0, 0.05, 8), tube(0.014, 0.42, m.wood ?? m.accent, 0, 0, -0.22, 8));
+      add(new THREE.Mesh(new THREE.OctahedronGeometry(0.035), m.gem ?? m.accent).translateZ(-0.45));
       break;
     case 'stinger':
       add(tube(0.075, 1.25, m.dark, 0, 0.06, -0.2, 12), tube(0.08, 0.1, m.accent, 0, 0.06, -0.85, 12), box(0.18, 0.14, 0.12, m.body, 0, 0.2, -0.3));
@@ -159,6 +173,8 @@ export function buildItem(what: string, ink: InkRenderer): THREE.Group {
     g.add(box(0.44, 0.24, 0.3, red, 0, 0.12, 0), box(0.2, 0.06, 0.06, dark, 0, 0.28, 0), box(0.06, 0.2, 0.06, orange, 0.12, 0.34, 0));
   } else if (what === 'rocket') {
     g.add(tube(0.08, 0.6, dark, 0, 0, 0), new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 8), red).rotateX(-Math.PI / 2).translateY(0.4));
+  } else if (what === 'spell') { // the wand's bolt: a bright core in a purple shell
+    g.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 1), ink.material(INK_IDS.PURPLE)), new THREE.Mesh(new THREE.OctahedronGeometry(0.11), ink.material(INK_IDS.DIAMOND)));
   } else if (what === 'c4') {
     g.add(box(0.34, 0.12, 0.22, ink.material(INK_IDS.BROWN), 0, 0.06, 0), box(0.12, 0.05, 0.14, dark, 0.06, 0.14, 0), box(0.02, 0.1, 0.02, red, -0.1, 0.17, 0.05));
   } else if (what === 'nuke') {
@@ -360,7 +376,7 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.leng
   const armL = arm(-1), armR = arm(1);
   armL.rotation.y = -0.35; // left hand comes across to the handguard
   const guns = new Map<WeaponId, THREE.Group>(); // built the first time this player holds each one
-  const gunMats = { body: M(INK_IDS.BLUE), dark, accent: M(INK_IDS.ORANGE) };
+  const gunMats = { body: M(INK_IDS.BLUE), dark, accent: M(INK_IDS.ORANGE), gem: M(INK_IDS.DIAMOND), wood: M(INK_IDS.BROWN) };
   const axe = intern(buildPickaxe(M(INK_IDS.BROWN), M(INK_IDS.DIAMOND)));
   axe.scale.setScalar(1.3); axe.position.set(0.02, -0.04, -0.4);
   torso.add(armL, armR);
@@ -466,7 +482,7 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
     if (axe) want = f.axe;
     else if (weapon) {
       let g = f.guns.get(weapon);
-      if (!g) { g = intern(buildGun(weapon, f.gunMats)); g.scale.setScalar(1.15); g.position.set(0.02, -0.06, -0.48); f.guns.set(weapon, g); }
+      if (!g) { g = intern(buildGun(weapon, f.gunMats)); g.scale.setScalar(1.15); g.position.set(0.02, -0.06, -0.48); if (weapon === 'blade') { g.rotation.x = 0.95; g.position.z = -0.3; } f.guns.set(weapon, g); } // the blade held up, not pointed away
       upgradeGun(g, level, f.gunMats.accent, f.gem);
       want = g;
     }

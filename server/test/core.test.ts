@@ -870,6 +870,52 @@ test('every gun in the game damages a target in front of it', () => {
   }
 });
 
+test('the wand throws whoever it hits back through the air; the blade cuts everyone in its arc (not behind, not through walls)', () => {
+  { // wand
+    const sim = arena([1, 2]);
+    const a = sim.players.get(1)!, b = sim.players.get(2)!;
+    a.x = 0; a.z = 0; b.x = 0; b.z = -15; b.shield = 0;
+    give(a, 'wand');
+    let hit = false;
+    for (let i = 0; i < TICK_HZ && !hit; i++) { sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -Math.atan2(0.6, 15), fire: i === 0, seq: i + 1 })]])); hit = b.hp < PLAYER_HP; }
+    assert.ok(hit, 'the spell hit');
+    assert.ok(b.vz < -10 && b.vy > 0, `thrown back and up (vz ${b.vz.toFixed(1)}, vy ${b.vy.toFixed(1)})`);
+    for (let i = 0; i < TICK_HZ / 2; i++) sim.step(DT, new Map());
+    assert.ok(b.z < -18, `flew back (z ${b.z.toFixed(1)})`);
+    assert.equal(a.mags[0], WEAPONS.wand.mag - 1);
+  }
+  { // blade
+    const sim = new Sim(1, World.custom([{ x0: -3, y0: 0, z0: 1, x1: 3, y1: 3, z1: 1.3, ink: 1, kind: 'wall' }]));
+    sim.spawn([1, 2, 3, 4]);
+    const [a, f1, f2, back] = [1, 2, 3, 4].map((i) => sim.players.get(i)!);
+    for (const p of [a, f1, f2, back]) { p.y = 0; p.gliding = false; p.grounded = true; p.shield = 0; }
+    a.x = 0; a.z = 0; f1.x = -0.8; f1.z = -2.2; f2.x = 1.0; f2.z = -2.4; back.x = 0; back.z = 2.6; // a wall stands between us and back
+    give(a, 'blade');
+    sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: 0, fire: true })]]));
+    assert.ok(f1.hp < PLAYER_HP && f2.hp < PLAYER_HP, 'both in front were cut');
+    assert.equal(back.hp, PLAYER_HP, 'the one behind was not');
+    assert.equal(a.mags[0], 1, 'no ammo used');
+    // turned around: the one behind is now in front, but behind the wall
+    back.hp = PLAYER_HP;
+    for (let i = 0; i < TICK_HZ; i++) sim.step(DT, new Map([[1, inp({ yaw: Math.PI, pitch: 0, fire: true, seq: 2 + i })]]));
+    assert.equal(back.hp, PLAYER_HP, 'not through the wall');
+  }
+});
+
+test('a guided missile follows the crosshair after it leaves the launcher', () => {
+  const sim = arena([1, 2]);
+  const a = sim.players.get(1)!;
+  a.x = 0; a.z = 0;
+  sim.players.get(2)!.x = 300;
+  give(a, 'guided');
+  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: 0.05, fire: true, seq: 1 })]]));
+  const g = sim.projectiles.find((p) => p.kind === 'guided')!;
+  assert.ok(g && Math.abs(g.vx) < 1e-6, 'leaves straight');
+  // look 90 degrees to the right (-yaw): it swings round after the crosshair
+  for (let i = 0; i < TICK_HZ; i++) sim.step(DT, new Map([[1, inp({ yaw: -Math.PI / 2, pitch: 0.05, seq: 2 + i })]]));
+  assert.ok(sim.projectiles.includes(g) && g.vx > 25, `turned toward the new aim (vx ${g.vx.toFixed(1)}, vz ${g.vz.toFixed(1)})`);
+});
+
 test('every perk does something when used', () => {
   for (const k of ['grenade', 'molotov', 'shock', 'smoke', 'launch', 'fort', 'kit', 'c4', 'nuke'] as const) {
     const sim = arena([1]);

@@ -263,7 +263,7 @@ function hop(b: Bot, self: PlayerState, inp: Input, t: number) {
 // shields, which bots leave alone
 function gunValue(w: WeaponId, ups: number, mag: number | null, d: number, skill: number, air = false): number {
   const def = WEAPONS[w];
-  if (d > def.range * 0.95 || (def.proj && d < 11) || (w === 'stinger') !== air) return 0; // out of reach, our own blast, the wrong job
+  if (d > def.range * 0.95 || (def.proj && def.proj !== 'spell' && d < 11) || (w === 'stinger') !== air) return 0; // out of reach, our own blast, the wrong job
   const scoped = w === 'heavy' || w === 'hunting', aim = d > 30;
   const spread = def.spread * (aim ? (scoped ? 0.02 : 0.5) : 1) * 1.3 + (1 - skill) * 0.03;
   const hit = def.proj ? 0.55 : Math.min(1, 0.4 / Math.max(0.01, d * spread));
@@ -366,7 +366,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   // who's worth a fight: in reach of what we carry (a pistol doesn't take on a rifle at 100 m; early on a bot
   // would rather loot than trade shots across a field), or shooting at us
   let reach = 0;
-  self.slots.forEach((x) => { if (x) reach = Math.max(reach, x === 'pistol' ? 25 : WEAPONS[x].pellets > 1 ? 22 : WEAPONS[x].range < 70 ? 40 : WEAPONS[x].zoom >= 2.4 ? 110 : 65); });
+  self.slots.forEach((x) => { if (x) reach = Math.max(reach, WEAPONS[x].melee ? 6 : x === 'pistol' ? 25 : WEAPONS[x].pellets > 1 ? 22 : WEAPONS[x].range < 70 ? 40 : WEAPONS[x].zoom >= 2.4 ? 110 : 65); });
   if (g.phase === 0) reach = Math.min(reach, 40);
   const fighting = !!(tgt && b.los && (td < reach || t - b.hitT < 3 || (td < reach * 1.6 && t - b.seenT < 0.5 && b.mode === 'fight')));
   const alert = t - b.seenT < 2 || t - b.hitT < 2;
@@ -606,7 +606,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
     if (inp.fire && t - b.seenT > 0.1) { const v = sight(sim.world, self, tgt); if (v) { b.seenT = t; b.vis = v; } else { inp.fire = false; b.los = false; b.losT = t; } }
   }
   // move: strafe, close in or back off to the gun's range, flip when a wall stops the strafe; the storm comes first
-  const pref = !def ? 20 : def.pellets > 1 ? 6 : def.zoom >= 2.4 ? 55 : def.proj ? 30 : def.range < 70 ? 14 : 24;
+  const pref = !def ? 20 : def.melee ? 1.5 : def.pellets > 1 ? 6 : def.zoom >= 2.4 ? 55 : def.proj ? 30 : def.range < 70 ? 14 : 24;
   const ux = (tgt.x - self.x) / (d || 1), uz = (tgt.z - self.z) / (d || 1);
   let mx = -uz * b.strafe, mz = ux * b.strafe;
   if (safe) { const s = steer(b, sim, self, safe.x, safe.z, 0); const l = Math.hypot(s.x, s.z) || 1; mx = (s.x / l) * 2 + mx * 0.3; mz = (s.z / l) * 2 + mz * 0.3; if (s.hop) hop(b, self, inp, t); }
