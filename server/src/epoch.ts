@@ -40,7 +40,9 @@ export class Epochs extends EventEmitter {
   private reqTokens = new Map<number, number>();           // epoch -> tokens a wallet must hold
   private snapsDone = new Map<number, number>();           // epoch -> snapshots taken so far
   private sweeping = false;
-  private closing = new Set<number>();
+  private pendingClose = new Set<number>(); // scoring over, waiting to settle (strictly in order)
+  private settling = false;
+  private retryAt = 0;
   private voidFile: string;
   private reqFile: string;
 
@@ -97,20 +99,28 @@ export class Epochs extends EventEmitter {
   }
 
   // read the balance of every wallet holding points this epoch; below the requirement = void.
-  // A failed read never voids anyone (an RPC outage must not wipe an epoch).
-  async sweep(epoch: number, why: string) {
+  // A failed read never voids anyone (an RPC outage must not wipe an epoch): it is retried, and the
+  // count of wallets still unread comes back so the close can wait for them instead.
+  async sweep(epoch: number, why: string): Promise<number> {
     const wallets = [...(this.tallies.get(epoch)?.keys() ?? [])].filter((w) => !this.isVoid(epoch, w));
-    let i = 0;
+    let i = 0, unread = 0;
     const worker = async () => {
       while (i < wallets.length) {
         const w = wallets[i++];
-        try {
-          const h = await this.pot.holderTokens(w);
-          if (h.raw < this.rawRequirement(epoch, h.decimals)) this.voidWallet(epoch, w, why);
-        } catch { /* fail open */ }
+        for (let attempt = 0; ; attempt++) {
+          try {
+            const h = await this.pot.holderTokens(w, true);
+            if (h.raw < this.rawRequirement(epoch, h.decimals)) this.voidWallet(epoch, w, why);
+            break;
+          } catch {
+            if (attempt >= 2) { unread++; break; }
+            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
+        }
       }
     };
     await Promise.all(Array.from({ length: SWEEP_CONCURRENCY }, worker));
+    return unread;
   }
 
   // a crash mid-epoch must not lose tickets: every win is appended before it is acknowledged
@@ -150,16 +160,22 @@ export class Epochs extends EventEmitter {
 
   leaderboard(limit = 10) {
     const m = this.tallies.get(this.current) ?? new Map<string, Tally>();
-    return [...m.entries()].filter(([w]) => !this.isVoid(this.current, w)).map(([wallet, t]) => ({ wallet, name: t.name, wins: t.wins }))
+    // voided wallets stay listed until the settlement: dropping them live told everyone when a hidden snapshot ran
+    return [...m.entries()].map(([wallet, t]) => ({ wallet, name: t.name, wins: t.wins }))
       .sort((a, b) => b.wins - a.wins).slice(0, limit);
   }
 
   // the process was down across a boundary: settle every closed epoch that still holds tickets
   async catchUp() {
-    for (const e of [...this.tallies.keys()].sort((a, b) => a - b)) if (e < this.current && !existsSync(this.settledFile(e))) await this.close(e);
+    for (const e of this.tallies.keys()) if (e < this.current && !existsSync(this.settledFile(e))) this.pendingClose.add(e);
+    await this.drainCloses();
   }
 
-  start() { void this.catchUp(); this.timer = setInterval(() => { void this.check(); }, 1000); }
+  start() {
+    const run = (p: Promise<unknown>) => { p.catch((e) => console.error('[epoch]', e)); };
+    run(this.catchUp());
+    this.timer = setInterval(() => run(this.check()), 1000);
+  }
   stop() { if (this.timer) clearInterval(this.timer); }
 
   async check() {
@@ -171,17 +187,29 @@ export class Epochs extends EventEmitter {
       this.sweeping = true;
       try { await this.sweep(this.current, `below the hold requirement at snapshot ${done + 1}`); } finally { this.sweeping = false; }
     }
-    if (e === this.current) return;
-    const closing = this.current;
-    this.current = e;
-    await this.close(closing);
+    if (e !== this.current) { this.pendingClose.add(this.current); this.current = e; }
+    await this.drainCloses();
   }
 
-  // the last balance check, then the payout
-  private async close(epoch: number) {
-    if (this.closing.has(epoch)) return;
-    this.closing.add(epoch);
-    try { await this.sweep(epoch, 'below the hold requirement at the close'); this.settle(epoch); } finally { this.closing.delete(epoch); }
+  // the last balance check, then the payout, one epoch at a time and oldest first. Never on a pot that
+  // hasn't been read (right after a restart, or with the RPC down): that settled an epoch with nothing
+  // and deleted its points. Wallets whose balance couldn't be read hold the close until they can be.
+  private async drainCloses() {
+    if (this.settling || this.pendingClose.size === 0 || this.now() < this.retryAt) return;
+    this.settling = true;
+    try {
+      for (const epoch of [...this.pendingClose].sort((a, b) => a - b)) {
+        if (existsSync(this.settledFile(epoch))) { this.pendingClose.delete(epoch); continue; }
+        if (!this.pot.ready()) { this.retryAt = this.now() + 5_000; return; }
+        const unread = await this.sweep(epoch, 'below the hold requirement at the close');
+        if (unread > 0 || !this.pot.ready()) {
+          console.warn(`[epoch] ${epoch}: ${unread} balance reads failed, settling again in 30 s`);
+          this.retryAt = this.now() + 30_000; return;
+        }
+        this.settle(epoch);
+        this.pendingClose.delete(epoch);
+      }
+    } finally { this.settling = false; }
   }
 
   settle(epoch: number): SettledView {
@@ -195,7 +223,7 @@ export class Epochs extends EventEmitter {
     });
     const tree = buildTree(epoch, res.payouts);
     const paid = res.payouts.reduce((s, p) => s + p.lamports, 0n);
-    this.pot.markPaid(paid);
+    this.pot.markPaid(epoch, paid);
     this.rolloverIn = res.rollover;
 
     const record = {

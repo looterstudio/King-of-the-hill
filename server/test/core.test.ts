@@ -1015,3 +1015,53 @@ test('a network hiccup never moves a player twice or leaves input lag behind', a
   // every tick consumed exactly one sequence number: the stand-ins took the late ones' place
   assert.equal(m.sim.players.get(1)!.ack, seq);
 });
+
+test('payouts fit one root: at most MAX_CLAIMS winners and nothing under the minimum', async () => {
+  const { MAX_CLAIMS, MIN_PAYOUT_LAMPORTS } = await import('../src/payout.ts');
+  const wins = new Map(Array.from({ length: MAX_CLAIMS + 500 }, (_, i) => [wallet(), (i % 50) + 1] as [string, number]));
+  const pot = 5000n * 10n ** 9n;
+  const r = computePayouts(pot, wins, policy('prorata'));
+  assert.ok(r.payouts.length <= MAX_CLAIMS, `${r.payouts.length} claims`);
+  assert.ok(r.payouts.every((p) => p.lamports >= MIN_PAYOUT_LAMPORTS));
+  assert.equal(r.payouts.reduce((s, p) => s + p.lamports, 0n) + r.rollover, pot);
+  // the ones left out are the lowest scorers
+  const minPaid = Math.min(...r.payouts.map((p) => wins.get(p.wallet)!));
+  assert.ok([...wins.values()].filter((w) => w > minPaid).length <= MAX_CLAIMS);
+  // a tiny pot pays nobody rather than shares a claim would cost more than
+  const tiny = computePayouts(5_000_000n, new Map([[wallet(), 1], [wallet(), 1], [wallet(), 1], [wallet(), 1], [wallet(), 1], [wallet(), 1]]), policy('prorata'));
+  assert.equal(tiny.payouts.length, 0); assert.equal(tiny.rollover, 5_000_000n);
+});
+
+test('the live pot is exactly what the vault program will accept', async () => {
+  const { SolanaPot } = await import('../src/pot.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'pr-pot-'));
+  const cfg = { ...config, dataDir: dir, vaultAddress: 'V', configAddress: 'C', holdMinUsd: 0, vaultReserveLamports: 1_000_000n };
+  const SOL = 1_000_000_000n;
+  let vault = 100n * SOL, chain = { last: 0n, any: false, reserved: 0n };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_u: unknown, init: { body: string }) => {
+    const m = JSON.parse(init.body).method as string;
+    const d = Buffer.alloc(99); d.writeBigUInt64LE(chain.last, 48); d[56] = chain.any ? 1 : 0; d.writeBigUInt64LE(chain.reserved, 57);
+    const result = m === 'getBalance' ? { value: Number(vault) } : { value: { data: [d.toString('base64'), 'base64'] } };
+    return { json: async () => ({ result }) } as Response;
+  }) as typeof fetch;
+  try {
+    const pot = new SolanaPot(cfg);
+    assert.equal(pot.balance(), 0n, 'nothing to allocate before the chain was read');
+    await pot.poll();
+    assert.equal(pot.balance(), 100n * SOL - 1_000_000n);
+    pot.markPaid(5, 90n * SOL);                      // settled here, keeper hasn't posted yet
+    assert.equal(pot.balance(), 10n * SOL - 1_000_000n);
+    chain = { last: 5n, any: true, reserved: 90n * SOL }; await pot.poll();   // posted
+    assert.equal(pot.balance(), 10n * SOL - 1_000_000n, 'counted once, not twice');
+    vault -= 90n * SOL; chain.reserved = 0n; vault += 5n * SOL; await pot.poll(); // winners claimed, new fees came in
+    assert.equal(pot.balance(), 15n * SOL - 1_000_000n, 'claims free nothing twice: the next pot sees the new fees');
+    // a restart before the keeper posts epoch 6 still holds its reservation (read back from data/epochs)
+    pot.markPaid(6, 4n * SOL);
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(join(dir, 'epochs'), { recursive: true }); writeFileSync(join(dir, 'epochs', '6.json'), JSON.stringify({ paid: (4n * SOL).toString() }));
+    const again = new SolanaPot(cfg); await again.poll();
+    assert.equal(again.balance(), 11n * SOL - 1_000_000n);
+    assert.throws(() => new SolanaPot({ ...cfg, configAddress: '' }), /CONFIG_ADDRESS/);
+  } finally { globalThis.fetch = realFetch; }
+});

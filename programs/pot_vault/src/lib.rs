@@ -3,11 +3,14 @@
 //! Token trading fees are swept (as SOL) into the `vault` PDA. Every 6h epoch the operator posts
 //! one merkle root of (wallet, amount) payouts; winners pull their own share with a proof.
 //!
-//! What the operator key CAN do: allocate the free vault balance to a root it publishes.
-//! What it CANNOT do: withdraw to itself outside a root, settle an epoch before it has ended,
-//! settle an epoch twice, allocate more than the free balance, or touch funds already reserved
-//! for unclaimed winners. The root and the full claims list are published off chain
-//! (`/api/epochs/:id`), so every allocation is auditable. Put the authority behind a multisig.
+//! What the operator key CAN do: allocate the free vault balance to a root it publishes (so the
+//! authority must be a multisig: whoever controls it decides who the free balance goes to), and
+//! cancel a root during the first 30 minutes, before anyone can claim from it.
+//! What it CANNOT do: withdraw outside a root, settle an epoch before it has ended, settle an epoch
+//! twice, allocate more than the free balance, or touch funds already reserved for winners. The root
+//! and the full claims list are published off chain (`/api/epochs/:id`), so every allocation is
+//! auditable. Only the program's upgrade authority can initialize it, and the upgrade authority can
+//! replace the program: move it to the same multisig before any funds arrive.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash::hashv;
@@ -18,30 +21,34 @@ declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 pub const MAX_CLAIMS: u32 = 8192;
 pub const MAX_PROOF: usize = 14; // ceil(log2(8192)) + 1
 pub const CLAIM_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
+pub const EPOCH_SECONDS: i64 = 6 * 60 * 60; // the server's EPOCH_MS; fixed so a typo can't break the timing
+pub const CLAIM_DELAY_SECS: i64 = 30 * 60;  // a root can be cancelled before anyone can claim from it
 
 #[program]
 pub mod pot_vault {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, epoch_seconds: i64) -> Result<()> {
-        require!(epoch_seconds >= 60, VaultError::BadEpochLength);
+    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let c = &mut ctx.accounts.config;
         c.authority = ctx.accounts.authority.key();
-        c.epoch_seconds = epoch_seconds;
+        c.epoch_seconds = EPOCH_SECONDS;
         c.last_settled = 0;
         c.settled_any = false;
         c.reserved = 0;
         c.vault_bump = ctx.bumps.vault;
         c.bump = ctx.bumps.config;
+        c.pending_authority = Pubkey::default();
         Ok(())
     }
 
+    /// Epochs may be settled in any order (a skipped or failed epoch can still be paid later); the
+    /// epoch account itself stops a second settlement, and an expired or cancelled epoch keeps a
+    /// small tombstone account for the same reason.
     pub fn settle_epoch(ctx: Context<SettleEpoch>, epoch: u64, root: [u8; 32], total: u64, count: u32) -> Result<()> {
         let c = &mut ctx.accounts.config;
         require!(count > 0 && count <= MAX_CLAIMS, VaultError::BadCount);
-        require!(!c.settled_any || epoch > c.last_settled, VaultError::AlreadySettled);
 
-        let ends = (epoch as i128 + 1) * c.epoch_seconds as i128;
+        let ends = (epoch as i128 + 1) * EPOCH_SECONDS as i128;
         let now = Clock::get()?.unix_timestamp;
         require!((now as i128) >= ends, VaultError::EpochNotOver);
 
@@ -53,7 +60,7 @@ pub mod pot_vault {
         require!(total <= free, VaultError::Insufficient);
 
         c.reserved = c.reserved.checked_add(total).ok_or(VaultError::Overflow)?;
-        c.last_settled = epoch;
+        c.last_settled = if c.settled_any { c.last_settled.max(epoch) } else { epoch };
         c.settled_any = true;
 
         let e = &mut ctx.accounts.epoch_state;
@@ -75,6 +82,8 @@ pub mod pot_vault {
     pub fn claim(ctx: Context<Claim>, epoch: u64, index: u32, amount: u64, proof: Vec<[u8; 32]>) -> Result<()> {
         require!(proof.len() <= MAX_PROOF, VaultError::BadProof);
         let e = &mut ctx.accounts.epoch_state;
+        let now = Clock::get()?.unix_timestamp;
+        require!(now >= e.settled_at.saturating_add(CLAIM_DELAY_SECS), VaultError::ClaimsNotOpen);
         require!(index < e.count, VaultError::BadIndex);
         let (byte, bit) = ((index / 8) as usize, 1u8 << (index % 8));
         require!(e.bitmap[byte] & bit == 0, VaultError::AlreadyClaimed);
@@ -104,21 +113,45 @@ pub mod pot_vault {
     }
 
     /// After the claim window, unclaimed prizes are released back into the free balance (they roll
-    /// into the next pot, they do not go to the authority) and the epoch account's rent is refunded.
-    pub fn expire_epoch(ctx: Context<ExpireEpoch>, _epoch: u64) -> Result<()> {
-        let e = &ctx.accounts.epoch_state;
+    /// into the next pot, they do not go to the authority). The epoch account shrinks to a tombstone
+    /// (its bitmap's rent goes back to the authority) so the epoch can never be settled again.
+    pub fn expire_epoch(ctx: Context<CloseEpoch>, _epoch: u64) -> Result<()> {
         let now = Clock::get()?.unix_timestamp;
-        require!(now >= e.settled_at.saturating_add(CLAIM_WINDOW_SECS), VaultError::ClaimWindowOpen);
-        let unclaimed = e.total - e.claimed;
-        let c = &mut ctx.accounts.config;
-        c.reserved = c.reserved.checked_sub(unclaimed).ok_or(VaultError::Overflow)?;
+        require!(now >= ctx.accounts.epoch_state.settled_at.saturating_add(CLAIM_WINDOW_SECS), VaultError::ClaimWindowOpen);
+        release(&mut ctx.accounts.config, &mut ctx.accounts.epoch_state)
+    }
+
+    /// A root posted by mistake can be withdrawn while claims are not open yet; its whole total goes
+    /// back to the free balance and the epoch keeps a tombstone (post a corrected root under a new
+    /// epoch number... or not at all: the funds simply roll over).
+    pub fn cancel_epoch(ctx: Context<CloseEpoch>, _epoch: u64) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        require!(now < ctx.accounts.epoch_state.settled_at.saturating_add(CLAIM_DELAY_SECS), VaultError::CancelTooLate);
+        release(&mut ctx.accounts.config, &mut ctx.accounts.epoch_state)
+    }
+
+    /// Two steps: the new authority has to sign `accept_authority`, which proves it can (a typo, or
+    /// a Squads multisig account instead of its vault PDA, would otherwise lock the vault for good).
+    pub fn set_authority(ctx: Context<SetAuthority>, new_authority: Pubkey) -> Result<()> {
+        ctx.accounts.config.pending_authority = new_authority;
         Ok(())
     }
 
-    pub fn set_authority(ctx: Context<SetAuthority>, new_authority: Pubkey) -> Result<()> {
-        ctx.accounts.config.authority = new_authority;
+    pub fn accept_authority(ctx: Context<AcceptAuthority>) -> Result<()> {
+        let c = &mut ctx.accounts.config;
+        c.authority = ctx.accounts.new_authority.key();
+        c.pending_authority = Pubkey::default();
         Ok(())
     }
+}
+
+fn release(c: &mut Account<Config>, e: &mut Account<EpochState>) -> Result<()> {
+    let unclaimed = e.total.checked_sub(e.claimed).ok_or(VaultError::Overflow)?;
+    c.reserved = c.reserved.checked_sub(unclaimed).ok_or(VaultError::Overflow)?;
+    e.total = e.claimed;
+    e.count = 0; // every claim now fails on the index check
+    e.bitmap = Vec::new(); // matches the account's new size (EpochState::space(0))
+    Ok(())
 }
 
 pub fn bitmap_len(count: u32) -> usize { count.div_ceil(8) as usize }
@@ -144,8 +177,10 @@ pub struct Config {
     pub reserved: u64,
     pub vault_bump: u8,
     pub bump: u8,
+    pub pending_authority: Pubkey,
 }
-impl Config { pub const SPACE: usize = 8 + 32 + 8 + 8 + 1 + 8 + 1 + 1; }
+// new fields go at the end: the server reads `reserved` at byte 57 (server/src/pot.ts)
+impl Config { pub const SPACE: usize = 8 + 32 + 8 + 8 + 1 + 8 + 1 + 1 + 32; }
 
 #[account]
 pub struct EpochState {
@@ -169,6 +204,12 @@ pub struct Initialize<'info> {
     pub vault: SystemAccount<'info>,
     #[account(mut)]
     pub authority: Signer<'info>,
+    // only the upgrade authority may initialize: otherwise anyone watching the deploy could call this
+    // first, become the authority of the (fixed) config PDA and allocate the fees to themselves
+    #[account(constraint = program.programdata_address()? == Some(program_data.key()) @ VaultError::NotUpgradeAuthority)]
+    pub program: Program<'info, crate::program::PotVault>,
+    #[account(constraint = program_data.upgrade_authority_address == Some(authority.key()) @ VaultError::NotUpgradeAuthority)]
+    pub program_data: Account<'info, ProgramData>,
     pub system_program: Program<'info, System>,
 }
 
@@ -203,13 +244,15 @@ pub struct Claim<'info> {
 
 #[derive(Accounts)]
 #[instruction(epoch: u64)]
-pub struct ExpireEpoch<'info> {
+pub struct CloseEpoch<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump, has_one = authority)]
     pub config: Account<'info, Config>,
-    #[account(mut, close = authority, seeds = [b"epoch", epoch.to_le_bytes().as_ref()], bump = epoch_state.bump)]
+    #[account(mut, seeds = [b"epoch", epoch.to_le_bytes().as_ref()], bump = epoch_state.bump,
+              realloc = EpochState::space(0), realloc::payer = authority, realloc::zero = false)]
     pub epoch_state: Account<'info, EpochState>,
     #[account(mut)]
     pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -219,6 +262,14 @@ pub struct SetAuthority<'info> {
     pub authority: Signer<'info>,
 }
 
+#[derive(Accounts)]
+pub struct AcceptAuthority<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump,
+              constraint = config.pending_authority == new_authority.key() && new_authority.key() != Pubkey::default() @ VaultError::NotPendingAuthority)]
+    pub config: Account<'info, Config>,
+    pub new_authority: Signer<'info>,
+}
+
 #[event]
 pub struct EpochSettled { pub epoch: u64, pub root: [u8; 32], pub total: u64, pub count: u32 }
 #[event]
@@ -226,9 +277,8 @@ pub struct Claimed { pub epoch: u64, pub index: u32, pub claimant: Pubkey, pub a
 
 #[error_code]
 pub enum VaultError {
-    #[msg("epoch length too short")] BadEpochLength,
     #[msg("claim count out of range")] BadCount,
-    #[msg("epoch already settled or out of order")] AlreadySettled,
+    #[msg("epoch already settled")] AlreadySettled,
     #[msg("epoch has not ended yet")] EpochNotOver,
     #[msg("not enough free balance in the vault")] Insufficient,
     #[msg("arithmetic overflow")] Overflow,
@@ -236,6 +286,10 @@ pub enum VaultError {
     #[msg("already claimed")] AlreadyClaimed,
     #[msg("merkle proof does not match")] BadProof,
     #[msg("claim window still open")] ClaimWindowOpen,
+    #[msg("only the program's upgrade authority can initialize")] NotUpgradeAuthority,
+    #[msg("claims for this epoch open 30 minutes after settlement")] ClaimsNotOpen,
+    #[msg("claims are already open: too late to cancel")] CancelTooLate,
+    #[msg("signer is not the pending authority")] NotPendingAuthority,
 }
 
 #[cfg(test)]

@@ -12,18 +12,28 @@ export interface PayoutPolicy {
 }
 
 const BPS = 10_000n;
+// the vault program's limit per epoch (programs/pot_vault MAX_CLAIMS): a bigger root can't be posted
+export const MAX_CLAIMS = 8192;
+// below this a claim costs about as much as it pays, and a transfer into an empty wallet that leaves
+// it under the rent minimum fails; smaller shares roll over into the next pot
+export const MIN_PAYOUT_LAMPORTS = 1_000_000n;
+
+const byWallet = ([a]: [string, number], [b]: [string, number]) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function computePayouts(pot: bigint, wins: Map<string, number>, policy: PayoutPolicy): PayoutResult {
   if (pot <= 0n) return { payouts: [], rollover: 0n, distributable: 0n };
-  const entries = [...wins.entries()].filter(([, w]) => w > 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  let entries = [...wins.entries()].filter(([, w]) => w > 0).sort(byWallet);
+  // more scoring wallets than one root can hold: the top MAX_CLAIMS by points (ties by wallet) are paid
+  if (entries.length > MAX_CLAIMS) entries = [...entries].sort((a, b) => b[1] - a[1] || byWallet(a, b)).slice(0, MAX_CLAIMS).sort(byWallet);
   const totalTickets = entries.reduce((s, [, w]) => s + BigInt(w), 0n);
   if (totalTickets === 0n) return { payouts: [], rollover: pot, distributable: 0n };
 
   const distributable = (pot * (BPS - BigInt(policy.rolloverBps))) / BPS;
   const payouts = policy.mode === 'draw' ? draw(distributable, entries, policy) : prorata(distributable, entries, totalTickets);
-  const paid = payouts.reduce((s, p) => s + p.lamports, 0n);
-  // rounding dust and any unawarded tiers stay in the pot
-  return { payouts: payouts.filter((p) => p.lamports > 0n), rollover: pot - paid, distributable };
+  const kept = payouts.filter((p) => p.lamports >= MIN_PAYOUT_LAMPORTS);
+  const paid = kept.reduce((s, p) => s + p.lamports, 0n);
+  // rounding dust, shares under the minimum and any unawarded tiers stay in the pot
+  return { payouts: kept, rollover: pot - paid, distributable };
 }
 
 function prorata(dist: bigint, entries: [string, number][], total: bigint): Payout[] {
