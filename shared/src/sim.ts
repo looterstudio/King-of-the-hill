@@ -16,7 +16,7 @@ export { rng };
 export type LootKind = 'weapon' | 'item' | 'perk';
 export interface Loot { id: number; x: number; y: number; z: number; kind: LootKind; what: string; n: number; mag?: number; up?: number }
 export interface Case { id: number; x: number; y: number; z: number; golden: boolean; open: boolean; supply?: boolean }
-export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
+export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; r?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
 export interface Effect { id: number; kind: 'smoke' | 'pad' | 'nuke' | 'drop' | 'fire'; owner: number; x: number; y: number; z: number; t: number }
 // a vehicle: its own body (the physics state while nobody drives), hp, who is in it
 export interface Vehicle { id: number; kind: VehicleKind; hp: number; driver: number; last: number; body: Body; gunCd: number; bombCd: number; seats: number[] }
@@ -84,7 +84,10 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
   if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
   if (p.ride) return moveVehicle(w, p, inp, dt, GRAVITY);
-  if (p.down > 0) { moveBody(w, p, { ...inp, jump: false, sprint: false, slide: false, grapple: false }, dt, GRAVITY, KNOCK.crawl, KNOCK.crawl, 0); return 0; }
+  if (p.down > 0) { // crawling: no glider, pad launch, dash or hook (they all beat the crawl speed several times over)
+    p.gliding = false; p.launchT = 0; p.dashT = 0; p.hook = false;
+    moveBody(w, p, { ...inp, jump: false, sprint: false, slide: false, grapple: false }, dt, GRAVITY, KNOCK.crawl, KNOCK.crawl, 0); return 0;
+  }
   moveBody(w, p, { ...inp, sprint: inp.sprint && !inp.aim && !using }, dt, GRAVITY, inp.aim || using ? WALK_SPEED * 0.55 : WALK_SPEED, SPRINT_SPEED, JUMP_V);
   return 0;
 };
@@ -148,7 +151,9 @@ export class Sim {
   private wreckKill: number[] = [];
   private wreckFalls: { sid: number; x: number; y: number; z: number }[] = [];
   private wreckDrop: number[] = [];
-  private dirty: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null = null;
+  // where the world broke this tick, as separate regions (one merged box spanning two far-apart hits
+  // made the support search scan half the map: 22-34 ms in a single tick)
+  private dirty: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }[] = [];
   private baseBoxes: number;
   private placed = 0;
   private structBy = new Map<number, number>(); // structure -> who last damaged it
@@ -243,18 +248,20 @@ export class Sim {
     if (p.rideV) this.exitVehicle(p);
     if (p.down > 0 && by === null) by = p.downBy; // bled out or finished by the storm: the knock gets the kill
     p.alive = false; p.hp = 0; p.shield = 0; p.down = 0;
-    if (by !== null && by !== id) { const k = this.players.get(by); if (k) k.kills++; }
+    if (by !== null && by !== id) { const k = this.players.get(by); if (k && k.team !== p.team) k.kills++; } // no kill for a teammate (a building they brought down)
     // everything they carried spills on the floor in a little ring
     const gy = this.world.groundAt(p.x, p.z, p.y + 0.1);
     const spill: [LootKind, string, number, number | undefined, number][] = [];
     p.slots.forEach((w, i) => { if (w && w !== 'pistol') spill.push(['weapon', w, 1, p.mags[i], p.ups[i]]); });
     for (const it of Object.keys(p.items) as ItemId[]) if (p.items[it] > 0) spill.push(['item', it, p.items[it], undefined, 0]);
-    if (p.perk) spill.push(['perk', p.perk.kind, p.perk.n, undefined, 0]);
+    if (p.perk && p.perk.n > 0) spill.push(['perk', p.perk.kind, p.perk.n, undefined, 0]); // an empty perk would block picking up a real one
     spill.forEach(([k, what, n, mag, up], i) => {
       const a = (i / Math.max(1, spill.length)) * Math.PI * 2;
       this.drop(p.x + Math.cos(a) * 1.2, gy, p.z + Math.sin(a) * 1.2, k, what, n, mag, up);
       if (k === 'perk') this.loot[this.loot.length - 1].n = n;
     });
+    for (const it of Object.keys(p.items) as ItemId[]) p.items[it] = 0; // it's all on the floor now
+    p.perk = null;
     ev.push({ kind: 'elim', victim: id, by, cause, head });
     // nobody left standing on the team: the knocked are out too
     if (!this.standing(p.team)) for (const q of this.players.values()) if (q.alive && q.team === p.team) this.eliminate(q.id, q.downBy, 'shot', ev);
@@ -430,7 +437,7 @@ export class Sim {
       const b = v?.body ?? p, r = v ? VEHICLES[v.kind].r : 1;
       const sx = Math.cos(b.head), sz = -Math.sin(b.head), out = r + 0.9;
       const spots = [{ x: b.x - sx * out, y: b.y, z: b.z - sz * out }, { x: b.x + sx * out, y: b.y, z: b.z + sz * out }, { x: b.x, y: b.y + 3, z: b.z }];
-      const at = spots.find((s) => !this.world.overlaps(s.x, s.y, s.z)) ?? spots[2];
+      const at = this.exitSpot(b, spots);
       p.x = at.x; p.y = at.y; p.z = at.z; p.vx *= 0.3; p.vz *= 0.3; p.vy = 0;
       if (p.y - this.world.groundAt(p.x, p.z, p.y) > 4) p.gliding = true;
       return;
@@ -443,15 +450,28 @@ export class Sim {
     // step out to the side (or onto the roof); bail out of anything in the air under a parachute
     const sx = Math.cos(b.head), sz = -Math.sin(b.head), out = r + 0.9;
     const spots = [{ x: b.x + sx * out, y: b.y, z: b.z + sz * out }, { x: b.x - sx * out, y: b.y, z: b.z - sz * out }, { x: b.x, y: b.y + h + 0.1, z: b.z }];
-    const at = spots.find((s) => !this.world.overlaps(s.x, s.y, s.z)) ?? spots[2];
+    const at = this.exitSpot(b, spots);
     p.x = at.x; p.y = at.y; p.z = at.z; p.vx *= 0.3; p.vz *= 0.3; p.vy = Math.max(0, p.vy * 0.3);
     if (p.y - this.world.groundAt(p.x, p.z, p.y) > 4) p.gliding = true;
+  }
+
+  // where getting out puts you: a free spot you can reach from the seat (no stepping through a wall or
+  // up onto a roof); none free (a tunnel): where the vehicle is, which is clear of the world anyway
+  private exitSpot(b: { x: number; y: number; z: number }, spots: { x: number; y: number; z: number }[]) {
+    for (const s of spots) {
+      if (this.world.overlaps(s.x, s.y, s.z)) continue;
+      const dx = s.x - b.x, dy = s.y - b.y, dz = s.z - b.z, len = Math.hypot(dx, dy, dz);
+      if (len < 1e-6 || this.world.raycast(b.x, b.y + 1, b.z, dx / len, dy / len, dz / len, len) >= len - 1e-3) return s;
+    }
+    return { x: b.x, y: b.y, z: b.z };
   }
 
   private nearVehicle(p: PlayerState): Vehicle | null {
     let best: Vehicle | null = null, bd = Infinity;
     for (const v of this.vehicles) {
-      const d0 = v.driver ? this.players.get(v.driver) : null;
+      // the crew is the driver, or the passengers still aboard after the driver left: an enemy can't take
+      // the wheel of a vehicle with your teammates sitting in it
+      const crewId = v.driver || v.seats[0], d0 = crewId ? this.players.get(crewId) : null;
       if (d0 && (d0.team !== p.team || v.seats.length >= VEHICLES[v.kind].seats)) continue;
       const b = v.body, d = Math.hypot(b.x - p.x, b.z - p.z);
       if (d < VEHICLES[v.kind].reach && Math.abs(b.y - p.y) < 2.5 && d < bd) { bd = d; best = v; }
@@ -476,7 +496,7 @@ export class Sim {
         v.gunCd = TANK.cd;
         const cp = Math.cos(inp.pitch), dx = -Math.sin(inp.yaw) * cp, dy = Math.sin(inp.pitch), dz = -Math.cos(inp.yaw) * cp;
         const ox = p.x + dx * 3.2, oy = p.y + 2.1 + dy * 3.2, oz = p.z + dz * 3.2;
-        this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg });
+        this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg, r: TANK.radius });
         this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
       }
       return;
@@ -590,9 +610,17 @@ export class Sim {
     if (b.kind === 'container' || b.kind === 'car' || b.ink === INK.GRAPHITE) return MATERIAL.metal;
     return MATERIAL.brick;
   }
+  // what changed in the world so far this tick, as one event (clients apply adds, then kills, in order)
+  private flushWreck(ev: SimEvent[]) {
+    if (!this.wreckAdd.length && !this.wreckKill.length) return;
+    ev.push({ kind: 'wreck', add: this.wreckAdd, kill: this.wreckKill, falls: this.wreckFalls, drop: this.wreckDrop.length ? this.wreckDrop : undefined });
+    this.wreckAdd = []; this.wreckKill = []; this.wreckFalls = []; this.wreckDrop = [];
+  }
   private markDirty(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
-    const d = this.dirty;
-    if (!d) { this.dirty = { x0, y0, z0, x1, y1, z1 }; return; }
+    const m = 6; // close enough to share a region
+    let d = this.dirty.find((r) => x0 < r.x1 + m && x1 > r.x0 - m && y0 < r.y1 + m && y1 > r.y0 - m && z0 < r.z1 + m && z1 > r.z0 - m);
+    if (!d && this.dirty.length >= 24) d = this.dirty[this.dirty.length - 1]; // a hundred blasts in one tick: lump the rest together
+    if (!d) { this.dirty.push({ x0, y0, z0, x1, y1, z1 }); return; }
     d.x0 = Math.min(d.x0, x0); d.y0 = Math.min(d.y0, y0); d.z0 = Math.min(d.z0, z0); d.x1 = Math.max(d.x1, x1); d.y1 = Math.max(d.y1, y1); d.z1 = Math.max(d.z1, z1);
   }
   private killBox(i: number) {
@@ -652,9 +680,12 @@ export class Sim {
   // fall: anything near the damage that no longer connects to the ground or to terrain through
   // touching boxes drops, and lands on whoever is underneath
   private dropLoose(ev: SimEvent[]) {
-    const d = this.dirty, w = this.world;
-    if (!d) return;
-    const e = 0.06, LIMIT = 500, supported = new Set<number>(), loose: number[] = [], hit: { x0: number; z0: number; x1: number; z1: number; y: number }[] = [];
+    const w = this.world;
+    if (!this.dirty.length) return;
+    // the walk goes lowest box first, so a piece that stands reaches the ground in a few steps; only a
+    // piece bigger than LIMIT (nothing but The Needle) is taken as standing without proof. It used to be
+    // 500 breadth-first: a Needle cut through at the base floated
+    const e = 0.06, LIMIT = 6000, supported = new Set<number>(), loose: number[] = [], hit: { x0: number; z0: number; x1: number; z1: number; y: number }[] = [];
     const touching = (a: Box) => {
       const out: number[] = [];
       for (const j of w.near3(a.x0 - e, a.y0 - e, a.z0 - e, a.x1 + e, a.y1 + e, a.z1 + e, [])) {
@@ -663,18 +694,24 @@ export class Sim {
       }
       return out;
     };
+    // a small binary heap of box indices by height
+    const heap: number[] = [], y0 = (i: number) => w.boxes[i].y0;
+    const push = (i: number) => { heap.push(i); let k = heap.length - 1; while (k > 0) { const up = (k - 1) >> 1; if (y0(heap[up]) <= y0(heap[k])) break; [heap[up], heap[k]] = [heap[k], heap[up]]; k = up; } };
+    const pop = () => { const top = heap[0], last = heap.pop()!; if (heap.length) { heap[0] = last; let k = 0; for (;;) { const a = 2 * k + 1, b = a + 1; let m = k; if (a < heap.length && y0(heap[a]) < y0(heap[m])) m = a; if (b < heap.length && y0(heap[b]) < y0(heap[m])) m = b; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
     const done = new Set<number>();
-    for (const start of w.near3(d.x0 - 3, d.y0 - 3, d.z0 - 3, d.x1 + 3, d.y1 + 3, d.z1 + 3, [])) {
+    for (const d of this.dirty) for (const start of w.near3(d.x0 - 3, d.y0 - 3, d.z0 - 3, d.x1 + 3, d.y1 + 3, d.z1 + 3, [])) {
       const s = w.boxes[start];
       if (s.dead || s.hard || s.y0 <= 0.05 || done.has(start) || s.y1 < d.y0 - 3 || s.y0 > d.y1 + 3) continue;
       // walk the piece this box belongs to until something in it stands on the ground
-      const piece = [start], seen = new Set([start]);
+      const seen = new Set([start]);
       let ok = false;
-      for (let k = 0; k < piece.length; k++) {
-        const b = w.boxes[piece[k]];
-        if (b.hard || b.y0 <= 0.05 || supported.has(piece[k]) || piece.length > LIMIT) { ok = true; break; }
-        for (const j of touching(b)) if (!seen.has(j)) { seen.add(j); piece.push(j); }
+      heap.length = 0; push(start);
+      while (heap.length) {
+        const i = pop(), b = w.boxes[i];
+        if (b.hard || b.y0 <= 0.05 || supported.has(i) || seen.size > LIMIT) { ok = true; break; }
+        for (const j of touching(b)) if (!seen.has(j)) { seen.add(j); push(j); }
       }
+      const piece = [...seen];
       for (const i of piece) { done.add(i); if (ok) supported.add(i); }
       if (ok) continue;
       const box = { x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity, y: Infinity };
@@ -695,16 +732,16 @@ export class Sim {
       const by = this.structBy.get(s.id) ?? null;
       for (const q of this.players.values()) {
         if (!q.alive || q.x < s.x0 - 1 || q.x > s.x1 + 1 || q.z < s.z0 - 1 || q.z > s.z1 + 1 || q.y > s.y1 + 1) continue;
-        const dmg = 120, h = this.hurt(q, dmg);
-        if (by !== null && by !== q.id) ev.push({ kind: 'hit', victim: q.id, by, dmg, head: false, ...h });
-        if (q.hp <= 0) this.fall(q, by !== q.id ? by : null, 'boom', ev);
+        const dmg = 120, h = this.hurt(q, dmg), enemy = by !== null && by !== q.id && this.players.get(by)?.team !== q.team;
+        if (enemy) ev.push({ kind: 'hit', victim: q.id, by: by!, dmg, head: false, ...h });
+        if (q.hp <= 0) this.fall(q, enemy ? by : null, 'boom', ev); // a teammate's collapse is nobody's kill
       }
     }
     this.collapsed = [];
-    const d = this.dirty;
-    if (!d) return;
-    this.dirty = null;
-    const inside = (x: number, y: number, z: number) => x > d.x0 - 1 && x < d.x1 + 1 && z > d.z0 - 1 && z < d.z1 + 1 && y > d.y0 - 1 && y < d.y1 + 2;
+    const regions = this.dirty;
+    if (!regions.length) return;
+    this.dirty = [];
+    const inside = (x: number, y: number, z: number) => regions.some((d) => x > d.x0 - 1 && x < d.x1 + 1 && z > d.z0 - 1 && z < d.z1 + 1 && y > d.y0 - 1 && y < d.y1 + 2);
     for (const l of this.loot) if (inside(l.x, l.y, l.z)) { const g = this.world.groundAt(l.x, l.z, l.y + 0.05); if (g < l.y - 0.05) { l.y = g; this.lootVer++; } }
     for (const c of this.cases) if (inside(c.x, c.y, c.z)) { const g = this.world.groundAt(c.x, c.z, c.y + 0.05); if (g < c.y - 0.05) { c.y = g; this.lootVer++; } }
     for (const v of this.vehicles) if (!v.driver && inside(v.body.x, v.body.y, v.body.z)) v.body.grounded = false;
@@ -802,6 +839,9 @@ export class Sim {
         const blocked = [...this.players.values()].some((q) => q.alive && q.id !== p.id && q.x + PLAYER_R > b.x0 && q.x - PLAYER_R < b.x1 && q.z + PLAYER_R > b.z0 && q.z - PLAYER_R < b.z1 && q.y < b.y1 && q.y + 1.8 > b.y0);
         if (!blocked) list.push(b);
       }
+      // shards broken off earlier this tick append to the same box list: they go out first, or every client
+      // numbered the fort before them and all later kills hit the wrong boxes for the rest of the match
+      this.flushWreck(ev);
       const build: Build = { id: this.nextId++, owner: p.id, idx: this.world.addBoxes(list), boxes: list, t: FORT.life };
       this.builds.push(build);
       ev.push({ kind: 'build', id: build.id, boxes: list });
@@ -913,7 +953,7 @@ export class Sim {
   // a rocket or missile: straight (or steering toward its locked aircraft), in short sub-steps so it
   // can't skip through a thin wall; it blows up on anything solid, any player or vehicle it reaches
   private stepRocket(g: Projectile, dt: number, ev: SimEvent[]): boolean {
-    const radius = g.kind === 'rocket' ? ROCKET.radius : MISSILE.radius, dmg = g.dmg ?? 100;
+    const radius = g.r ?? (g.kind === 'rocket' ? ROCKET.radius : MISSILE.radius), dmg = g.dmg ?? 100; // tank shells carry their own blast
     const tgt = g.tgt !== undefined ? this.vehicles.find((v) => v.id === g.tgt) : null;
     if (tgt) {
       const tx = tgt.body.x - g.x, ty = tgt.body.y + 1 - g.y, tz = tgt.body.z - g.z, d = Math.hypot(tx, ty, tz) || 1, sp = Math.hypot(g.vx, g.vy, g.vz);
@@ -923,8 +963,8 @@ export class Sim {
     for (let s = 0; s < 4; s++) {
       const nx = g.x + (g.vx * dt) / 4, ny = g.y + (g.vy * dt) / 4, nz = g.z + (g.vz * dt) / 4;
       const hitWorld = ny < 0.05 || this.world.near(nx, nz, nx, nz).some((i) => { const q = this.world.boxes[i]; return !q.dead && nx > q.x0 && nx < q.x1 && nz > q.z0 && nz < q.z1 && ny > q.y0 && ny < q.y1; });
-      const owner = this.players.get(g.owner);
-      const hitVeh = this.vehicles.some((v) => v.driver !== g.owner && Math.hypot(v.body.x - nx, v.body.z - nz) < VEHICLES[v.kind].r + 0.8 && ny > v.body.y - 0.5 && ny < v.body.y + VEHICLES[v.kind].h + 0.8);
+      const owner = this.players.get(g.owner); // a passenger's own rocket doesn't blow up on their own vehicle
+      const hitVeh = this.vehicles.some((v) => v.driver !== g.owner && v.id !== owner?.rideV && Math.hypot(v.body.x - nx, v.body.z - nz) < VEHICLES[v.kind].r + 0.8 && ny > v.body.y - 0.5 && ny < v.body.y + VEHICLES[v.kind].h + 0.8);
       const hitPlayer = [...this.players.values()].some((q) => q.alive && q.id !== g.owner && (!owner || q.team !== owner.team) && Math.hypot(q.x - nx, q.z - nz) < 0.7 && ny > q.y && ny < q.y + 1.9);
       g.x = nx; g.y = ny; g.z = nz;
       if (hitWorld || hitVeh || hitPlayer) { this.explode(g.x, Math.max(0.3, g.y), g.z, radius, dmg, g.owner, ev, false, 1.5); return false; }
@@ -1006,7 +1046,8 @@ export class Sim {
         }
       }
       if (e.kind === 'pad') for (const p of this.players.values()) {
-        if (p.alive && p.grounded && Math.hypot(p.x - e.x, p.z - e.z) < 1.4 && Math.abs(p.y - e.y) < 0.6) { p.vy = PAD.launch; p.grounded = false; p.launchT = 1.1; p.slideT = 0; }
+        // not vehicles (thrown 11 m, a wrecked landing), not the knocked
+        if (p.alive && p.grounded && !p.ride && p.down === 0 && Math.hypot(p.x - e.x, p.z - e.z) < 1.4 && Math.abs(p.y - e.y) < 0.6) { p.vy = PAD.launch; p.grounded = false; p.launchT = 1.1; p.slideT = 0; }
       }
       if (e.t > 0) { keep.push(e); continue; }
       if (e.kind === 'nuke') this.explode(e.x, 0, e.z, NUKE.radius, NUKE.dmg, e.owner, ev, true);
@@ -1115,11 +1156,8 @@ export class Sim {
     this.stepVehicles(dt, ev);
     this.stepProjectiles(dt, ev);
     this.stepEffects(dt, ev);
-    if (this.wreckKill.length) this.dropLoose(ev);
-    if (this.wreckAdd.length || this.wreckKill.length) {
-      ev.push({ kind: 'wreck', add: this.wreckAdd, kill: this.wreckKill, falls: this.wreckFalls, drop: this.wreckDrop.length ? this.wreckDrop : undefined });
-      this.wreckAdd = []; this.wreckKill = []; this.wreckFalls = []; this.wreckDrop = [];
-    }
+    if (this.dirty.length) this.dropLoose(ev); // anything broke this tick (a fort may already have flushed the kills)
+    this.flushWreck(ev);
     this.settleWreck(ev);
 
     const pos = new Map<number, { x: number; y: number; z: number }>();

@@ -423,7 +423,7 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
   // falling from high up (off a tower, out of a window): the glider opens by itself
   if (!p.gliding && !p.hook && !p.ride && !p.down && p.vy < -16 && p.y - w.groundAt(p.x, p.z, p.y) > 14) p.gliding = true;
   // updrafts: a column of air that carries you up while you stand in it
-  for (const u of w.updrafts) {
+  for (const u of p.down ? [] : w.updrafts) { // the knocked crawl, they don't float
     if (p.y < u.y0 - 0.5 || p.y > u.y1 || Math.hypot(p.x - u.x, p.z - u.z) > u.r) continue;
     p.vy = Math.min(UPDRAFT_SPEED, Math.max(p.vy, 0) + gravity * 2.2 * dt); p.gliding = false; p.grounded = false;
     break;

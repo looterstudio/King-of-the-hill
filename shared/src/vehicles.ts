@@ -15,11 +15,17 @@ export const kindOf = (ride: number) => VEHICLE_KINDS[ride - 1];
 
 const CAR_STEP = 0.7;
 const TAKEOFF = 19;
+const CEILING = 160;
+// above the ceiling an aircraft may still climb while something is right under it, so the heli parked
+// on The Needle (272 m) can lift over the roof's parapet (it used to fly into it and stay stuck)
+const capped = (w: World, p: Body, r: number) => p.y >= CEILING && !w.hitBox(p.x, p.y - 12, p.z, r, 12);
 
 export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravity: number, manned = true): number {
   const kind = kindOf(p.ride), def = VEHICLES[kind];
   let impact = 0;
   const ground = kind === 'car' || kind === 'moto' || kind === 'tank';
+  // an aircraft resting on something: is it still there? (it used to float off ledges and destroyed roofs)
+  if (!ground && p.grounded && p.y > 0 && !w.hitBox(p.x, p.y - 0.05, p.z, def.r, 0.05)) p.grounded = false;
   if (ground) {
     const top = inp.sprint ? def.boost : def.top, turn = kind === 'moto' ? 2.9 : kind === 'tank' ? 1.3 : 2.3;
     if (inp.fwd > 0) p.spd = Math.min(top, p.spd + def.accel * (p.spd < 0 ? 2 : 1) * inp.fwd * dt);
@@ -59,6 +65,7 @@ export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravi
       p.vx *= 1 - dt * 0.4; p.vz *= 1 - dt * 0.4; p.vy -= gravity * 0.7 * dt;
     }
     p.spd = Math.hypot(p.vx, p.vz);
+    if (p.vy > 0 && capped(w, p, def.r)) p.vy = 0;
     impact = move3(w, p, def.r, def.h, dt);
   } else {
     // plane: heading and pitch follow the mouse at a limited rate; speed is throttle
@@ -67,7 +74,7 @@ export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravi
       p.vpitch += clamp(clamp(inp.pitch, -0.7, 0.6) - p.vpitch, -1, 1) * 1.6 * dt;
       const top = inp.sprint ? def.boost : def.top;
       if (inp.fwd > 0) p.spd = Math.min(top, p.spd + def.accel * dt);
-      else if (inp.fwd < 0) p.spd = Math.max(p.grounded ? 0 : 14, p.spd - def.accel * 1.4 * dt);
+      else if (inp.fwd < 0) p.spd = Math.min(p.spd, Math.max(p.grounded ? 0 : 14, p.spd - def.accel * 1.4 * dt)); // braking never speeds a slow plane up
       else if (p.spd > top) p.spd -= 15 * dt;
     } else { p.vpitch += (-0.35 - p.vpitch) * dt; p.spd = Math.max(0, p.spd - (p.grounded ? 12 : 2) * dt); }
     // on the ground below take-off speed it rolls flat; in the air too slow and the nose drops
@@ -77,22 +84,45 @@ export function moveVehicle(w: World, p: Body, inp: MoveInput, dt: number, gravi
     p.vx = -Math.sin(p.head) * cp * p.spd; p.vz = -Math.cos(p.head) * cp * p.spd;
     p.vy = Math.sin(p.vpitch) * p.spd - (p.spd < TAKEOFF ? gravity * 0.6 * (1 - p.spd / TAKEOFF) * 3 : 0);
     if (p.grounded && p.vy < 0) p.vy = 0;
+    if (p.vy > 0 && capped(w, p, def.r)) p.vy = 0;
     const hit = move3(w, p, def.r, def.h, dt);
-    if (hit) { impact = Math.max(hit, p.spd); p.spd *= 0.2; }
+    // the crash is the speed lost into what it hit: grazing a wall at 46 m/s used to count as a 46 m/s
+    // crash (333 of 350 hp), and a firm touchdown as one too
+    if (hit) { impact = hit; p.spd = Math.max(0, p.spd - hit * 0.8); }
   }
   const lim = MAP_HALF - def.r;
   p.x = clamp(p.x, -lim, lim); p.z = clamp(p.z, -lim, lim);
-  if (p.y > 160) { p.y = 160; if (p.vy > 0) p.vy = 0; }
+  // above the ceiling: no more climbing, but never pushed down (the heli on The Needle's roof at 272 m
+  // used to drop 112 m into the tower on its first tick and stay trapped there)
+  if (!ground && p.vy > 0 && capped(w, p, def.r)) p.vy = 0;
   // vertical for ground vehicles (aircraft move in 3D in move3)
   if (ground) {
     const wasUp = !p.grounded;
     p.grounded = false;
     p.y += p.vy * dt;
     const b = w.hitBox(p.x, p.y, p.z, def.r, def.h);
-    if (b) { if (p.vy <= 0) { if (wasUp && p.vy < -14) impact = Math.max(impact, -p.vy); p.y = b.y1; p.grounded = true; } else p.y = b.y0 - def.h - 1e-3; p.vy = 0; }
+    if (b) {
+      if (p.vy <= 0) { if (wasUp && p.vy < -14) impact = Math.max(impact, -p.vy); p.y = landOn(w, p.x, b.y1, p.z, def.r, def.h, p.y - p.vy * dt); p.grounded = true; }
+      else p.y = b.y0 - def.h - 1e-3;
+      p.vy = 0;
+    }
     if (p.y <= 0) { if (wasUp && p.vy < -14) impact = Math.max(impact, -p.vy); p.y = 0; p.vy = 0; p.grounded = true; }
   }
   return impact;
+}
+
+// where a falling vehicle comes to rest: the box it hit may be a lower neighbour of another one under
+// the same wide footprint (a parapet and its merlon, a crate by a trunk), so climb to the highest top
+// that was below it; with something overhanging, stay where it was. Landing on the first box found
+// sank 51 of 5 984 test drops into the box next to it, stuck for good.
+function landOn(w: World, x: number, y: number, z: number, r: number, h: number, from: number): number {
+  for (let k = 0; k < 8; k++) {
+    const c = w.hitBox(x, y + 1e-3, z, r, h);
+    if (!c) return y;
+    if (c.y1 > from + 1e-6) return from;
+    y = c.y1;
+  }
+  return from;
 }
 
 // free 3D movement for aircraft: slide along whatever it touches, report the speed lost
@@ -105,7 +135,7 @@ function move3(w: World, p: Body, r: number, h: number, dt: number): number {
     const b = w.hitBox(nx, ny, nz, r, h);
     if (!b && ny >= 0) { p.x = nx; p.y = ny; p.z = nz; if (axis === 1) p.grounded = false; continue; }
     if (axis === 1) {
-      if (d < 0) { p.y = b ? b.y1 : 0; p.grounded = true; impact = Math.max(impact, -p.vy > 9 ? -p.vy : 0); }
+      if (d < 0) { p.y = landOn(w, p.x, b ? b.y1 : 0, p.z, r, h, p.y); p.grounded = true; impact = Math.max(impact, -p.vy > 9 ? -p.vy : 0); }
       p.vy = 0;
     } else {
       impact = Math.max(impact, Math.abs(axis === 0 ? p.vx : p.vz));

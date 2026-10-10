@@ -42,8 +42,13 @@ export function generate(w: World, seed: number) {
     w.boxes.push(b);
     if (y0 < 0.5) cellsOf(b.x0, b.z0, b.x1, b.z1, (k) => { const l = ground.get(k); if (l) l.push(b); else ground.set(k, [b]); });
   };
+  // lanes and pads the clutter must leave alone: a crate in a plane's take-off run crashed it at full
+  // throttle on some seeds, a tree under a helicopter's rotor clipped it on lift-off
+  const keep: { x0: number; z0: number; x1: number; z1: number }[] = [];
+  const reserve = (x0: number, z0: number, x1: number, z1: number) => keep.push({ x0: x0 + OX, z0: z0 + OZ, x1: x1 + OX, z1: z1 + OZ });
   const free = (x0: number, z0: number, x1: number, z1: number, pad = 1.2) => {
     x0 += OX; x1 += OX; z0 += OZ; z1 += OZ;
+    if (keep.some((k) => x1 > k.x0 - pad && x0 < k.x1 + pad && z1 > k.z0 - pad && z0 < k.z1 + pad)) return false;
     let ok = true;
     cellsOf(x0 - pad, z0 - pad, x1 + pad, z1 + pad, (k) => {
       if (ok) for (const b of ground.get(k) ?? []) if (x1 > b.x0 - pad && x0 < b.x1 + pad && z1 > b.z0 - pad && z0 < b.z1 + pad) { ok = false; break; }
@@ -208,7 +213,10 @@ export function generate(w: World, seed: number) {
   };
   const poi = (name: string, x: number, z: number) => w.pois.push({ name, x: x + OX, z: z + OZ });
   // heading: 0 faces -z (north), PI/2 faces -x (west), -PI/2 faces +x (east), PI faces +z
-  const vehicle = (kind: VehicleKind, x: number, z: number, head: number, y = 0) => w.vehicleSpots.push({ kind, x: x + OX, y, z: z + OZ, head });
+  const vehicle = (kind: VehicleKind, x: number, z: number, head: number, y = 0) => {
+    w.vehicleSpots.push({ kind, x: x + OX, y, z: z + OZ, head });
+    if ((kind === 'heli' || kind === 'plane') && y < 1) reserve(x - 9, z - 9, x + 9, z + 9);
+  };
   const N = 0, W = Math.PI / 2, E = -Math.PI / 2, S = Math.PI;
 
   at(0, 0);
@@ -591,6 +599,7 @@ export function generate(w: World, seed: number) {
     for (const [x, z] of [[-80, 168], [-40, 168], [-30, 168]]) { box(x, 0, z, x + 1.5, 1.5, z + 1.5, INK.ORANGE, 'crate'); }
     for (let i = 0; i < 12; i++) box(-100 + i * 7, 0, 184.4, -98.5 + i * 7, 0.15, 184.8, INK.PAPER, 'floor'); // runway marks
     vehicle('plane', -96, 189, E); vehicle('plane', -84, 189, E); vehicle('plane', -107, 167, S);
+    reserve(-113, 160, -100, 197); reserve(-113, 182, 10, 197); // the hangar plane's way out, and the runway
     vehicle('car', -88, 178, E);
   }
 
