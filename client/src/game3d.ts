@@ -5,11 +5,11 @@
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
 import { AXE, BUILD, covered, isAir, EYE_H, KNOCK, MATERIAL, MISSILE, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, type Figure, type VehicleModel } from './models.ts';
+import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
@@ -19,9 +19,9 @@ const LERP_FIELDS = [1, 2, 3, 5]; // x, y, z, pitch (yaw wraps, done apart)
 const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down', 'mantleT', 'mantleX', 'mantleY', 'mantleZ'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
-export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PINK, legendary: INK_IDS.ORANGE };
-export const RARITY_CSS: Record<Rarity, string> = { common: '#6b7080', uncommon: '#2a8a4a', rare: '#1d33b8', epic: '#c03a8a', legendary: '#e8a317' };
-const RARITY_RGB: Record<Rarity, [number, number, number]> = { common: [0.45, 0.47, 0.52], uncommon: [0.16, 0.6, 0.3], rare: [0.11, 0.25, 0.85], epic: [0.78, 0.25, 0.62], legendary: [0.95, 0.65, 0.08] };
+export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PURPLE, legendary: INK_IDS.ORANGE };
+export const RARITY_CSS: Record<Rarity, string> = { common: '#6b7080', uncommon: '#2a8a4a', rare: '#1d33b8', epic: '#7b3fb0', legendary: '#e8a317' };
+const RARITY_RGB: Record<Rarity, [number, number, number]> = { common: [0.45, 0.47, 0.52], uncommon: [0.16, 0.6, 0.3], rare: [0.11, 0.25, 0.85], epic: [0.48, 0.25, 0.69], legendary: [0.95, 0.65, 0.08] };
 export const lootRarity = (kind: number, what: string): Rarity => kind === 0 ? WEAPONS[what as WeaponId].rarity : kind === 1 ? ITEMS[what as keyof typeof ITEMS].rarity : PERKS[what as keyof typeof PERKS].rarity;
 export const lootName = (kind: number, what: string): string => kind === 0 ? WEAPONS[what as WeaponId].name : kind === 1 ? ITEMS[what as keyof typeof ITEMS].name : PERKS[what as keyof typeof PERKS].name;
 
@@ -279,6 +279,9 @@ export class Game3D {
   // shared by every debris chunk and explosion (a falling building used to make a hundred new geometries)
   private static CHUNK = (() => { const g = new THREE.BoxGeometry(0.35, 0.35, 0.35); g.userData.shared = true; return g; })();
   private static BALL = (() => { const g = new THREE.IcosahedronGeometry(1, 2); g.userData.shared = true; return g; })();
+  private static RING = (() => { const g = new THREE.TorusGeometry(0.62, 0.035, 5, 28); g.userData.shared = true; return g; })();
+  private static SPARK = (() => { const g = new THREE.OctahedronGeometry(0.06); g.userData.shared = true; return g; })();
+  private static STAR = (() => { const g = new THREE.OctahedronGeometry(0.16); g.userData.shared = true; return g; })();
   private static M = new THREE.Matrix4();
   private dirtyBoxes: number[] = [];
   private setBox(i: number) {
@@ -535,6 +538,14 @@ export class Game3D {
         if (d[4] === 0) { item.rotation.set(0, Math.PI / 2, Math.PI / 2.3); item.position.y = 0.35; }
         item.name = 'item';
         g.add(base, item);
+        // the rarer, the louder: rare gets a pulsing ring, epic two and sparks circling it, legendary
+        // two rings, a swarm of sparks and a star turning over it
+        const tier = ['common', 'uncommon', 'rare', 'epic', 'legendary'].indexOf(rar), mat = this.ink.material(RARITY_INK[rar]);
+        for (let k = 0; k < (tier >= 3 ? 2 : tier >= 2 ? 1 : 0); k++) {
+          const ring = new THREE.Mesh(Game3D.RING, mat); ring.rotation.x = Math.PI / 2; ring.position.y = 0.06 + k * 0.02; ring.name = 'ring'; ring.userData.k = k; g.add(ring);
+        }
+        for (let k = 0; k < (tier >= 4 ? 6 : tier >= 3 ? 3 : 0); k++) { const sp = new THREE.Mesh(Game3D.SPARK, mat); sp.name = 'spark'; sp.userData.k = k; g.add(sp); }
+        if (tier >= 4) { const star = new THREE.Mesh(Game3D.STAR, mat); star.name = 'halo'; star.position.y = 1.15; g.add(star); }
         this.ink.scene.add(g);
         v = { g, d, phase: Math.random() * 6 };
         this.loot.set(d[0], v);
@@ -972,7 +983,7 @@ export class Game3D {
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
-      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt, !!(o[7] & OTHER_DOWN), !!(o[7] & OTHER_AXE));
+      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt, !!(o[7] & OTHER_DOWN), !!(o[7] & OTHER_AXE), (o[7] >> OTHER_UPS) & 3);
       const d = a.root.position.distanceTo(cam.position);
       v.set(o[1], o[2] + 2.5, o[3]).project(cam);
       const mate = this.mates.has(o[0]);
@@ -1003,11 +1014,20 @@ export class Game3D {
       const item = l.g.getObjectByName('item');
       if (item) { item.rotation.y += dt * 1.2; item.position.y = (l.d[4] === 0 ? 0.35 : 0.1) + Math.sin(this.time * 2.5 + l.phase) * 0.06; }
       const rar = lootRarity(l.d[4], l.d[5]);
+      for (const c of l.g.children) {
+        if (c.name === 'ring') { const k = (this.time * 0.8 + l.phase + c.userData.k * 0.5) % 1; c.scale.setScalar(0.7 + k * 0.7); }
+        else if (c.name === 'spark') { const n = rar === 'legendary' ? 6 : 3, a = this.time * 1.7 + (c.userData.k / n) * Math.PI * 2 + l.phase; c.position.set(Math.cos(a) * 0.62, 0.35 + Math.sin(this.time * 3 + c.userData.k) * 0.22, Math.sin(a) * 0.62); c.rotation.y = a * 2; }
+        else if (c.name === 'halo') { c.rotation.y += dt * 2.2; c.position.y = 1.15 + Math.sin(this.time * 2 + l.phase) * 0.1; }
+      }
       if (bn < 400 && (rar !== 'common' || l.d[4] !== 0)) {
-        const c = RARITY_RGB[rar], h = rar === 'legendary' ? 6 : rar === 'epic' ? 4 : 2.2;
-        bp.setXYZ(bn * 2, l.d[1], l.d[2] + 0.1, l.d[3]); bp.setXYZ(bn * 2 + 1, l.d[1], l.d[2] + h, l.d[3]);
-        bc.setXYZ(bn * 2, c[0], c[1], c[2]); bc.setXYZ(bn * 2 + 1, c[0], c[1], c[2]);
-        bn++;
+        // a beam you see from across the map: taller with rarity, legendary drawn three strokes thick
+        const c = RARITY_RGB[rar], h = rar === 'legendary' ? 11 : rar === 'epic' ? 6 : rar === 'rare' ? 3.6 : 2.2;
+        for (const off of rar === 'legendary' ? [0, 0.07, -0.07] : rar === 'epic' ? [0, 0.05] : [0]) {
+          if (bn >= 400) break;
+          bp.setXYZ(bn * 2, l.d[1] + off, l.d[2] + 0.1, l.d[3] - off); bp.setXYZ(bn * 2 + 1, l.d[1] + off, l.d[2] + h, l.d[3] - off);
+          bc.setXYZ(bn * 2, c[0], c[1], c[2]); bc.setXYZ(bn * 2 + 1, c[0], c[1], c[2]);
+          bn++;
+        }
       }
     }
     bp.needsUpdate = true; bc.needsUpdate = true;
@@ -1159,6 +1179,7 @@ export class Game3D {
     }
     const g = w ? this.guns.get(w) : null;
     if (g && me && w) {
+      upgradeGun(g, me.ups[me.cur] ?? 0, this.ink.material(INK_IDS.ORANGE, true), this.ink.material(INK_IDS.DIAMOND, true)); // your stars, on the gun in your hands
       this.gunKick = Math.max(0, this.gunKick - dt * 9);
       const reload = me.reloadT > 0 ? Math.sin(Math.min(1, me.reloadT / WEAPONS[w].reload) * Math.PI) : 0;
       const ads = look.aim ? 1 : 0;
@@ -1211,7 +1232,7 @@ export class Game3D {
       if (!v || !m || !at) continue;
       const a = this.avatar(o[0]);
       a.root.visible = true;
-      poseRider(a, at.pos, at.driver ? m.root.quaternion : null, o[4], o[5], SEATS[v[1]].legs, at.driver, o[8] >= 0 ? WEAPON_IDS[o[8]] : null, this.leader?.[0] === o[0], dt);
+      poseRider(a, at.pos, at.driver ? m.root.quaternion : null, o[4], o[5], SEATS[v[1]].legs, at.driver, o[8] >= 0 ? WEAPON_IDS[o[8]] : null, this.leader?.[0] === o[0], dt, (o[7] >> OTHER_UPS) & 3);
     }
     const me = this.self, p = this.pred;
     const skin = this.seats.get(this.you)?.skin ?? this.you % SKINS.length;
@@ -1230,10 +1251,10 @@ export class Game3D {
       const at = v && m ? this.seatOf(v, m, this.you) : null;
       if (!v || !m || !at) return;
       f.root.visible = true;
-      poseRider(f, at.pos, at.driver ? m.root.quaternion : null, look.yaw, look.pitch, SEATS[v[1]].legs, at.driver, this.weapon, leader, dt);
+      poseRider(f, at.pos, at.driver ? m.root.quaternion : null, look.yaw, look.pitch, SEATS[v[1]].legs, at.driver, this.weapon, leader, dt, me.ups[me.cur] ?? 0);
     } else if (this.tpNow && this.camB > 0.6) { // (with a wall at your back the camera is in your head: no figure)
       f.root.visible = true;
-      poseFigure(f, this.selfAt.x, this.selfAt.y, this.selfAt.z, look.yaw, look.pitch, this.weapon, p.slideT > 0 || p.mantleT > 0, p.gliding, leader, dt, p.down > 0, me.axe); // tucked going over a ledge
+      poseFigure(f, this.selfAt.x, this.selfAt.y, this.selfAt.z, look.yaw, look.pitch, this.weapon, p.slideT > 0 || p.mantleT > 0, p.gliding, leader, dt, p.down > 0, me.axe, me.ups[me.cur] ?? 0); // tucked going over a ledge
     }
   }
 

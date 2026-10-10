@@ -63,6 +63,7 @@ export interface SnapSelf extends Body {
 // flags: 1 alive, 2 sliding, 4 grappling (anchor appended), 8 gliding, 16 healing; weaponIdx into WEAPON_IDS, -1 none
 export type SnapOther = number[];
 export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64, OTHER_AXE = 128;
+export const OTHER_UPS = 8; // flags >> OTHER_UPS & 3: the upgrade stars on the gun in hand
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
 // [id, kind, x, y, z, heading, pitch, hp %, driver id (0: none), passengers, ...passenger ids by seat]
 export type SnapVehicle = number[];

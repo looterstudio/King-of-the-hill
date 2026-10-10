@@ -104,7 +104,33 @@ export function buildGun(id: WeaponId, m: GunMats): THREE.Group {
       add(box(0.09, 0.02, 0.02, m.accent, 0.06, 0.03, 0.04));
       break;
   }
+  g.userData.body = m.body;
+  const bb = new THREE.Box3().setFromObject(g);
+  g.userData.min = bb.min.toArray(); g.userData.max = bb.max.toArray();
   return g;
+}
+
+// a gun's upgrade stars, on the gun itself: one gold band per star, a scope with a diamond lens from two
+// stars, and at three the whole gun turns gold. Applied (and taken off) in place on the same model
+export function upgradeGun(g: THREE.Group, level: number, gold: Mat, gem: Mat) {
+  if ((g.userData.level ?? 0) === level) return;
+  g.userData.level = level;
+  const old = g.getObjectByName('ups');
+  if (old) { g.remove(old); disposeTree(old); }
+  g.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.userData.mat0 ??= m.material;
+    m.material = level >= 3 && m.userData.mat0 === g.userData.body ? gold : m.userData.mat0;
+  });
+  if (!level || !g.userData.min) return;
+  const [x0, y0, z0] = g.userData.min as number[], [x1, y1, z1] = g.userData.max as number[];
+  const sx = x1 - x0, sy = y1 - y0, sz = z1 - z0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const ups = new THREE.Group(); ups.name = 'ups';
+  for (let k = 0; k < level; k++) ups.add(box(Math.min(0.2, sx * 0.9) + 0.025, Math.min(0.16, sy * 0.45) + 0.02, 0.035, gold, cx, cy + sy * 0.12, z0 + sz * (0.35 + k * 0.12)));
+  if (level >= 2) ups.add(box(0.045, 0.045, Math.min(0.3, sz * 0.3), gold, cx, y1 + 0.03, z0 + sz * 0.5), box(0.05, 0.05, 0.02, gem, cx, y1 + 0.03, z0 + sz * 0.5 - Math.min(0.15, sz * 0.15) - 0.01));
+  if (level >= 3) { const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.035), gem); star.position.set(cx + sx / 2 + 0.02, cy, z0 + sz * 0.6); ups.add(star); }
+  g.add(ups);
 }
 
 // ---------------- loot, cases, gadgets ----------------
@@ -281,6 +307,7 @@ export interface Figure {
   phase: number; lastX: number; lastZ: number; speed: number;
   gunMats: GunMats; held: THREE.Group | null; // only what is in hand is in the scene (13 hidden guns cost every frame)
   hip: number; // how high the torso and legs hang (short Cupsey is lower)
+  gem: Mat;    // the diamond ink, for upgrade lenses
 }
 
 const SUIT_INKS = [INK_IDS.RED, INK_IDS.PINK, INK_IDS.ORANGE, INK_IDS.GREEN, INK_IDS.BROWN];
@@ -406,7 +433,7 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.leng
   crown.position.y = skin === 5 ? 2.22 : skin === 6 ? 1.86 : 2.08; // attached for the kill leader only
 
   intern(root); intern(chute); intern(crown);
-  return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0, gunMats, held: null, hip };
+  return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0, gunMats, held: null, hip, gem: M(INK_IDS.DIAMOND) };
 }
 
 // a body left where a player fell: flat on its back, arms out, nothing in hand. Feet stay on the
@@ -426,7 +453,7 @@ export function poseCorpse(f: Figure, yaw: number, seed: number): THREE.Group {
 }
 
 // pose a figure for this frame from its interpolated state
-export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number, down = false, axe = false) {
+export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number, down = false, axe = false, level = 0) {
   const moved = Math.hypot(x - f.lastX, z - f.lastZ);
   f.speed += ((dt > 0 ? moved / dt : 0) - f.speed) * Math.min(1, dt * 10);
   f.lastX = x; f.lastZ = z;
@@ -440,6 +467,7 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
     else if (weapon) {
       let g = f.guns.get(weapon);
       if (!g) { g = intern(buildGun(weapon, f.gunMats)); g.scale.setScalar(1.15); g.position.set(0.02, -0.06, -0.48); f.guns.set(weapon, g); }
+      upgradeGun(g, level, f.gunMats.accent, f.gem);
       want = g;
     }
   }
@@ -473,13 +501,14 @@ function hold(f: Figure, want: THREE.Group | null) {
 // someone riding: sat at a seat (hips at `at`, world space), turned and tilted with the vehicle (q) or,
 // a passenger, facing where they aim. Drivers keep both hands on the bars or the wheel; passengers hold
 // their gun up (they can shoot)
-export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | null, yaw: number, pitch: number, legs: number, drive: boolean, weapon: WeaponId | null, leader: boolean, dt: number) {
+export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | null, yaw: number, pitch: number, legs: number, drive: boolean, weapon: WeaponId | null, leader: boolean, dt: number, level = 0) {
   f.root.position.set(at.x, at.y - f.hip, at.z);
   if (q) f.root.quaternion.copy(q); else f.root.rotation.set(0, yaw, 0);
   let want: THREE.Group | null = null;
   if (!drive && weapon) {
     want = f.guns.get(weapon) ?? null;
     if (!want) { want = intern(buildGun(weapon, f.gunMats)); want.scale.setScalar(1.15); want.position.set(0.02, -0.06, -0.48); f.guns.set(weapon, want); }
+    upgradeGun(want, level, f.gunMats.accent, f.gem);
   }
   hold(f, want);
   attachIf(f.root, f.chute, false);

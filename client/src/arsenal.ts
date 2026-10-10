@@ -1,13 +1,13 @@
 // The arsenal on the lobby page: every gun, perk and vehicle in the game, drawn once into small
 // pictures by a throwaway renderer (flat colours and ink outlines), with what each one does.
 import * as THREE from 'three';
-import { PERKS, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type PerkId } from '../../shared/src/constants.ts';
+import { PERKS, UPGRADE, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type PerkId } from '../../shared/src/constants.ts';
 import type { InkRenderer } from './ink.ts';
-import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure } from './models.ts';
+import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure, upgradeGun } from './models.ts';
 import { SKINS } from '../../shared/src/constants.ts';
 
 const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0, 0x7b3fb0]; // INK_IDS order
-const RARITY_CSS: Record<string, string> = { common: '#7a7f8c', uncommon: '#2f9e44', rare: '#2f7fd6', epic: '#9c36b5', legendary: '#e8a317' };
+const RARITY_CSS: Record<string, string> = { common: '#7a7f8c', uncommon: '#2f9e44', rare: '#2f7fd6', epic: '#7b3fb0', legendary: '#e8a317' };
 const PERK_TEXT: Record<PerkId, string> = {
   grenade: 'bounces, then a big blast', molotov: 'a patch of fire on the ground', shock: 'throws everyone through the air',
   smoke: 'a wall of smoke to hide in', launch: 'a pad that fires you into the sky', fort: 'four walls around you, instantly',
@@ -54,8 +54,18 @@ export function renderArsenal(el: HTMLElement) {
     const d = VEHICLES[k];
     return card(picture(renderer, buildVehicle(fakeInk, i, 1).root, 0.9, 0.45), d.name, '#2b2f3a', `${d.hp} hp`, `${Math.round(d.boost * 3.6)} km/h · ${d.seats + 1} seat${d.seats ? 's' : ''}${k === 'tank' ? ' · cannon · drives through walls' : k === 'heli' ? ' · nose gun' : k === 'plane' ? ' · guns + bombs' : k === 'moto' ? ' · fastest on wheels' : ' · drive-by'}`);
   });
+  // what upgrade stars do to a gun, and what each rarity looks like on the floor
+  const UPS = ['as you find it', 'a gold band', 'a second band and a scope with a diamond lens', 'the whole gun in gold'];
+  const ups = [0, 1, 2, 3].map((lv) => {
+    const g = buildGun('scar', gm); upgradeGun(g, lv, mats[3], mats[8]);
+    return card(picture(renderer, g, -Math.PI / 2 + 0.25), lv ? '★'.repeat(lv) : 'no stars', lv === 3 ? '#e8a317' : '#2b2f3a', lv ? `+${Math.round(lv * UPGRADE.perLevel * 100)}% damage` : 'base', UPS[lv]);
+  });
+  const AURA: [string, string][] = [['common', 'a grey disc, no beam'], ['uncommon', 'a short green beam'], ['rare', 'a blue beam and a pulsing ring'], ['epic', 'a tall purple beam, two rings, sparks circling it'], ['legendary', 'a gold beam you see across the map, rings, a swarm of sparks, a star turning over it']];
+  const rarity = AURA.map(([r, t]) => `<div class="rar-row"><b style="background:${RARITY_CSS[r]}">${r}</b><span>${t}</span><small>${WEAPON_IDS.filter((id) => WEAPONS[id].rarity === r).map((id) => WEAPONS[id].name).join(' · ') || '&nbsp;'}</small></div>`).join('');
   el.innerHTML = `<h3 class="wall-title">The arsenal <span>(${WEAPON_IDS.length} guns, ${perks.length} perks, ${veh.length} vehicles)</span></h3>`
     + `<div class="arm-row"><h4>Guns</h4><div class="arm-grid">${guns.join('')}</div></div>`
+    + `<div class="arm-row"><h4>Upgrade stars <small>E at an upgrade bench (once per bench) or the Upgrade Kit perk (G): up to ★★★, on the gun in your hands, and everyone sees them</small></h4><div class="arm-grid">${ups.join('')}</div></div>`
+    + `<div class="arm-row"><h4>Rarity <small>the rarer the gun, the louder it glows on the floor</small></h4><div class="rar-list">${rarity}</div></div>`
     + `<div class="arm-row"><h4>Perks & bombs</h4><div class="arm-grid">${perks.join('')}</div></div>`
     + `<div class="arm-row"><h4>Vehicles</h4><div class="arm-grid">${veh.join('')}</div></div>`;
   renderer.dispose(); renderer.forceContextLoss();
