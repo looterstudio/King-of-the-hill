@@ -351,13 +351,14 @@ export interface Body {
   seat: number; // 0 driving (or on foot), 1+ riding along as a passenger
   down: number; // knocked: seconds left before bleeding out (0 = standing)
   mantleT: number; mantleX: number; mantleY: number; mantleZ: number; // climbing over a ledge: time left, where to
+  bus: number; // 1: still aboard the paper plane (carried along at vx, vz until you jump)
 }
 export interface MoveInput { fwd: number; strafe: number; yaw: number; pitch: number; jump: boolean; sprint: boolean; slide: boolean; grapple: boolean; up?: number }
 
 export const newBody = (x: number, y: number, z: number): Body => ({
   x, y, z, vx: 0, vy: 0, vz: 0, grounded: false, gliding: false, airJumps: 1, wallX: 0, wallZ: 0, wallT: 99,
   slideT: 0, dashT: 0, dashX: 0, dashZ: 0, dashReady: true, hook: false, gx: 0, gy: 0, gz: 0, hookCd: 0, launchT: 0,
-  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0, mantleT: 0, mantleX: 0, mantleY: 0, mantleZ: 0,
+  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0, mantleT: 0, mantleX: 0, mantleY: 0, mantleZ: 0, bus: 0,
 });
 
 // gliding: look down to dive (fast fall, fast forward), look up to float and cover distance

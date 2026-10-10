@@ -1,8 +1,8 @@
 // Snapshot encoding, shared by the server and the offline demo. Work that is the same for every
 // recipient (rounding, packing) happens once per tick; each recipient then only gets their own
 // full state plus what is near them. Loot and cases go out at most a few times a second.
-import { VEHICLES, VEHICLE_KINDS, VIEW_RANGE, WEAPON_IDS } from './constants.ts';
-import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
+import { BUS, VEHICLES, VEHICLE_KINDS, VIEW_RANGE, WEAPON_IDS } from './constants.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, OTHER_BUS, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
 import type { PlayerState, Sim } from './sim.ts';
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -13,7 +13,18 @@ const KIND = { weapon: 0, item: 1, perk: 2 } as const;
 
 export interface Frame {
   tick: number; time: number; alive: number; ring: SnapRing; others: Map<number, SnapOther>; shots: number[][];
-  leader: [number, number] | null; board: number[][]; fx: SnapFx[]; loot: SnapLoot[]; cases: SnapCase[]; lootVer: number; sim: Sim; veh: SnapVehicle[];
+  leader: [number, number] | null; board: number[][]; fx: SnapFx[]; loot: SnapLoot[]; cases: SnapCase[]; lootVer: number; sim: Sim; veh: SnapVehicle[]; bus?: number[];
+}
+
+// the paper plane while it is still over the island (a few seconds past the end, so it flies off screen)
+function busOf(sim: Sim): number[] | undefined {
+  if (!sim.bus) return undefined;
+  const at = sim.busAt(sim.t), b = sim.bus;
+  if (sim.t - b.t > BUS.len / BUS.speed + 4) return undefined;
+  let aboard = 0;
+  for (const p of sim.players.values()) if (p.alive && p.bus) aboard++;
+  const over = Math.max(0, (sim.t - b.t) * BUS.speed - BUS.len); // past the end it keeps going
+  return [r2(at.x + b.dx * over), BUS.y, r2(at.z + b.dz * over), r2(b.dx), r2(b.dz), aboard];
 }
 
 export function frame(sim: Sim): Frame {
@@ -23,7 +34,7 @@ export function frame(sim: Sim): Frame {
   for (const p of sim.players.values()) {
     if (p.kills > 0 && p.alive && (!leader || p.kills > leader[1])) leader = [p.id, p.kills];
     if (!p.alive) continue;
-    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0) | (p.down > 0 ? OTHER_DOWN : 0) | (p.axe ? OTHER_AXE : 0) | ((p.axe ? 0 : (p.ups[p.cur] ?? 0) & 3) << OTHER_UPS);
+    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0) | (p.down > 0 ? OTHER_DOWN : 0) | (p.axe ? OTHER_AXE : 0) | ((p.axe ? 0 : (p.ups[p.cur] ?? 0) & 3) << OTHER_UPS) | (p.bus ? OTHER_BUS : 0);
     const w = p.axe ? null : p.slots[p.cur];
     const o = [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), Math.ceil(p.hp), flags, w ? WEAPON_IDS.indexOf(w) : -1];
     if (p.hook) o.push(r1(p.gx), r1(p.gy), r1(p.gz));
@@ -45,7 +56,7 @@ export function frame(sim: Sim): Frame {
     ...sim.effects.map((e): SnapFx => [e.kind, e.id, r1(e.x), r1(e.y), r1(e.z), r1(e.t)]),
   ];
   return {
-    sim, tick: sim.tick, time: r2(sim.t), alive: sim.alive, others, shots, leader, board, fx, lootVer: sim.lootVer,
+    sim, tick: sim.tick, time: r2(sim.t), alive: sim.alive, others, shots, leader, board, fx, lootVer: sim.lootVer, bus: busOf(sim),
     veh: sim.vehicles.map((v): SnapVehicle => [v.id, VEHICLE_KINDS.indexOf(v.kind), r2(v.body.x), r2(v.body.y), r2(v.body.z), r2(v.body.head), r2(v.body.vpitch), Math.max(1, Math.round((v.hp / VEHICLES[v.kind].hp) * 100)), v.driver, v.seats.length, ...v.seats]),
     loot: sim.loot.map((l): SnapLoot => [l.id, r1(l.x), r1(l.y), r1(l.z), KIND[l.kind], l.what, l.n]),
     cases: sim.cases.map((c): SnapCase => [c.id, r1(c.x), r1(c.y), r1(c.z), c.supply ? 2 : c.golden ? 1 : 0, c.open ? 1 : 0]),
@@ -63,7 +74,7 @@ function selfOf(p: PlayerState, sim: Sim): SnapSelf {
     x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, grounded: p.grounded, gliding: p.gliding,
     airJumps: p.airJumps, wallX: p.wallX, wallZ: p.wallZ, wallT: Math.min(p.wallT, 9), slideT: p.slideT, dashT: p.dashT, dashX: p.dashX, dashZ: p.dashZ,
     dashReady: p.dashReady, hook: p.hook, gx: p.gx, gy: p.gy, gz: p.gz, hookCd: p.hookCd, launchT: p.launchT,
-    mantleT: r2(p.mantleT), mantleX: p.mantleX, mantleY: p.mantleY, mantleZ: p.mantleZ,
+    mantleT: r2(p.mantleT), mantleX: p.mantleX, mantleY: p.mantleY, mantleZ: p.mantleZ, bus: p.bus,
     yaw: p.yaw, pitch: p.pitch, hp: Math.max(0, Math.ceil(p.hp)), shield: Math.ceil(p.shield), alive: p.alive,
     slots: [...p.slots], mags: [...p.mags], cur: p.cur, ups: [...p.ups], items: { ...p.items }, perk: p.perk ? { ...p.perk } : null,
     use: p.use ? { item: p.use.item, t: r2(p.use.t) } : null, reloadT: r2(p.reloadT), spin: r2(p.spin), ack: p.ack, kills: p.kills,
@@ -92,7 +103,7 @@ export function snapFor(f: Frame, recipient: number, watch: number, viewer: View
   const others: SnapOther[] = [];
   for (const [id, o] of f.others) if (id !== recipient && !opts?.hide?.has(id) && (opts?.keep?.has(id) || near(o[1], o[3], VIEW_RANGE))) others.push(o);
   const msg: Snap = {
-    t: 'snap', tick: f.tick, time: f.time, alive: f.alive, ring: f.ring, self: me ? selfOf(me, f.sim) : null, others, leader: f.leader, board: f.board, watch, veh: f.veh,
+    t: 'snap', tick: f.tick, time: f.time, alive: f.alive, ring: f.ring, self: me ? selfOf(me, f.sim) : null, others, leader: f.leader, board: f.board, watch, veh: f.veh, ...(f.bus ? { bus: f.bus } : {}),
     shots: f.shots.filter((s) => near(s[0], s[2], VIEW_RANGE)),
     fx: f.fx.filter((e) => e[0] === 'nuke' || near(e[2], e[4], VIEW_RANGE)),
   };
@@ -120,7 +131,7 @@ export function frameJson(f: Frame): FrameJson {
     fx: f.fx.map((e) => JSON.stringify(e)),
     loot: f.loot.map((l) => JSON.stringify(l)),
     cases: f.cases.map((c) => JSON.stringify(c)),
-    head: `{"t":"snap","tick":${f.tick},"time":${f.time},"alive":${f.alive},"ring":${JSON.stringify(f.ring)},"leader":${JSON.stringify(f.leader)},"board":${JSON.stringify(f.board)},"veh":${JSON.stringify(f.veh)}`,
+    head: `{"t":"snap","tick":${f.tick},"time":${f.time},"alive":${f.alive},"ring":${JSON.stringify(f.ring)},"leader":${JSON.stringify(f.leader)},"board":${JSON.stringify(f.board)},"veh":${JSON.stringify(f.veh)}${f.bus ? `,"bus":${JSON.stringify(f.bus)}` : ''}`,
   };
 }
 
