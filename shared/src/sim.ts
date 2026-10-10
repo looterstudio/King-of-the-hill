@@ -31,6 +31,7 @@ export interface PlayerState extends Body {
   kills: number; ack: number; team: number; rideV: number; // id of the vehicle you are in, 0 on foot
   downBy: number | null; reviveT: number; reviver: number; // knocked: who did it, revive progress, by whom
   axe: boolean; axeCd: number; mats: number; // axe out (instead of a gun), its swing cooldown, building material
+  tp: boolean; // playing in third person: aims down the shoulder camera's ray (aimFrom)
 }
 export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
@@ -39,6 +40,7 @@ export interface Input {
   interact: boolean; item: number; perk: boolean; // item: 1 = best shield, 2 = medkit
   up: number; // helicopter climb (+1) / descend (-1)
   hold: boolean; // E held down: reviving a knocked teammate
+  tp?: boolean; // third-person camera (aimFrom); bots and old clients aim from the eye
 }
 // per player this tick: one input, several (catching up), none (late: the body waits), or no entry (idle)
 export type TickInputs = Map<number, Input | Input[]>;
@@ -49,7 +51,7 @@ export type SimEvent =
   | { kind: 'knock'; victim: number; by: number | null; head: boolean }
   // the world changed: blocks broken off / placed (append in order), boxes gone, buildings coming down
   | { kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[]; drop?: number[] } // drop: loose pieces that fall (also in kill)
-  | { kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean }
+  | { kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean; left?: number; b?: number[] } // left: the block's health left (0-1), b: its bounds
   | { kind: 'revive'; victim: number; by: number }
   | { kind: 'hit'; victim: number; by: number; dmg: number; head: boolean; shield: boolean; broke: boolean }
   | { kind: 'elim'; victim: number; by: number | null; cause: ElimCause; head: boolean }
@@ -62,7 +64,7 @@ export type SimEvent =
   | { kind: 'drop'; x: number; z: number; landed: boolean }
   | { kind: 'upgrade'; by: number; level: number };
 
-export const emptyInput = (): Input => ({ seq: 0, fwd: 0, strafe: 0, yaw: 0, pitch: 0, jump: false, sprint: false, slide: false, grapple: false, fire: false, aim: false, reload: false, slot: 0, view: 0, interact: false, item: 0, perk: false, up: 0, hold: false });
+export const emptyInput = (): Input => ({ seq: 0, fwd: 0, strafe: 0, yaw: 0, pitch: 0, jump: false, sprint: false, slide: false, grapple: false, fire: false, aim: false, reload: false, slot: 0, view: 0, interact: false, item: 0, perk: false, up: 0, hold: false, tp: false });
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const finite = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -76,7 +78,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
     fire: raw?.fire === true, aim: raw?.aim === true, reload: raw?.reload === true,
     slot: clamp(Math.floor(finite(raw?.slot)), 0, SLOTS + 1), view: Math.floor(finite(raw?.view)), // slot SLOTS + 1 = the axe
     interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 2), perk: raw?.perk === true,
-    up: clamp(finite(raw?.up), -1, 1), hold: raw?.hold === true,
+    up: clamp(finite(raw?.up), -1, 1), hold: raw?.hold === true, tp: raw?.tp === true,
   };
 }
 
@@ -100,6 +102,24 @@ export function spreadFor(p: Body, w: WeaponId, aim: boolean): number {
   let s = base * (aim ? (scoped ? 0.02 : 0.5) : 1) * (1 + speed / 8);
   if (!p.grounded) s *= 2;
   return s;
+}
+
+// Third person: the camera rides over the right shoulder (TP) and the crosshair is its ray. Everything you
+// aim (shots, rockets, the pickaxe, blocks you place) starts on that ray, at the point of it level with your
+// eye, so what's under the crosshair is what you hit, and a rocket flies straight down the middle of the
+// screen. (From the eye, parallel to the camera, it all landed 0.6 m left of the crosshair.) The shoulder
+// point is never behind you or through a wall: with one in the way, it's the eye again. The client puts
+// its camera on this same ray (pulled in along it, never off it, when a wall is behind you).
+export const TP = { side: 0.75, up: 0.5, back: 3.4, aimBack: 2.0 };
+export function aimFrom(w: World, x: number, y: number, z: number, yaw: number, pitch: number, tp: boolean): [number, number, number] {
+  const ey = y + EYE_H;
+  if (!tp) return [x, ey, z];
+  const sp = Math.sin(pitch), cp = Math.cos(pitch), fx = -Math.sin(yaw) * cp, fz = -Math.cos(yaw) * cp;
+  // eye + right * side + up * (Y - forward * forward.y): the camera ray's closest point to the eye
+  const ox = Math.cos(yaw) * TP.side - fx * sp * TP.up, oy = TP.up * (1 - sp * sp), oz = -Math.sin(yaw) * TP.side - fz * sp * TP.up;
+  const len = Math.hypot(ox, oy, oz);
+  if (w.raycast(x, ey, z, ox / len, oy / len, oz / len, len + 0.15) < len + 0.15) return [x, ey, z];
+  return [x + ox, ey + oy, z + oz];
 }
 
 // ---------------- loot tables ----------------
@@ -231,7 +251,7 @@ export class Sim {
         slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
-        downBy: null, reviveT: 0, reviver: 0, axe: false, axeCd: 0, mats: BUILD.startMats,
+        downBy: null, reviveT: 0, reviver: 0, axe: false, axeCd: 0, mats: BUILD.startMats, tp: false,
       });
     });
   }
@@ -357,26 +377,30 @@ export class Sim {
           if (ang < best) { best = ang; tgt = v.id; }
         }
       }
-      this.projectiles.push({ id: this.nextId++, kind: def.proj, owner: p.id, x: p.x + dx * 0.9, y: p.y + EYE_H - 0.1 + dy * 0.9, z: p.z + dz * 0.9, vx: dx * sp, vy: dy * sp, vz: dz * sp, t: def.proj === 'rocket' ? ROCKET.life : MISSILE.life, tgt, dmg });
-      this.shots.push({ ox: p.x, oy: p.y + EYE_H, oz: p.z, ex: p.x + dx * 2, ey: p.y + EYE_H + dy * 2, ez: p.z + dz * 2, by: p.id, hit: false });
+      // in third person it leaves on the crosshair's own ray and flies straight down the middle of the screen
+      const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp), drop = p.tp ? 0 : 0.1;
+      this.projectiles.push({ id: this.nextId++, kind: def.proj, owner: p.id, x: ox + dx * 0.9, y: oy - drop + dy * 0.9, z: oz + dz * 0.9, vx: dx * sp, vy: dy * sp, vz: dz * sp, t: def.proj === 'rocket' ? ROCKET.life : MISSILE.life, tgt, dmg });
+      this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
       return;
     }
     const spread = spreadFor(p, w, inp.aim);
     const view = clamp(inp.view, this.tick - REWIND_MAX_TICKS, this.tick);
     const past = this.positionsAt(view);
-    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp);
+    const eye: [number, number, number] | undefined = oy !== p.y + EYE_H || ox !== p.x ? [p.x, p.y + EYE_H, p.z] : undefined;
     for (let i = 0; i < def.pellets; i++) {
       const yaw = p.yaw + (this.rand() - 0.5) * 2 * spread, pitch = p.pitch + (this.rand() - 0.5) * 2 * spread;
       const cp = Math.cos(pitch);
       // pellets and long range fall off a little; headshots multiply
       this.ray(p, ox, oy, oz, -Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, def.range, (t, head) =>
-        def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]) * (def.pellets > 1 ? clamp(1.2 - t / def.range, 0.35, 1) : 1) * (head ? (def.headMult ?? HEADSHOT_MULT) : 1), ev, past);
+        def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]) * (def.pellets > 1 ? clamp(1.2 - t / def.range, 0.35, 1) : 1) * (head ? (def.headMult ?? HEADSHOT_MULT) : 1), ev, past, eye);
     }
   }
 
-  // one bullet: the first wall, player or vehicle along the ray takes it
+  // one bullet: the first wall, player or vehicle along the ray takes it. eye: fired down a third-person
+  // crosshair ray, the bullet still leaves your gun: a wall between you and what the crosshair is on stops it
   private ray(p: PlayerState, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, range: number,
-    dmgAt: (t: number, head: boolean) => number, ev: SimEvent[], past: Map<number, { x: number; y: number; z: number }> | null = null) {
+    dmgAt: (t: number, head: boolean) => number, ev: SimEvent[], past: Map<number, { x: number; y: number; z: number }> | null = null, eye?: [number, number, number]) {
     let t = this.world.raycast(ox, oy, oz, dx, dy, dz, range);
     let hit: { head: boolean; q: PlayerState } | null = null, vhit: Vehicle | null = null;
     for (const q of this.players.values()) {
@@ -393,6 +417,11 @@ export class Sim {
       if (Math.abs(b.x - ox) > range + r || Math.abs(b.z - oz) > range + r) continue;
       const vt = rayBox(ox, oy, oz, dx, dy, dz, { x0: b.x - r, y0: b.y, z0: b.z - r, x1: b.x + r, y1: b.y + hv, z1: b.z + r });
       if (vt >= 0 && vt < t) { t = vt; vhit = v; hit = null; }
+    }
+    if (eye) {
+      const hx = ox + dx * t - eye[0], hy = oy + dy * t - eye[1], hz = oz + dz * t - eye[2], L = Math.hypot(hx, hy, hz);
+      const tb = L > 0.1 ? this.world.raycast(eye[0], eye[1], eye[2], hx / L, hy / L, hz / L, L) : L;
+      if (tb < L - 0.1) { this.shots.push({ ox: eye[0], oy: eye[1], oz: eye[2], ex: eye[0] + (hx / L) * tb, ey: eye[1] + (hy / L) * tb, ez: eye[2] + (hz / L) * tb, by: p.id, hit: false }); return; }
     }
     this.shots.push({ ox, oy, oz, ex: ox + dx * t, ey: oy + dy * t, ez: oz + dz * t, by: p.id, hit: !!hit || !!vhit });
     if (vhit) { this.damageVehicle(vhit, Math.round(dmgAt(t, false)), p.id, ev); return; }
@@ -864,7 +893,7 @@ export class Sim {
   // the axe: hit whatever is in front of you
   private swing(p: PlayerState, ev: SimEvent[]) {
     const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
-    const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+    const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp);
     let best = AXE.reach, hitP: { q: PlayerState; head: boolean } | null = null, hitV: Vehicle | null = null;
     for (const q of this.players.values()) {
       if (!q.alive || q.id === p.id || q.team === p.team || Math.abs(q.x - ox) > 4 || Math.abs(q.z - oz) > 4) continue;
@@ -880,19 +909,21 @@ export class Sim {
     const wb = this.world.raycastBox(ox, oy, oz, dx, dy, dz, AXE.reach);
     if (wb.i >= 0 && wb.t < best) {
       const hx = ox + dx * (wb.t + 0.05), hy = oy + dy * (wb.t + 0.05), hz = oz + dz * (wb.t + 0.05);
-      let i = wb.i, broke = false;
+      let i = wb.i, broke = false, left = 1;
       const b = this.world.boxes[i];
       if (!b.hard) {
         if (!World.isBlock(b)) i = this.shatter(i).find((k) => { const c = this.world.boxes[k]; return hx >= c.x0 - 0.01 && hx <= c.x1 + 0.01 && hy >= c.y0 - 0.01 && hy <= c.y1 + 0.01 && hz >= c.z0 - 0.01 && hz <= c.z1 + 0.01; }) ?? -1;
         if (i >= 0) {
           const mat = this.material(this.world.boxes[i]);
           broke = this.hitBlock(i, AXE.block);
+          left = broke ? 0 : Math.max(0, (this.world.boxes[i].hp ?? mat.hp) / mat.hp);
           if (broke) p.mats = Math.min(BUILD.maxMats, p.mats + mat.yield);
           const s = b.sid ? this.world.structures[b.sid - 1] : null;
           if (s && !s.down) { s.dmg += 8; this.structBy.set(s.id, p.id); if (s.dmg >= s.hp) this.collapse(s); }
         }
       }
-      ev.push({ kind: 'chop', by: p.id, x: hx, y: hy, z: hz, broke });
+      const c = this.world.boxes[i >= 0 ? i : wb.i];
+      ev.push({ kind: 'chop', by: p.id, x: hx, y: hy, z: hz, broke, left: Math.round(left * 100) / 100, b: [c.x0, c.y0, c.z0, c.x1, c.y1, c.z1] });
       return;
     }
     if (hitV) { this.damageVehicle(hitV, AXE.vehicle, p.id, ev); return; }
@@ -907,7 +938,8 @@ export class Sim {
   private place(p: PlayerState) {
     if (p.mats < BUILD.cost || this.placed >= BUILD.cap) return;
     const cp = Math.cos(p.pitch), dx = -Math.sin(p.yaw) * cp, dy = Math.sin(p.pitch), dz = -Math.cos(p.yaw) * cp;
-    const c = this.world.placeCell(p.x, p.y + EYE_H, p.z, dx, dy, dz, BUILD.reach);
+    const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp);
+    const c = this.world.placeCell(ox, oy, oz, dx, dy, dz, BUILD.reach);
     if (!c) return;
     const b: Box = { x0: c.x0, y0: c.y0, z0: c.z0, x1: c.x0 + 1, y1: c.y0 + 1, z1: c.z0 + 1, ink: INK.BROWN, kind: 'fort' };
     for (const q of this.players.values()) if (q.alive && q.x + PLAYER_R > b.x0 && q.x - PLAYER_R < b.x1 && q.z + PLAYER_R > b.z0 && q.z - PLAYER_R < b.z1 && q.y < b.y1 && q.y + 1.8 > b.y0) return;
@@ -961,7 +993,7 @@ export class Sim {
       ev.push({ kind: 'build', id: build.id, boxes: list });
     } else if (kind === 'nuke') {
       // the bomb lands wherever you're looking (or on the ground straight ahead, far away)
-      const ox = p.x, oy = p.y + EYE_H, oz = p.z;
+      const [ox, oy, oz] = aimFrom(this.world, p.x, p.y, p.z, p.yaw, p.pitch, p.tp);
       let t = this.world.raycast(ox, oy, oz, dx, dy, dz, NUKE.range);
       if (t >= NUKE.range) t = dy < -0.02 ? -oy / dy : 160;
       const tx = clamp(ox + dx * t, -200, 200), tz = clamp(oz + dz * t, -200, 200);
@@ -1175,7 +1207,7 @@ export class Sim {
   // one of a player's inputs: their own timeline (aim, movement, cooldowns, shooting, healing)
   private playerInput(p: PlayerState, inp: Input, dt: number, ev: SimEvent[]) {
     p.ack = inp.seq;
-    p.yaw = inp.yaw; p.pitch = inp.pitch;
+    p.yaw = inp.yaw; p.pitch = inp.pitch; p.tp = !!inp.tp;
     p.fireCd = Math.max(0, p.fireCd - dt);
     p.burstT = Math.max(0, p.burstT - dt);
     if (p.down > 0) { moveStep(this.world, p, inp, dt); return; } // knocked: crawl, nothing else (bleeding is per tick)

@@ -46,7 +46,7 @@ export function frame(sim: Sim): Frame {
   ];
   return {
     sim, tick: sim.tick, time: r2(sim.t), alive: sim.alive, others, shots, leader, board, fx, lootVer: sim.lootVer,
-    veh: sim.vehicles.map((v): SnapVehicle => [v.id, VEHICLE_KINDS.indexOf(v.kind), r2(v.body.x), r2(v.body.y), r2(v.body.z), r2(v.body.head), r2(v.body.vpitch), Math.max(1, Math.round((v.hp / VEHICLES[v.kind].hp) * 100)), v.driver, v.seats.length]),
+    veh: sim.vehicles.map((v): SnapVehicle => [v.id, VEHICLE_KINDS.indexOf(v.kind), r2(v.body.x), r2(v.body.y), r2(v.body.z), r2(v.body.head), r2(v.body.vpitch), Math.max(1, Math.round((v.hp / VEHICLES[v.kind].hp) * 100)), v.driver, v.seats.length, ...v.seats]),
     loot: sim.loot.map((l): SnapLoot => [l.id, r1(l.x), r1(l.y), r1(l.z), KIND[l.kind], l.what, l.n]),
     cases: sim.cases.map((c): SnapCase => [c.id, r1(c.x), r1(c.y), r1(c.z), c.supply ? 2 : c.golden ? 1 : 0, c.open ? 1 : 0]),
     ring: { x: r1(g.x), y: r1(g.y), r: r1(g.r), nx: r1(g.nx), ny: r1(g.ny), nr: r1(g.nr), closing: g.closing, nextIn: Math.max(0, Math.ceil(g.nextAt - sim.t)), phase: g.phase },
@@ -63,6 +63,7 @@ function selfOf(p: PlayerState, sim: Sim): SnapSelf {
     x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, grounded: p.grounded, gliding: p.gliding,
     airJumps: p.airJumps, wallX: p.wallX, wallZ: p.wallZ, wallT: Math.min(p.wallT, 9), slideT: p.slideT, dashT: p.dashT, dashX: p.dashX, dashZ: p.dashZ,
     dashReady: p.dashReady, hook: p.hook, gx: p.gx, gy: p.gy, gz: p.gz, hookCd: p.hookCd, launchT: p.launchT,
+    mantleT: r2(p.mantleT), mantleX: p.mantleX, mantleY: p.mantleY, mantleZ: p.mantleZ,
     yaw: p.yaw, pitch: p.pitch, hp: Math.max(0, Math.ceil(p.hp)), shield: Math.ceil(p.shield), alive: p.alive,
     slots: [...p.slots], mags: [...p.mags], cur: p.cur, ups: [...p.ups], items: { ...p.items }, perk: p.perk ? { ...p.perk } : null,
     use: p.use ? { item: p.use.item, t: r2(p.use.t) } : null, reloadT: r2(p.reloadT), spin: r2(p.spin), ack: p.ack, kills: p.kills,

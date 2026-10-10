@@ -47,13 +47,14 @@ const chain = '<svg viewBox="0 0 60 46" aria-hidden="true"><rect x="6" y="16" wi
 
 export interface Card { art: string; title: string; keys: string; text: string; tone: string; tab?: Tab }
 export const GUIDE: Card[] = [
-  { art: mouse('move'), title: 'Aim', tab: 'basics', keys: '<kbd>Mouse</kbd>', tone: 'blue', text: 'Move the mouse to look. The crosshair opens up when you run or jump: stop for accurate shots.' },
+  { art: mouse('move'), title: 'Aim', tab: 'basics', keys: '<kbd>Mouse</kbd>', tone: 'blue', text: 'Move the mouse to look. You see your character over the shoulder; what\'s under the crosshair is what you hit (P switches to first person). The crosshair opens up when you run or jump: stop for accurate shots.' },
   { art: mouse('l'), title: 'Shoot', tab: 'basics', keys: '<kbd>Left click</kbd>', tone: 'red', text: 'Hold it for automatic guns. Headshots hit a lot harder.' },
   { art: mouse('r'), title: 'Aim down sights', tab: 'basics', keys: '<kbd>Right click</kbd>', tone: 'blue', text: 'Zoom in and tighten your spread. Snipers get a scope.' },
   { art: mag, title: 'Reload', tab: 'basics', keys: '<kbd>R</kbd>', tone: 'orange', text: 'Reload between fights, not in the middle of one. An empty gun reloads when you click. The bar under the crosshair shows how long.' },
   { art: key('W', 'A', 'S', 'D'), title: 'Move and sprint', tab: 'basics', keys: '<kbd>WASD</kbd> <kbd>Shift</kbd>', tone: 'green', text: 'Hold Shift to sprint. Walking keeps your aim steadier.' },
   { art: slide, title: 'Slide', tab: 'basics', keys: '<kbd>Shift</kbd> then <kbd>C</kbd>', tone: 'green', text: 'While sprinting press C (or Ctrl): you drop low and fast. Jump out of the slide to keep the speed.' },
   { art: jump, title: 'Jump, double jump, wall jump', tab: 'basics', keys: '<kbd>Space</kbd>', tone: 'teal', text: 'Space again in the air jumps twice. Jump against a wall to kick off it. C in the air dashes.' },
+  { art: jump, title: 'Climb over anything', tab: 'basics', keys: '<kbd>W</kbd> + <kbd>Space</kbd>', tone: 'green', text: 'Jump at a crate, a car, a wall you can reach the top of or a window while moving at it: you pull yourself up and over, or dive through the window.' },
   { art: hook, title: 'Grapple', tab: 'basics', keys: '<kbd>Q</kbd> hold', tone: 'teal', text: 'Hold Q to hook what you look at and reel yourself in. Let go to drop.' },
   { art: pick, title: 'Diamond pickaxe', tab: 'build', keys: '<kbd>X</kbd>', tone: 'diamond', text: 'Always in your pocket. 1-4 back to your guns.' },
   { art: crack, title: 'Break', tab: 'build', keys: 'pickaxe + <kbd>Left click</kbd>', tone: 'red', text: 'Breaks walls, cars and people. Every block you break gives you ▦ material. Rock is unbreakable.' },
@@ -97,13 +98,13 @@ const TABS: { id: Tab | 'keys'; name: string }[] = [
   { id: 'vehicles', name: 'Vehicles' }, { id: 'squad', name: 'Squads' }, { id: 'prize', name: '♛ Hourly prize' }, { id: 'keys', name: 'All controls' },
 ];
 const KEYS: [string, string][] = [
-  ['W A S D', 'move'], ['Mouse', 'look and aim'], ['Shift', 'sprint'], ['Space', 'jump · again in the air: double jump · against a wall: wall jump'],
+  ['W A S D', 'move'], ['Mouse', 'look and aim'], ['Shift', 'sprint'], ['Space', 'jump · again in the air: double jump · against a wall: wall jump'], ['W + Space', 'at a ledge or a window: climb over / dive through'],
   ['C / Ctrl', 'slide while sprinting · air dash in the air'], ['Q (hold)', 'grapple and reel in'], ['Left click', 'shoot (hold for automatics)'],
   ['Right click', 'aim down sights · with the pickaxe: build'], ['R', 'reload'], ['1 – 4 / wheel', 'switch gun'], ['X', 'diamond pickaxe'],
   ['B', 'build a block (pickaxe out)'], ['E / F', 'open cases · pick up · swap · get in and out of vehicles · upgrade at a bench'],
   ['E (hold)', 'pick up a knocked teammate'], ['5', 'drink a shield'], ['6', 'use a medkit'], ['G', 'use your perk / throw'],
   ['V (hold)', 'talk to your squad'], ['U', 'mute your squad'], ['N / M', 'next radio station / radio off'], ['H', 'controls card in a match'],
-  ['T', 'hide the training list'], ['F (out)', 'free camera when your team is out'], ['Esc', 'pause'],
+  ['P', 'third person (over the shoulder) / first person'], ['T', 'hide the training list'], ['F (out)', 'free camera when your team is out'], ['Esc', 'pause'],
 ];
 // the lobby's manual: every card and every key, by topic
 export function manualHTML() {

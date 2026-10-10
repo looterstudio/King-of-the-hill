@@ -269,11 +269,11 @@ export class World {
     return null;
   }
 
-  overlaps(x: number, y: number, z: number, scratch: number[] = []): Box | null {
+  overlaps(x: number, y: number, z: number, scratch: number[] = [], h = PLAYER_H): Box | null {
     for (const i of this.near(x - PLAYER_R, z - PLAYER_R, x + PLAYER_R, z + PLAYER_R, scratch)) {
       const b = this.boxes[i];
       if (b.dead) continue;
-      if (x + PLAYER_R > b.x0 && x - PLAYER_R < b.x1 && z + PLAYER_R > b.z0 && z - PLAYER_R < b.z1 && y + PLAYER_H > b.y0 && y < b.y1) return b;
+      if (x + PLAYER_R > b.x0 && x - PLAYER_R < b.x1 && z + PLAYER_R > b.z0 && z - PLAYER_R < b.z1 && y + h > b.y0 && y < b.y1) return b;
     }
     return null;
   }
@@ -350,13 +350,14 @@ export interface Body {
   ride: number; head: number; vpitch: number; spd: number; // in a vehicle: 1 car, 2 heli, 3 plane; its heading, pitch, speed
   seat: number; // 0 driving (or on foot), 1+ riding along as a passenger
   down: number; // knocked: seconds left before bleeding out (0 = standing)
+  mantleT: number; mantleX: number; mantleY: number; mantleZ: number; // climbing over a ledge: time left, where to
 }
 export interface MoveInput { fwd: number; strafe: number; yaw: number; pitch: number; jump: boolean; sprint: boolean; slide: boolean; grapple: boolean; up?: number }
 
 export const newBody = (x: number, y: number, z: number): Body => ({
   x, y, z, vx: 0, vy: 0, vz: 0, grounded: false, gliding: false, airJumps: 1, wallX: 0, wallZ: 0, wallT: 99,
   slideT: 0, dashT: 0, dashX: 0, dashZ: 0, dashReady: true, hook: false, gx: 0, gy: 0, gz: 0, hookCd: 0, launchT: 0,
-  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0,
+  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0, mantleT: 0, mantleX: 0, mantleY: 0, mantleZ: 0,
 });
 
 // gliding: look down to dive (fast fall, fast forward), look up to float and cover distance
@@ -367,7 +368,30 @@ export const HOOK_RANGE = 48;
 const HOOK_PULL = 40, HOOK_MAX = 24, HOOK_CD = 0.6;
 const EYE = 1.62;
 const UPDRAFT_SPEED = 13;
+// mantling: move at a ledge you can reach (a wall top, a crate, a car, a window sill) while in the air, or
+// jump at a low one, and you pull yourself up onto it, or dive through the window (tucked: tuck high) and
+// out the other side. reach: how far above your feet your hands get; hurdle: what a jump from the ground
+// vaults straight over
+const MANTLE = { reach: 2.3, hurdle: 1.5, up: 8.5, fwd: 6, time: 0.75, tuck: 1.0 };
 const scratch: number[] = [];
+
+// where a mantle in direction (dx, dz) would take you: on top of the ledge in front of you, or through the
+// opening above it and out the far side; null when there is nothing to climb, or no room to climb it
+export function findLedge(w: World, p: Body, dx: number, dz: number, maxRise: number): { x: number; y: number; z: number } | null {
+  const reach = PLAYER_R + 0.3, top = w.groundAt(p.x + dx * reach, p.z + dz * reach, p.y + maxRise);
+  if (top - p.y < 0.3 || top - p.y > maxRise) return null;
+  const y = top + 0.02;
+  if (w.overlaps(p.x, p.y + 0.01, p.z, scratch, y - p.y + PLAYER_H)) return null; // a ceiling over you (the floor above): no room to pull up
+  let last: { x: number; y: number; z: number } | null = null;
+  for (let s = 0.15; s <= 1.95; s += 0.15) {
+    const x = p.x + dx * s, z = p.z + dz * s;
+    if (w.overlaps(x, y, z, scratch, MANTLE.tuck)) return null;          // the way over is blocked (too small a gap)
+    const room = !w.overlaps(x, y, z, scratch);
+    if (s >= PLAYER_R && room && w.groundAt(x, z, y) >= top - 0.05) return { x, y, z }; // standing on it
+    last = room ? { x, y, z } : null;
+  }
+  return last; // a sill too thin to stand on: over it and out the other side (where you can stand up)
+}
 
 export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity: number, walk: number, sprint: number, jumpV: number) {
   const sin = Math.sin(inp.yaw), cos = Math.cos(inp.yaw);
@@ -390,7 +414,15 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
       p.dashT = DASH_TIME; p.dashX = dx / dl; p.dashZ = dz / dl; p.dashReady = false; p.hook = false;
     }
   }
-  if (inp.jump && !p.gliding) {
+  // a ledge in front of you: jump at a low one from the ground, or reach one in the air, moving at it
+  if (p.mantleT <= 0 && inp.fwd > 0 && !p.gliding && !p.hook && p.dashT <= 0 && p.launchT <= 0 && !p.down && !p.ride && (p.grounded ? inp.jump : true)) {
+    const l = wl || 1, m = findLedge(w, p, wx / l, wz / l, p.grounded ? MANTLE.hurdle : MANTLE.reach);
+    if (m && (p.grounded || p.y + MANTLE.reach >= m.y)) {
+      p.mantleT = MANTLE.time; p.mantleX = m.x; p.mantleY = m.y; p.mantleZ = m.z;
+      p.grounded = false; p.slideT = 0;
+    }
+  }
+  if (inp.jump && !p.gliding && p.mantleT <= 0) {
     if (p.grounded) { p.vy = jumpV; p.grounded = false; p.slideT = 0; } // a slide jump keeps the slide's speed
     else if (p.wallT < WALL_GRACE) { p.vy = jumpV; p.vx += p.wallX * WALL_PUSH; p.vz += p.wallZ * WALL_PUSH; p.wallT = 99; }
     else if (p.airJumps > 0) { p.vy = jumpV * 0.9; p.airJumps--; }
@@ -408,7 +440,14 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
   }
 
   // ---- velocity ----
-  if (p.dashT > 0) {
+  let over = false; // tucked, going over the top: the way was checked (findLedge), nothing to collide with
+  if (p.mantleT > 0) { // up the face, then over the top
+    p.mantleT -= dt;
+    const rise = p.mantleY - p.y, hx = p.mantleX - p.x, hz = p.mantleZ - p.z, d = Math.hypot(hx, hz);
+    if (rise > 0.01) { p.vx = 0; p.vz = 0; p.vy = Math.min(MANTLE.up, rise / dt); }
+    else if (d > 0.04 && p.mantleT > 0) { const sp = Math.min(MANTLE.fwd, d / dt); p.vx = (hx / d) * sp; p.vz = (hz / d) * sp; p.vy = 0; over = true; }
+    else { p.mantleT = 0; p.vx = d > 0.04 ? (hx / d) * 3 : wx * walk; p.vz = d > 0.04 ? (hz / d) * 3 : wz * walk; p.vy = 0; }
+  } else if (p.dashT > 0) {
     p.dashT -= dt; p.vx = p.dashX * DASH_SPEED; p.vz = p.dashZ * DASH_SPEED; p.vy = 0;
   } else if (p.hook) {
     const hx = p.gx - p.x, hy = p.gy - (p.y + 1), hz = p.gz - p.z, d = Math.hypot(hx, hy, hz) || 1;
@@ -443,15 +482,17 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
   }
 
   const wasGrounded = p.grounded;
-  slide(w, p, p.vx * dt, 0, wasGrounded);
-  slide(w, p, 0, p.vz * dt, wasGrounded);
-
   p.grounded = false;
-  p.y += p.vy * dt;
-  const hit = w.overlaps(p.x, p.y, p.z, scratch);
-  if (hit) {
-    if (p.vy <= 0) { p.y = hit.y1; p.grounded = true; } else p.y = hit.y0 - PLAYER_H - 1e-4;
-    p.vy = 0;
+  if (over) { p.x += p.vx * dt; p.z += p.vz * dt; }
+  else {
+    slide(w, p, p.vx * dt, 0, wasGrounded);
+    slide(w, p, 0, p.vz * dt, wasGrounded);
+    p.y += p.vy * dt;
+    const hit = w.overlaps(p.x, p.y, p.z, scratch);
+    if (hit) {
+      if (p.vy <= 0) { p.y = hit.y1; p.grounded = true; } else { p.y = hit.y0 - PLAYER_H - 1e-4; p.mantleT = 0; } // a head bump ends a climb
+      p.vy = 0;
+    }
   }
   if (p.y <= 0) { p.y = 0; p.vy = 0; p.grounded = true; }
   if (p.grounded) { p.gliding = false; p.airJumps = 1; p.dashReady = true; }

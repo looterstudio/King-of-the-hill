@@ -129,7 +129,7 @@ test('a worker that dies ends its matches and gets replaced', async () => {
 // that delivers in order (TCP) with the given delay pattern
 async function predicted(plan: (k: number) => { gen: number; delay: number }, ticks = 600) {
   const { Sim, moveStep, emptyInput } = await import('../../shared/src/sim.ts');
-  const KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down'] as const;
+  const KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down', 'mantleT', 'mantleX', 'mantleY', 'mantleZ'] as const;
   const copy = (f: Record<string, unknown>, t: Record<string, unknown>) => { for (const k of KEYS) t[k] = f[k]; };
   const world = new Sim(77).world, m = new Match('p', 77, [1, 2], 0, { 1: 0, 2: 1 });
   type In = ReturnType<typeof emptyInput>;

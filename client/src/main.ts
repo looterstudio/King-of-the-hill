@@ -91,7 +91,13 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyU' && voice.active) { voice.setDeaf(!voice.deaf); hint(voice.deaf ? 'squad voice muted (U)' : 'squad voice on', 1500); }
   if (e.code === 'KeyN' && radio.on) radio.nextStation();
   if (e.code === 'KeyM') { radio.muted = !radio.muted; if (radio.muted) { radio.stop(); hint('📻 radio off (M to turn it back on)', 1800); } }
+  if (e.code === 'KeyP' && !e.repeat) { // third person (over the shoulder) or first person, remembered
+    game.thirdPerson = !game.thirdPerson;
+    try { localStorage.setItem('pr_view', game.thirdPerson ? 'tp' : 'fp'); } catch { /* private window */ }
+    hint(game.thirdPerson ? 'third person · P for first person' : 'first person · P for third person', 1500);
+  }
 });
+try { game.thirdPerson = localStorage.getItem('pr_view') !== 'fp'; } catch { /* private window: third person */ }
 // the character you drop in as (remembered between visits)
 let mySkin = 0;
 try { mySkin = Math.max(0, Math.min(4, Number(localStorage.getItem('skin')) || 0)); } catch { /* private window */ }
@@ -408,6 +414,7 @@ function damageNumber(victim: number, dmg: number, head: boolean, shield = false
     el.className = `dmgnum ${entry.head ? 'head' : entry.shield ? 'shield' : ''} ${entry.dmg >= 120 ? 'big' : ''}`;
     el.textContent = String(entry.dmg);
     el.style.left = `${at.x + (Math.random() - 0.5) * 30}px`; el.style.top = `${at.y}px`;
+    el.style.setProperty('--dx', `${(Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 34)}px`);
     $('tags').appendChild(el);
     setTimeout(() => el.remove(), 900);
   }, 40);
@@ -423,6 +430,21 @@ function vehicleNumber(v: number[] | undefined, dmg: number) {
 }
 function hitmarker(head: boolean, kill = false) {
   const el = $('hitmarker'); el.classList.toggle('head', head); el.classList.toggle('kill', kill); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  if (head || kill) { const c = $('crosshair'); c.classList.remove('kick'); void c.offsetWidth; c.classList.add('kick'); }
+}
+// you eliminated someone: the pop in the middle of the screen (with the streak: kills 6 s apart or less),
+// the sound, the kill counter, a kick of the camera
+let streak = 0, streakAt = 0;
+const STREAKS = ['', '', 'DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL', 'RAMPAGE', 'UNSTOPPABLE'];
+function eliminated(victim: number, head: boolean) {
+  const now = performance.now();
+  streak = now - streakAt < 6000 ? streak + 1 : 1; streakAt = now;
+  const el = $('elimPop');
+  el.classList.toggle('head', head);
+  setHTML(el, `<div class="ep-icon">${head ? '🎯' : '☠'}</div><div class="ep-title">${head ? 'HEADSHOT' : 'ELIMINATED'}</div><div class="ep-name">${esc(label(victim))}</div>${streak > 1 ? `<div class="ep-streak">${STREAKS[Math.min(streak, STREAKS.length - 1)]}</div>` : ''}`);
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  const k = $('killCount'); k.classList.remove('pop'); void k.offsetWidth; k.classList.add('pop');
+  sfx.elim(head, streak); hitmarker(head, true); game.kick(head ? 1.3 : 1);
 }
 function damageFrom(by: number | null) {
   const pos = by !== null ? game.positionOf(by) : null;
@@ -624,6 +646,7 @@ net.on((m: ServerMsg) => {
         if (m.by === state.you || m.victim === state.you) learn.combat = performance.now();
         if (m.by === state.you) {
           hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head); game.markHit(m.victim);
+          if (m.head) game.kick(0.45);
           if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); }
         }
         if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); }
@@ -646,6 +669,7 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'chop') {
         const cam = game.ink.camera.position;
         if (m.by === state.you || Math.hypot(m.x - cam.x, m.z - cam.z) < 40) sfx.chop(m.broke);
+        game.onChop(m.b, m.left);
         if (m.by === state.you && m.broke) training.tick('break');
         break;
       }
@@ -667,7 +691,7 @@ net.on((m: ServerMsg) => {
         if (!m.landed) { feed('<b style="color:#c98a00">📦 supply drop incoming</b> · legendary inside', false); hint('supply drop incoming: legendary loot, find the balloon', 2600); sfx.siren(); }
         break;
       }
-      if (m.by === state.you && m.victim !== state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); hitmarker(m.head, true); }
+      if (m.by === state.you && m.victim !== state.you) eliminated(m.victim, !!m.head);
       state.dead.add(m.victim);
       if (m.cause !== 'left') game.onElim(m.victim);
       const mine = m.victim === state.you || m.by === state.you || game.mates.has(m.victim) || (m.by !== null && game.mates.has(m.by));
@@ -915,9 +939,12 @@ function frame(now: number) {
       // the pickaxe: say what the buttons do and what you're aiming at
       const axeOn = me.alive && me.axe && !game.me?.ride;
       $('axeHint').classList.toggle('hidden', !axeOn);
+      $('blockHits').classList.toggle('hidden', !axeOn || !game.axeAim);
       if (axeOn && (input.aim || input.isDown('KeyB')) && me.mats < BUILD.cost) hint('not enough material ▦ · break something with left click first', 1200);
       if (axeOn) {
         const aim = game.axeAim;
+        // under the crosshair: the hits this block still takes (or that it can't be broken)
+        setHTML($('blockHits'), !aim ? '' : aim.hard ? '<b class="no">⛔ unbreakable</b>' : `<span class="pips">${Array.from({ length: aim.total }, (_, i) => `<i class="${i < aim.hits ? 'on' : ''}"></i>`).join('')}</span><small>${aim.hits} hit${aim.hits > 1 ? 's' : ''} · ${aim.mat}</small>`);
         setHTML($('axeHint'), `<span class="red"><kbd>left click</kbd> break${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
           + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>right click</kbd> or <kbd>B</kbd> build a block at the blue cube (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> gun</span>`);
       }

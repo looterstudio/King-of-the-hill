@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
-import { Sim, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
+import { Sim, TP, aimFrom, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
 import { EPOCH_MS, KNOCK, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 const SLOTS_AXE = SLOTS + 1;
@@ -209,6 +209,42 @@ test('a heavy sniper headshot one-shots full shield and health; a body shot does
   for (let i = 0; i < TICK_HZ * 2.2; i++) sim.step(DT, new Map());
   sim.step(DT, new Map([[1, inp({ yaw: -Math.PI / 2, pitch: -0.025, fire: true, aim: true, seq: 2 })]]));
   assert.ok(c.alive && c.shield < SHIELD_MAX, 'body shot: hurt, standing');
+});
+
+// third person: the crosshair is the shoulder camera's ray. Aim it at someone 0.75 m right of your eye
+// line and you hit them (from the eye, parallel to it, you'd miss: the old "it goes left"); a wall
+// between your gun and them still takes the bullet; a rocket flies down the crosshair ray
+test('third person: what is under the crosshair is what you hit, rockets fly straight down it', () => {
+  const tgt = { x: TP.side, y: 1.2, z: -25 };
+  const aim = (sim: Sim) => { // the pitch that puts the crosshair on the target's chest
+    let pitch = 0;
+    for (let k = 0; k < 4; k++) { const o = aimFrom(sim.world, 0, 0, 0, 0, pitch, true); pitch = Math.atan2(tgt.y - o[1], o[2] - tgt.z); }
+    return pitch;
+  };
+  for (const [tp, wall, hits] of [[true, false, true], [false, false, false], [true, true, false]] as const) {
+    const sim = new Sim(1, World.custom(wall ? [{ x0: -0.3, y0: 0, z0: -1.6, x1: 0.32, y1: 3, z1: -1.2, ink: 1, kind: 'wall' }] : []));
+    sim.spawn([1, 2]);
+    const a = sim.players.get(1)!, b = sim.players.get(2)!;
+    for (const p of [a, b]) { p.y = 0; p.gliding = false; p.grounded = true; }
+    a.x = 0; a.z = 0; b.x = tgt.x; b.z = tgt.z; b.shield = 0;
+    give(a, 'heavy');
+    const hp = b.hp;
+    sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: aim(sim), fire: true, aim: true, tp })]]));
+    assert.equal(b.hp < hp || !b.alive, hits, `tp ${tp}, wall ${wall}: ${hits ? 'missed' : 'hit'}`);
+  }
+  const sim = new Sim(1, World.custom([]));
+  sim.spawn([1, 2]);
+  const a = sim.players.get(1)!;
+  a.y = 0; a.gliding = false; a.grounded = true; a.x = 0; a.z = 0;
+  sim.players.get(2)!.x = 200;
+  give(a, 'rocket');
+  const pitch = aim(sim);
+  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch, fire: true, tp: true })]]));
+  const r = sim.projectiles.find((g) => g.kind === 'rocket')!, o = aimFrom(sim.world, 0, 0, 0, 0, pitch, true);
+  // on the crosshair ray: perpendicular distance from it ~0
+  const fx = 0, fy = Math.sin(pitch), fz = -Math.cos(pitch), rx = r.x - o[0], ry = r.y - o[1], rz = r.z - o[2], along = rx * fx + ry * fy + rz * fz;
+  assert.ok(Math.hypot(rx - fx * along, ry - fy * along, rz - fz * along) < 1e-6, 'the rocket starts on the crosshair ray');
+  assert.ok(Math.abs(r.vx) < 1e-9, 'and flies straight down it, not off to one side');
 });
 
 test('grenades bounce, blow up, and walls block the blast', () => {

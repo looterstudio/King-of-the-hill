@@ -97,13 +97,24 @@ class Sfx {
     else if (w === 'pistol') { this.burst(2600, 0.9, 0.45 * v, 0.1); this.tone(220, 90, 0.15 * v, 0.07, 'square'); }
     else { this.burst(w === 'scar' ? 1900 : 2200, 0.8, 0.5 * v, 0.12); this.tone(w === 'scar' ? 130 : 160, 70, 0.22 * v, 0.08, 'square'); }
   }
+  // a hit you landed: a crisp tick; a headshot is a bright metallic "dink" you feel in your teeth
   hit(head: boolean) {
     if (!this.ctx || !this.enabled) return;
-    if (head) { this.tone(1700, 1700, 0.35, 0.12, 'sine'); this.tone(2550, 2550, 0.25, 0.18, 'sine', 0.05); }
-    else this.tone(1200, 900, 0.22, 0.06, 'triangle');
+    if (head) {
+      this.burst(7000, 2, 0.28, 0.03, 'highpass');
+      this.tone(2400, 2650, 0.32, 0.09, 'sine'); this.tone(3600, 3900, 0.22, 0.17, 'sine', 0.03); this.tone(1200, 1260, 0.18, 0.22, 'triangle', 0.02);
+    } else { this.burst(5200, 3, 0.13, 0.02, 'highpass'); this.tone(1300, 950, 0.22, 0.05, 'triangle'); }
   }
   hurt() { if (this.ctx && this.enabled) { this.burst(500, 1, 0.4, 0.15); this.tone(180, 90, 0.25, 0.15, 'sawtooth'); } }
-  elim() { if (this.ctx && this.enabled) { this.tone(880, 880, 0.3, 0.1, 'square'); this.tone(1320, 1320, 0.3, 0.16, 'square', 0.09); } }
+  // you eliminated someone: a deep punch, then a rising three-note chime (brighter for a headshot,
+  // a step higher for every kill in a streak)
+  elim(head = false, streak = 1) {
+    if (!this.ctx || !this.enabled) return;
+    this.tone(150, 42, 0.6, 0.3, 'triangle'); this.burst(320, 0.8, 0.55, 0.22);
+    const f = (head ? 1046 : 880) * Math.pow(1.122, Math.min(4, streak - 1));
+    this.tone(f, f, 0.26, 0.12, 'square', 0.06); this.tone(f * 1.5, f * 1.5, 0.26, 0.2, 'square', 0.14); this.tone(f * 2, f * 2.03, 0.18, 0.4, 'sine', 0.22);
+    if (head) this.tone(3300, 3500, 0.14, 0.25, 'sine', 0.02);
+  }
   // a reload you can hear through: the mag (or drum) comes out, goes in, and the gun is racked when
   // it is ready to fire again (the last click lands as the reload ends)
   reload(secs = 1.5) {

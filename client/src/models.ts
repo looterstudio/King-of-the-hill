@@ -183,10 +183,13 @@ export function buildVehicle(ink: InkRenderer, kind: number, seed: number): Vehi
   const root = new THREE.Group(), spin: THREE.Object3D[] = [];
   const dark = ink.material(INK_IDS.GRAPHITE), paper = ink.material(INK_IDS.PAPER), blue = ink.material(INK_IDS.BLUE), orange = ink.material(INK_IDS.ORANGE);
   const paint = ink.material([INK_IDS.RED, INK_IDS.BLUE, INK_IDS.GREEN, INK_IDS.ORANGE, INK_IDS.PINK][seed % 5]);
-  if (kind === 0) { // car: a boxy hatchback with a roll bar (drive-by friendly) and big wheels
+  if (kind === 0) { // car: an open-top buggy with a roll hoop (drive-by friendly: you see who's in it) and big wheels
     root.add(box(2.1, 0.6, 4.2, paint, 0, 0.75, 0), box(1.9, 0.12, 1.2, dark, 0, 1.12, -1.4)); // body, bonnet stripe
-    root.add(box(1.9, 0.5, 1.5, paint, 0, 1.3, 0.55), box(1.8, 0.42, 0.06, paper, 0, 1.32, -0.24)); // cabin, windscreen
-    root.add(box(1.7, 0.08, 0.08, dark, 0, 1.6, 1.25), box(0.3, 0.2, 0.1, ink.material(INK_IDS.RED), 0.75, 0.9, 2.12), box(0.3, 0.2, 0.1, ink.material(INK_IDS.RED), -0.75, 0.9, 2.12));
+    root.add(box(1.8, 0.42, 0.06, paper, 0, 1.32, -0.24), box(1.9, 0.06, 0.1, dark, 0, 1.55, -0.24)); // windscreen and its frame
+    for (const x of [-0.45, 0.5]) root.add(box(0.62, 0.6, 0.12, dark, x, 1.35, 0.72)); // front seat backs
+    root.add(box(1.8, 0.55, 0.12, dark, 0, 1.35, 1.95), new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.03, 5, 12), dark).translateX(-0.45).translateY(1.38).translateZ(-0.02)); // back bench, wheel
+    root.add(box(0.08, 0.62, 0.08, dark, -0.9, 1.36, 1.2), box(0.08, 0.62, 0.08, dark, 0.9, 1.36, 1.2), box(1.88, 0.08, 0.08, dark, 0, 1.68, 1.2)); // roll hoop
+    root.add(box(0.3, 0.2, 0.1, ink.material(INK_IDS.RED), 0.75, 0.9, 2.12), box(0.3, 0.2, 0.1, ink.material(INK_IDS.RED), -0.75, 0.9, 2.12));
     root.add(box(0.36, 0.18, 0.08, orange, 0.7, 0.85, -2.12), box(0.36, 0.18, 0.08, orange, -0.7, 0.85, -2.12)); // headlights
     for (const [x, z] of [[-1.05, -1.35], [1.05, -1.35], [-1.05, 1.35], [1.05, 1.35]]) root.add(wheel(dark, x, z));
   } else if (kind === 1) { // helicopter: bubble cabin, tail boom, skids, main and tail rotors
@@ -219,6 +222,17 @@ export function buildVehicle(ink: InkRenderer, kind: number, seed: number): Vehi
   }
   return { root, spin, kind };
 }
+
+// where riders sit, in the vehicle model's space (facing -z; x right, z back): the driver's hips (null:
+// hidden inside the cockpit or the hull), then each passenger seat in the sim's seat order, and how far
+// forward their legs reach (0 hanging, ~1.5 straight out)
+export const SEATS: { driver: [number, number, number] | null; seats: [number, number, number][]; legs: number }[] = [
+  { driver: [-0.45, 1.14, 0.35], seats: [[0.5, 1.14, 0.35], [-0.5, 1.14, 1.45], [0.5, 1.14, 1.45]], legs: 1.45 },           // car
+  { driver: null, seats: [[1.45, 0.98, 0.8], [-1.45, 0.98, 1.2], [1.45, 0.98, 1.6], [-1.45, 0.98, 2.0]], legs: 1.1 },        // helicopter: on the skids
+  { driver: null, seats: [[0, 1.86, 0.8], [0, 1.86, 1.25], [0, 1.86, 1.7]], legs: 1.3 },                                     // plane: astride the fuselage
+  { driver: [0, 1.2, 0.18], seats: [[0, 1.24, 0.66]], legs: 1.0 },                                                           // motorbike
+  { driver: null, seats: [[0, 2.3, 0.6], [0.6, 2.3, 1.1], [-0.6, 2.3, 1.1]], legs: 1.2 },                                    // tank: up on the turret
+];
 
 // a patch of fire from a molotov: a ring of flame tongues
 export function buildFire(ink: InkRenderer): THREE.Group {
@@ -371,7 +385,8 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   f.speed += ((dt > 0 ? moved / dt : 0) - f.speed) * Math.min(1, dt * 10);
   f.lastX = x; f.lastZ = z;
   f.root.position.set(x, y, z);
-  f.root.rotation.y = yaw;
+  f.root.rotation.set(0, yaw, 0); // (a ride tilts the whole figure with the vehicle)
+  f.legL.rotation.z = 0; f.legR.rotation.z = 0;
   // what is in hand: the pickaxe, the gun, or nothing (gliding, knocked)
   let want: THREE.Group | null = null;
   if (!gliding && !down) {
@@ -382,7 +397,7 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
       want = g;
     }
   }
-  if (want !== f.held) { if (f.held) f.armR.remove(f.held); if (want) f.armR.add(want); f.held = want; }
+  hold(f, want);
   attachIf(f.root, f.chute, gliding);
   attachIf(f.root, f.crown, leader);
   if (leader) f.crown.rotation.y += dt * 1.5;
@@ -403,4 +418,31 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
     f.legL.rotation.x = 1.45 + swing * 0.3; f.legR.rotation.x = 1.45 - swing * 0.3;
     f.armL.rotation.x = 2.4 + swing * 0.5; f.armR.rotation.x = 2.4 - swing * 0.5; f.head.rotation.x = -0.9;
   }
+}
+
+function hold(f: Figure, want: THREE.Group | null) {
+  if (want !== f.held) { if (f.held) f.armR.remove(f.held); if (want) f.armR.add(want); f.held = want; }
+}
+
+// someone riding: sat at a seat (hips at `at`, world space), turned and tilted with the vehicle (q) or,
+// a passenger, facing where they aim. Drivers keep both hands on the bars or the wheel; passengers hold
+// their gun up (they can shoot)
+export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | null, yaw: number, pitch: number, legs: number, drive: boolean, weapon: WeaponId | null, leader: boolean, dt: number) {
+  f.root.position.set(at.x, at.y - 0.78, at.z);
+  if (q) f.root.quaternion.copy(q); else f.root.rotation.set(0, yaw, 0);
+  let want: THREE.Group | null = null;
+  if (!drive && weapon) {
+    want = f.guns.get(weapon) ?? null;
+    if (!want) { want = intern(buildGun(weapon, f.gunMats)); want.scale.setScalar(1.15); want.position.set(0.02, -0.06, -0.48); f.guns.set(weapon, want); }
+  }
+  hold(f, want);
+  attachIf(f.root, f.chute, false);
+  attachIf(f.root, f.crown, leader);
+  if (leader) f.crown.rotation.y += dt * 1.5;
+  f.speed = 0; f.lastX = at.x; f.lastZ = at.z;
+  f.legL.rotation.set(legs, 0, 0.1); f.legR.rotation.set(legs, 0, -0.1);
+  f.torso.position.y = 0.78; f.torso.rotation.x = drive ? -0.22 : 0;
+  const arm = drive ? -0.45 : pitch;
+  f.armL.rotation.x = arm; f.armR.rotation.x = arm;
+  f.head.rotation.x = drive ? 0.2 : pitch * 0.6;
 }

@@ -64,6 +64,7 @@ export interface SnapSelf extends Body {
 export type SnapOther = number[];
 export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64, OTHER_AXE = 128;
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
+// [id, kind, x, y, z, heading, pitch, hp %, driver id (0: none), passengers, ...passenger ids by seat]
 export type SnapVehicle = number[];
 // loot on the floor near you: [id, x, y, z, kind (0 weapon, 1 item, 2 perk), what, n]
 export type SnapLoot = [number, number, number, number, number, string, number];
@@ -95,7 +96,7 @@ export type ServerMsg =
   | { t: 'event'; kind: 'vhit'; vehicle: number; by: number; dmg: number }
   | { t: 'event'; kind: 'knock'; victim: number; by: number | null; head: boolean }
   | { t: 'event'; kind: 'wreck'; add: Box[]; kill: number[]; falls: { sid: number; x: number; y: number; z: number }[]; drop?: number[] }
-  | { t: 'event'; kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean }
+  | { t: 'event'; kind: 'chop'; by: number; x: number; y: number; z: number; broke: boolean; left?: number; b?: number[] }
   | { t: 'event'; kind: 'revive'; victim: number; by: number }
   | { t: 'event'; kind: 'drop'; x: number; z: number; landed: boolean }
   | { t: 'event'; kind: 'upgrade'; by: number; level: number }

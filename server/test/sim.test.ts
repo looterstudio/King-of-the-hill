@@ -1,7 +1,7 @@
 // Bugs the simulation used to have, each pinned by the smallest case that showed it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
+import { Sim, emptyInput, moveStep, type Input } from '../../shared/src/sim.ts';
 import { World, newBody, type Box } from '../../shared/src/world.ts';
 import { moveVehicle } from '../../shared/src/vehicles.ts';
 import { GRAVITY, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, VEHICLES } from '../../shared/src/constants.ts';
@@ -263,4 +263,39 @@ test('a plane into The Needle cuts it at the impact: the top falls, the base sta
   assert.ok(!live.some((b) => b.y0 > 130), 'nothing of it is left above the impact');
   assert.ok(live.filter((b) => b.y1 < 100).length > 1500, 'the base still stands');
   assert.ok(worst < 150, `worst tick ${worst.toFixed(1)} ms`); // ~10 ms warm, ~35 ms in a cold process
+});
+
+// ---------- mantling ----------
+// run at an obstacle (north, -z) and jump: where do you end up after 2 s?
+function vault(boxes: Box[], jumpAt = 6) {
+  const w = World.custom(boxes);
+  const p = Object.assign(newBody(0, 0, 0), { grounded: true });
+  for (let t = 0; t < TICK_HZ * 2; t++) moveStep(w, p, inp({ fwd: 1, sprint: true, jump: t === jumpAt, seq: t + 1 }), DT);
+  return p;
+}
+test('a crate you jump at, you vault onto; a wall you can reach the top of, you climb', () => {
+  const crate = vault([{ x0: -1, y0: 0, z0: -3, x1: 1, y1: 1.2, z1: -1.6, ink: 6, kind: 'crate' }], 2);
+  assert.ok(crate.y > 1.1 || crate.z < -1.6, `crate: still in front of it (y ${crate.y.toFixed(2)} z ${crate.z.toFixed(2)})`);
+  const ledge = vault([{ x0: -4, y0: 0, z0: -40, x1: 4, y1: 2.1, z1: -2.5, ink: 1, kind: 'wall' }]);
+  assert.ok(Math.abs(ledge.y - 2.1) < 0.05 && ledge.z < -2.6, `2.1 m ledge: not on top (y ${ledge.y.toFixed(2)} z ${ledge.z.toFixed(2)})`);
+  const tall = vault([{ x0: -4, y0: 0, z0: -40, x1: 4, y1: 3.6, z1: -2.5, ink: 1, kind: 'wall' }]);
+  assert.ok(tall.y < 0.05 && tall.z > -2.5, `a 3.6 m wall was climbed (y ${tall.y.toFixed(2)})`);
+});
+test('jump at a window and you go through it and out the other side (if you fit, tucked)', () => {
+  const z0 = -3, z1 = -2.7; // a 30 cm wall with a 1.6 m wide opening from 0.9 m to 3 m
+  const p = vault([
+    { x0: -5, y0: 0, z0, x1: -0.8, y1: 4, z1, ink: 1, kind: 'wall' }, { x0: 0.8, y0: 0, z0, x1: 5, y1: 4, z1, ink: 1, kind: 'wall' },
+    { x0: -0.8, y0: 0, z0, x1: 0.8, y1: 0.9, z1, ink: 1, kind: 'wall' }, { x0: -0.8, y0: 3, z0, x1: 0.8, y1: 4, z1, ink: 1, kind: 'wall' },
+  ]);
+  assert.ok(p.z < z0 - 0.3, `still on this side (z ${p.z.toFixed(2)})`);
+  const small = vault([ // the same wall with a window too small for you
+    { x0: -5, y0: 0, z0, x1: -0.8, y1: 4, z1, ink: 1, kind: 'wall' }, { x0: 0.8, y0: 0, z0, x1: 5, y1: 4, z1, ink: 1, kind: 'wall' },
+    { x0: -0.8, y0: 0, z0, x1: 0.8, y1: 0.9, z1, ink: 1, kind: 'wall' }, { x0: -0.8, y0: 1.7, z0, x1: 0.8, y1: 4, z1, ink: 1, kind: 'wall' },
+  ]);
+  assert.ok(small.z > z1, `squeezed through an 80 cm window (z ${small.z.toFixed(2)})`);
+  const house = vault([ // a house window (1.4 x 1.2 m, sill at 1.1 m): you dive through it tucked
+    { x0: -5, y0: 0, z0, x1: -0.7, y1: 4, z1, ink: 1, kind: 'wall' }, { x0: 0.7, y0: 0, z0, x1: 5, y1: 4, z1, ink: 1, kind: 'wall' },
+    { x0: -0.7, y0: 0, z0, x1: 0.7, y1: 1.1, z1, ink: 1, kind: 'wall' }, { x0: -0.7, y0: 2.3, z0, x1: 0.7, y1: 4, z1, ink: 1, kind: 'wall' },
+  ]);
+  assert.ok(house.z < z0 - 0.3, `house window: still outside (z ${house.z.toFixed(2)})`);
 });

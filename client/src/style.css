@@ -164,7 +164,7 @@ button, input { font: inherit; color: inherit; }
 
 /* ---------- HUD (ink over the drawing) ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; color: var(--ink); }
-#hud > *:not(.tags):not(.hitmarker):not(.flash) { mix-blend-mode: multiply; }
+#hud > *:not(.tags):not(.hitmarker):not(.flash):not(.elim-pop) { mix-blend-mode: multiply; }
 .tags { position: absolute; inset: 0; overflow: hidden; }
 .poi { position: absolute; left: 0; top: 0; display: none; font-family: var(--f-note); font-weight: 700; font-size: 26px; color: var(--ink); white-space: nowrap; text-shadow: 0 0 4px var(--paper), 0 0 8px var(--paper); pointer-events: none; }
 .tag { position: absolute; left: 0; top: 0; font-weight: 800; font-size: 13px; color: var(--red); background: rgba(246,242,228,.85); border: 1.5px solid var(--red); border-radius: var(--wobble-2); padding: 0 5px; display: none; white-space: nowrap; }
@@ -186,11 +186,34 @@ button, input { font: inherit; color: inherit; }
 .board div.me { background: rgba(47, 127, 214, .14); outline: 1.5px solid #2f7fd6; }
 .board div.out span { text-decoration: line-through; opacity: .6; }
 .crown { color: #e8a317; font-size: 20px; }
-.dmgnum { position: absolute; transform: translate(-50%, -50%); font-weight: 800; font-size: 26px; color: #fff; -webkit-text-stroke: 1.5px var(--graphite); paint-order: stroke; text-shadow: 2px 2px 0 var(--graphite); pointer-events: none; animation: dmgUp .9s ease-out forwards; }
-.dmgnum.head { color: #ffd23f; font-size: 32px; }
+.dmgnum { position: absolute; transform: translate(-50%, -50%); font-weight: 800; font-size: 26px; color: #fff; -webkit-text-stroke: 1.5px var(--graphite); paint-order: stroke; text-shadow: 2px 2px 0 var(--graphite); pointer-events: none; animation: dmgUp .95s cubic-bezier(.2, .8, .3, 1) forwards; }
+.dmgnum.head { color: #ffd23f; font-size: 36px; text-shadow: 2px 2px 0 var(--graphite), 0 0 14px rgba(255, 196, 0, .8); animation-name: dmgHead; animation-duration: 1.1s; }
+.dmgnum.head::after { content: '✦'; position: absolute; right: -.7em; top: -.35em; font-size: .55em; color: #fff; }
 .dmgnum.shield { color: #8fd0ff; }
-.dmgnum.big { font-size: 40px; }
-@keyframes dmgUp { 0% { opacity: 0; transform: translate(-50%, -20%) scale(1.6); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -160%) scale(.9); } }
+.dmgnum.big { font-size: 42px; }
+.dmgnum.head.big { font-size: 50px; }
+/* numbers spring out and arc off to one side (--dx), headshots bigger, tilted, and with a bounce */
+@keyframes dmgUp { 0% { opacity: 0; transform: translate(-50%, -20%) scale(1.8); } 12% { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px) * .3), -70%) scale(1.04); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -200%) scale(.85); } }
+@keyframes dmgHead { 0% { opacity: 0; transform: translate(-50%, -20%) scale(2.6) rotate(-10deg); } 12% { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px) * .25), -75%) scale(1.18) rotate(5deg); } 24% { transform: translate(calc(-50% + var(--dx, 0px) * .4), -95%) scale(1) rotate(0); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -230%) scale(.9); } }
+/* an elimination: a big pop in the middle of the screen, the name, and the streak */
+.elim-pop { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; opacity: 0; white-space: nowrap; }
+.elim-pop.show { animation: elimPop 2s cubic-bezier(.2, .9, .3, 1.2) forwards; }
+.elim-pop .ep-icon { font-size: 34px; line-height: 1; filter: drop-shadow(2px 2px 0 var(--graphite)); }
+.elim-pop .ep-title { font-weight: 900; font-size: clamp(30px, 5vw, 48px); letter-spacing: .06em; line-height: 1.05; color: #fff; -webkit-text-stroke: 2px var(--graphite); paint-order: stroke; text-shadow: 3px 3px 0 var(--red); }
+.elim-pop.head .ep-title { color: #ffd23f; text-shadow: 3px 3px 0 var(--graphite), 0 0 22px rgba(255, 196, 0, .75); }
+.elim-pop .ep-name { font-family: var(--f-hand); font-weight: 700; font-size: 22px; color: var(--ink); text-shadow: 0 0 6px var(--paper), 0 0 6px var(--paper); }
+.elim-pop .ep-streak { display: inline-block; margin-top: 4px; padding: 2px 12px; font-weight: 900; font-size: 22px; letter-spacing: .08em; color: #fff; background: var(--red); border: 2.5px solid var(--graphite); border-radius: var(--wobble); transform: rotate(-3deg); }
+@keyframes elimPop { 0% { opacity: 0; transform: translate(-50%, -50%) scale(2.3); } 9% { opacity: 1; transform: translate(-50%, -50%) scale(.9); } 16% { transform: translate(-50%, -50%) scale(1.05); } 24% { transform: translate(-50%, -50%) scale(1); } 82% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -64%) scale(.96); } }
+.kills b.pop { display: inline-block; animation: killPop .55s cubic-bezier(.2, .9, .3, 1.3); }
+@keyframes killPop { 0% { transform: scale(2.4); color: var(--red); } 100% { transform: scale(1); } }
+.crosshair.kick i { animation: chKick .28s ease-out; }
+/* the pickaxe on a block: one pip per hit it takes, filled for the hits left; rock says it can't break */
+.block-hits { position: absolute; left: 50%; top: calc(50% + 34px); transform: translateX(-50%); display: grid; justify-items: center; gap: 2px; pointer-events: none; font-size: 13px; font-weight: 700; color: var(--ink); }
+.block-hits .pips { display: flex; gap: 3px; }
+.block-hits .pips i { width: 12px; height: 7px; border: 2px solid var(--graphite); border-radius: 2px; background: rgba(246, 242, 228, .7); }
+.block-hits .pips i.on { background: var(--red); }
+.block-hits .no { color: #6b7080; font-size: 14px; }
+@keyframes chKick { 0% { transform: scale(1.9); background: #ffd23f; } 100% { transform: scale(1); } }
 .hud-tc { position: absolute; left: 0; right: 0; top: max(16px, 3vh); text-align: center; }
 .storm { display: inline-block; font-weight: 800; font-size: 17px; color: var(--red); padding: 4px 14px; border: 2.5px solid var(--red); border-radius: var(--wobble); background: rgba(246,242,228,.6); }
 .storm.calm { color: var(--ink); border-color: var(--ink); }

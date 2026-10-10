@@ -1,6 +1,6 @@
 # King of the Hill Royale
 
-A first-person battle royale drawn in ballpoint on graph paper, for up to 100 players per match.
+A battle royale drawn in ballpoint on graph paper, for up to 100 players per match: third person over the shoulder (or first person, P), with every wall breakable.
 Glide in, loot guns, shields and perks off the floor and out of pencil cases, and fight your way to
 the King's Tower in the middle of the island: the final circle always closes on it. Ten guns from
 common to legendary (the SCAR and a one-shot Heavy Sniper are the prizes), shields and medkits, and
