@@ -2,6 +2,7 @@
 name = "pot_vault"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.79" # the Solana platform tools' rustc: the lockfile must resolve to crates that build with it
 description = "Pot Royale prize vault: holds token fees, pays epoch winners against a merkle root"
 
 [lib]

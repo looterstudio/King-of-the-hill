@@ -122,7 +122,7 @@ export class Game3D {
   private drop(o: THREE.Object3D) { o.parent?.remove(o); disposeTree(o); }
 
   // ---------------- world ----------------
-  setRoom(seed: number, seats: RoomSeat[], you: number) {
+  setRoom(seed: number, seats: RoomSeat[], you: number, fresh?: World) {
     this.you = you;
     this.seats = new Map(seats.map((s) => [s.id, s]));
     const team = this.seats.get(you)?.team ?? 0;
@@ -142,7 +142,9 @@ export class Game3D {
     this.falling = []; this.debris = []; this.corpses = []; this.deathCam = null; this.shardCache = null;
     for (const m of this.vmodels.values()) this.drop(m.root);
     this.vmodels.clear(); this.drops = []; this.vehiclesNow = [];
-    this.buildWorld(new World(seed)); // always fresh: forts from the last match must not linger
+    // always a fresh world (forts from the last match must not linger): the waiting room's map preview
+    // hands over the one it just generated for this seed, which nothing has touched
+    this.buildWorld(fresh?.seed === seed ? fresh : new World(seed));
   }
 
   private buildWorld(w: World) {

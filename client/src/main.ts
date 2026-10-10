@@ -403,8 +403,10 @@ function drawPreview(seed: number) {
   state.previewSeed = seed;
   const c = $<HTMLCanvasElement>('mapPreview'), ctx = c.getContext('2d')!;
   ctx.clearRect(0, 0, c.width, c.height);
-  drawIsland(ctx, new World(seed), c.width, true);
+  preWorld = new World(seed);
+  drawIsland(ctx, preWorld, c.width, true);
 }
+let preWorld: World | null = null; // generated for the preview, reused at the drop (it costs 100-300 ms)
 
 // ---------- minimap ----------
 const mini = $<HTMLCanvasElement>('minimap').getContext('2d')!;
@@ -514,7 +516,7 @@ net.on((m: ServerMsg) => {
       if (m.state === 'live') {
         state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set(); howtoDone = false;
         tipsSeen = new Set(); training.reset(); Object.assign(learn, { look: 0, walk: 0, sprint: 0, glided: false, mats: 0, combat: 0 });
-        game.setRoom(m.seed, m.seats, m.you);
+        game.setRoom(m.seed, m.seats, m.you, preWorld ?? undefined); preWorld = null;
         $('feed').innerHTML = '';
         // squad voice with your teammates (online matches; the demo's teammates are bots)
         if (!DEMO && m.mode !== 'solo') { voice.start(m.you, [...game.mates], (to, data) => net.send({ t: 'rtc', to, data })); setTimeout(() => hint('hold V to talk to your squad · U mutes them', 3500), 4000); }
