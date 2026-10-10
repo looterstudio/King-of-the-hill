@@ -48,7 +48,7 @@ export function renderArsenal(el: HTMLElement) {
     return card(picture(renderer, buildGun(id, gm), -Math.PI / 2 + 0.25), d.name, RARITY_CSS[d.rarity], d.rarity,
       d.melee ? `${d.dmg} a slash · ${rps.toFixed(1)}/s · no ammo · cuts everyone in front of you, and walls`
         : d.proj === 'spell' ? `${d.dmg} dmg + throws them back · ${rps.toFixed(1)}/s · ${d.mag} charges`
-        : `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : d.proj === 'guided' ? ' · steer it with your crosshair' : ''}${id === 'heavy' ? ' · headshot kills' : ''}`);
+        : `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : d.proj === 'guided' ? ' · steer it with your crosshair' : ''}${id === 'heavy' ? ' · headshot kills' : id === 'pump' ? ' · two blasts up close' : ''}`);
   });
   guns.push(card(picture(renderer, buildPickaxe(mats[6], mats[8]), -Math.PI / 2 + 0.25), 'Diamond Pickaxe', '#0fa3c4', 'always yours', 'X · left click breaks walls, cars, people (gives ▦) · right click builds a block'));
   const perks = (Object.keys(PERKS) as PerkId[]).map((k) => card(picture(renderer, buildItem(k, fakeInk), 0.6, 0.5), PERKS[k].name, RARITY_CSS[PERKS[k].rarity], `×${PERKS[k].count}`, PERK_TEXT[k]));

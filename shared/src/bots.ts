@@ -1,7 +1,7 @@
 // The offline demo's bots: a pure function of the bot's memory and the simulation (no DOM), so the
 // same brain runs in the browser and in headless tests (server/test/bots.test.ts); the server fills its rooms with them too.
-import { EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
-import { emptyInput, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
+import { EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, PLAYER_HP, SHIELD_MAX, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
+import { emptyInput, pelletFall, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
 import { rayBox, type World } from './world.ts';
 
 const DT = 1 / TICK_HZ;
@@ -267,7 +267,7 @@ function gunValue(w: WeaponId, ups: number, mag: number | null, d: number, skill
   const scoped = w === 'heavy' || w === 'hunting', aim = d > 30;
   const spread = def.spread * (aim ? (scoped ? 0.02 : 0.5) : 1) * 1.3 + (1 - skill) * 0.03;
   const hit = def.proj ? 0.55 : Math.min(1, 0.4 / Math.max(0.01, d * spread));
-  const fall = def.pellets > 1 ? clamp(1.2 - d / def.range, 0.35, 1) : 1;
+  const fall = def.pellets > 1 ? pelletFall(d, def.range) : 1;
   const burst = def.burst ?? 1, shot = def.dmg * (1 + UPGRADE.perLevel * ups) * def.pellets * hit * fall * burst;
   const cycle = def.burst ? def.cd + 0.15 : def.cd, m = def.mag / burst;
   const sustained = (shot * m) / (m * cycle + def.reload);
@@ -402,7 +402,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   }
 
   // ---- hurt, and the fight isn't going our way: break off, get out of sight, heal ----
-  if (!goal && !moved && fighting && tgt && life < 140 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && tgt.hp + tgt.shield > life) {
+  if (!goal && !moved && fighting && tgt && life < (PLAYER_HP + SHIELD_MAX) * 0.28 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && tgt.hp + tgt.shield > life) {
     b.mode = 'retreat';
     if (!b.away || t > b.away.until) { const ux = (self.x - tgt.x) / (td || 1), uz = (self.z - tgt.z) / (td || 1); b.away = { x: self.x + ux * 25, z: self.z + uz * 25, until: t + 2.5 }; }
     goal = { x: b.away.x, z: b.away.z, y: b.groundY, sprint: true };
@@ -417,8 +417,8 @@ export function botInput(b: Bot, sim: Sim): Input {
 
   // ---- healing: only out of sight, out of the storm and not under fire (damage cancels it) ----
   if (!moved && !goal && !self.use && !inStorm && !alert && self.reloadT === 0 && !(rotate && waitLeft < 4)) {
-    if (self.shield < 200 && (self.items.big > 0 || (self.items.mini > 0 && self.shield < (ITEMS.mini.shieldCap ?? 125)))) inp.item = 1;
-    else if (self.hp < 190 && self.items.med > 0) inp.item = 2;
+    if (self.shield < SHIELD_MAX * 0.8 && (self.items.big > 0 || (self.items.mini > 0 && self.shield < (ITEMS.mini.shieldCap ?? 50)))) inp.item = 1;
+    else if (self.hp < PLAYER_HP * 0.76 && self.items.med > 0) inp.item = 2;
   }
 
   // ---- far from the circle (where the storm will send us): a car, before setting off on foot ----
@@ -632,7 +632,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
     const k = self.perk.kind;
     if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && R() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
     if (k === 'kit' && cur && self.ups[self.cur] < UPGRADE.max) inp.perk = true;
-    if (k === 'smoke' && self.hp < 110 && R() < 0.08) inp.perk = true;
+    if (k === 'smoke' && self.hp < PLAYER_HP * 0.44 && R() < 0.08) inp.perk = true;
     if (k === 'nuke' && d > 40 && R() < 0.05) inp.perk = true;
   }
 }

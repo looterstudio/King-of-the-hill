@@ -67,7 +67,7 @@ export const GUIDE: Card[] = [
   { art: hand, title: 'Loot, vehicles, revive', tab: 'loot', keys: '<kbd>E</kbd>', tone: 'orange', text: 'Open pencil cases, pick up or swap guns, get in and out of cars, helis and planes. Hold E by a knocked teammate to pick them up.' },
   { art: bomb, title: 'Perks', tab: 'loot', keys: '<kbd>G</kbd>', tone: 'red', text: 'Grenades, C4, molotovs, launch pads, instant forts, the atomic bomb.' },
   { art: glide, title: 'Glide in', tab: 'basics', keys: '<kbd>Mouse</kbd>', tone: 'teal', text: 'Everyone drops from the sky. Look down to dive fast, up to float far. Land anywhere.' },
-  { art: storm, title: 'The storm', tab: 'basics', keys: 'minimap', tone: 'red', text: 'Stay inside the circle. The dashed ring is the next one; the last always closes on the King\'s Tower.' },
+  { art: storm, title: 'The storm', tab: 'basics', keys: 'minimap', tone: 'red', text: 'Stay inside the circle. It starts closing 30 s in and keeps coming, faster as players drop out. The dashed ring is the next one; the last always closes on the King\'s Tower.' },
   // vehicles
   { tab: 'vehicles', art: car, title: 'Cars', keys: '<kbd>E</kbd> in/out · <kbd>W</kbd><kbd>S</kbd> gas, brake · <kbd>A</kbd><kbd>D</kbd> steer', tone: 'red', text: 'Shift boosts, Space hops. Run people over. Teammates ride along and shoot out of the windows.' },
   { tab: 'vehicles', art: moto, title: 'Motorbikes', keys: 'same keys as a car', tone: 'orange', text: 'The fastest thing on wheels, with a friend on the back. You can see yourself riding it.' },
@@ -79,7 +79,7 @@ export const GUIDE: Card[] = [
   { tab: 'loot', art: star, title: 'Rarity and golden cases', keys: 'grey → green → blue → purple → gold', tone: 'orange', text: 'Golden pencil cases (★ on the map) hold the legendaries: the SCAR, the Heavy Sniper. A Heavy Sniper headshot drops anyone.' },
   { tab: 'loot', art: crate, title: 'Supply drops', keys: 'a balloon in every new circle', tone: 'red', text: 'A crate falls into each new circle: a guaranteed legendary, C4 or a nuke, full shields. Everyone sees it coming.' },
   { tab: 'loot', art: bench, title: 'Upgrades', keys: '<kbd>E</kbd> at a bench · kit perk', tone: 'teal', text: 'Upgrade benches and kits add stars to the gun in your hand: up to +66% damage.' },
-  { tab: 'loot', art: potion, title: '250 health + 250 shield', keys: 'shields first', tone: 'blue', text: 'Fights last: shields soak bullets before your health. The storm hits health directly.' },
+  { tab: 'loot', art: potion, title: '100 health + 100 shield', keys: 'shields first', tone: 'blue', text: 'Fights are fast: a pump shotgun up close is two blasts. Shields soak bullets before your health; the storm hits health directly.' },
   { tab: 'loot', art: tower, title: 'The Needle', keys: 'the blue updraft in its core', tone: 'diamond', text: 'Step into the updraft to fly up 80 floors of loot. Jump out of any window and your glider opens.' },
   // squads
   { tab: 'squad', art: knock, title: 'Knocked, not out', keys: 'hold <kbd>E</kbd> 5 s by a teammate', tone: 'pink', text: 'In duos and squads you go down first: crawl to cover. A teammate holding E next to you picks you up; 30 s to bleed out.' },

@@ -7,7 +7,7 @@ import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { Sim, TP, aimFrom, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
-import { EPOCH_MS, KNOCK, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
+import { EPOCH_MS, KNOCK, PLAYER_HP, RING_PHASES, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 const SLOTS_AXE = SLOTS + 1;
 import { computePayouts } from '../src/payout.ts';
 import { buildTree, leafHash, verify } from '../src/merkle.ts';
@@ -115,6 +115,21 @@ test('the storm eventually kills anyone outside it', () => {
   assert.equal(p.alive, false);
 });
 
+// the storm keeps its pace while the field is full, and hurries once most teams are out: with 2 of 20
+// left it reaches the last circles in well under the time it takes with everyone still in
+test('the storm hurries as the field thins out', () => {
+  const lastCircle = (left: number) => {
+    const sim = arena(Array.from({ length: 20 }, (_, i) => i + 1));
+    for (let id = left + 1; id <= 20; id++) sim.players.get(id)!.alive = false;
+    while (sim.ring.phase < RING_PHASES.length - 2 && sim.t < 600) { for (const p of sim.players.values()) p.hp = PLAYER_HP; sim.step(DT, new Map()); } // nobody dies of the storm here
+    return sim.t;
+  };
+  const full = lastCircle(20), few = lastCircle(2);
+  const plan = RING_PHASES.slice(0, -2).reduce((s, p) => s + p.wait + p.shrink, 0);
+  assert.ok(Math.abs(full - plan) < 0.5, `a full field keeps the schedule (${full.toFixed(1)} s, planned ${plan} s)`);
+  assert.ok(few < full * 0.4, `2 of 20 left: ${few.toFixed(1)} s against ${full.toFixed(1)} s`);
+});
+
 test('each storm circle sits inside the previous one', () => {
   for (let seed = 1; seed < 20; seed++) {
     const sim = new Sim(seed, World.custom([]));
@@ -175,11 +190,11 @@ test('shields soak bullets first; the storm goes straight to health', () => {
 test('a shield potion takes 3 s and caps at full; damage interrupts it', () => {
   const sim = arena([1]);
   const p = sim.players.get(1)!;
-  p.items.big = 2; p.shield = 200;
+  p.items.big = 2; p.shield = SHIELD_MAX - 50;
   sim.step(DT, new Map([[1, inp({ item: 1 })]]));
   assert.equal(p.use?.item, 'big');
   for (let i = 0; i < TICK_HZ * 2; i++) sim.step(DT, new Map());
-  assert.equal(p.shield, 200, 'not done yet');
+  assert.equal(p.shield, SHIELD_MAX - 50, 'not done yet');
   for (let i = 0; i < TICK_HZ * 1.2; i++) sim.step(DT, new Map());
   assert.equal(p.shield, SHIELD_MAX);
   assert.equal(p.items.big, 1);
@@ -197,6 +212,31 @@ test('burst rifle fires three; minigun has to spin up', () => {
   assert.equal(sim.shots.length, 0, 'still spinning');
   for (let i = 0; i < TICK_HZ; i++) sim.step(DT, new Map([[1, inp({ fire: true })]]));
   assert.ok(sim.shots.length > 5);
+});
+
+// 100 health + 100 shield: a pump shotgun up close is two shots on a full-shield player (one on a fresh
+// one), an assault rifle about a dozen hits
+test('time to kill: a pump shotgun up close kills in two, an assault rifle in about a dozen hits', () => {
+  for (const [w, d, hits] of [['pump', 4, 2], ['pump', 7, 2], ['ar', 15, 12]] as const) {
+    const sim = arena([1, 2]);
+    const a = sim.players.get(1)!, b = sim.players.get(2)!;
+    a.x = 0; a.z = 0; b.x = 0; b.z = -d; b.shield = SHIELD_MAX;
+    give(a, w);
+    let shots = 0;
+    for (let i = 0; i < TICK_HZ * 5 && b.alive; i++) {
+      const before = sim.shots.length;
+      sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: Math.atan2(1.1 - 1.62, d), fire: true, seq: i + 1, view: sim.tick + 1 })]]));
+      if (sim.shots.length > before) shots++;
+    }
+    assert.equal(b.alive, false, `${w} at ${d} m: still standing after ${shots} shots`);
+    assert.ok(shots <= hits, `${w} at ${d} m took ${shots} shots`);
+  }
+  const sim = arena([1, 2]); // no shield: one pump blast to the chest is the end
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -3;
+  give(a, 'pump');
+  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: Math.atan2(1.1 - 1.62, 3), fire: true, seq: 1, view: sim.tick + 1 })]]));
+  assert.equal(b.alive, false, `one blast left ${b.hp} health`);
 });
 
 test('a heavy sniper headshot one-shots full shield and health; a body shot does not', () => {
