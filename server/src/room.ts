@@ -61,6 +61,7 @@ export class Client {
 
 export interface RoomHooks {
   onScore(room: Room, c: Client, points: number): { awarded: boolean; epoch: number };
+  onResult?(room: Room, c: Client, place: number, kills: number): void; // every wallet's match, for its profile
   onFlag?(room: Room, c: Client | null, f: Flag): void;
   minVerifiedForTicket: number;
 }
@@ -172,6 +173,7 @@ export class Room {
       const [place, kills] = places[c.id] ?? [0, 0];
       const pts = matchPoints(this.mode, place, kills, winnerIds.includes(c.id), this.teamsAtStart);
       points[c.id] = pts;
+      if (c.wallet && !this.flagged.has(c.id)) this.hooks.onResult?.(this, c, place, kills);
       if (!counts || !pts || !c.wallet || this.flagged.has(c.id)) continue;
       const r = this.hooks.onScore(this, c, pts);
       if (r.awarded) res = r;

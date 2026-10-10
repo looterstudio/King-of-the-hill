@@ -158,6 +158,15 @@ export class Epochs extends EventEmitter {
   commitFor(epoch: number) { return createHash('sha256').update(this.secretFor(epoch)).digest('hex'); }
   get endsAt() { return epochEnd(this.current); }
 
+  // where a wallet stands this hour: its points and its place (1 takes the pot)
+  standing(wallet: string): { points: number; rank: number | null } {
+    const m = this.tallies.get(this.scoringEpoch()) ?? new Map<string, Tally>(), mine = m.get(wallet)?.wins ?? 0;
+    if (!mine) return { points: 0, rank: null };
+    let rank = 1;
+    for (const t of m.values()) if (t.wins > mine) rank++;
+    return { points: mine, rank };
+  }
+
   leaderboard(limit = 10) {
     const m = this.tallies.get(this.current) ?? new Map<string, Tally>();
     // voided wallets stay listed until the settlement: dropping them live told everyone when a hidden snapshot ran

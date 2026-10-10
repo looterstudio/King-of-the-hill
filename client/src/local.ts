@@ -9,6 +9,7 @@ import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
 import { botInput, newBot, teamDrops, type Bot } from './bots.ts';
+import { TOKEN } from '../../shared/src/token.ts';
 
 type Handler = (m: ServerMsg) => void;
 const NAMES = ['degen.sol', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl'];
@@ -24,6 +25,8 @@ export class LocalNet {
   private teamPlace = new Map<number, number>();
   private me: RoomSeat | null = null;
   private myWallet = fakeWallet();
+  private phantom = false; // signed in with a real Phantom wallet (the demo can't read its balance: no token yet)
+  private record = { matches: 0, wins: 0, kills: 0, best: 0, prizes: 0, prizeLamports: 0n };
   private mine = new InputQueue(emptyInput(), TICK_HZ);
   room: { id: string; seed: number; mode: Mode; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
   private free: { x: number; z: number } | null = null;
@@ -72,6 +75,15 @@ export class LocalNet {
     setTimeout(fee, 900);
   }
 
+  // the signed-in wallet's card: this session's record (the demo has no token to read a balance from)
+  private emitProfile() {
+    if (!this.phantom) return;
+    const mine = this.tickets.get(this.myWallet)?.wins ?? 0, rank = mine ? 1 + [...this.tickets.values()].filter((t) => t.wins > mine).length : null;
+    this.emit({ t: 'profile', profile: { wallet: this.myWallet, symbol: TOKEN.symbol, balance: null, need: null, holdMinUsd: TOKEN.holdMinUsd, qualified: false,
+      why: TOKEN.mint ? 'the demo can\'t read balances: the live game checks you hold the token all hour' : `$${TOKEN.symbol} isn't live yet: once it is, hold $${TOKEN.holdMinUsd} of it all hour to qualify`,
+      points: mine, rank, ...this.record, prizeLamports: this.record.prizeLamports.toString() } });
+  }
+
   // the top of the hour: the demo pays its leader the pot (less the 10% rollover) and starts over,
   // like the server does at every boundary
   private potEpoch = epochOf(Date.now());
@@ -80,14 +92,16 @@ export class LocalNet {
     const pot = this.lamports, paid = top ? (pot * 9000n) / 10_000n : 0n;
     this.emit({ t: 'settled', settled: { epoch: this.potEpoch, potLamports: pot.toString(), rollover: (pot - paid).toString(), merkleRoot: 'demo', reveal: '',
       winners: top ? [{ wallet: top[0], name: top[1].name, lamports: paid.toString() }] : [] } });
+    if (top && top[0] === this.myWallet) { this.record.prizes++; this.record.prizeLamports += paid; }
     this.lamports = pot - paid; this.tickets.clear(); this.potEpoch = epoch;
+    this.emitProfile();
   }
 
   private emitPot() {
     const epoch = epochOf(Date.now());
     if (epoch !== this.potEpoch) this.settleHour(epoch);
     const top = [...this.tickets.entries()].map(([wallet, t]) => ({ wallet, name: t.name, wins: t.wins })).sort((a, b) => b.wins - a.wins).slice(0, 8);
-    this.emit({ t: 'pot', pot: { epoch, epochEndMs: epochEnd(epoch), lamports: this.lamports.toString(), rolloverLamports: '0', commit: '', online: 1287 + Math.floor(Math.random() * 40), rooms: 31 + Math.floor(Math.random() * 4), tickets: top, closeFrom: epochEnd(epoch) - 10 * 60_000, holdTokens: 50_000, symbol: 'KING', solUsd: 150 } });
+    this.emit({ t: 'pot', pot: { epoch, epochEndMs: epochEnd(epoch), lamports: this.lamports.toString(), rolloverLamports: '0', commit: '', online: 1287 + Math.floor(Math.random() * 40), rooms: 31 + Math.floor(Math.random() * 4), tickets: top, closeFrom: epochEnd(epoch) - 10 * 60_000, holdTokens: TOKEN.holdTokens, symbol: TOKEN.symbol, mint: TOKEN.mint, holdMinUsd: TOKEN.holdMinUsd, solUsd: 150 } });
   }
 
   send(m: ClientMsg) {
@@ -98,6 +112,17 @@ export class LocalNet {
         this.emit({ t: 'authed', name, wallet: this.myWallet, num: this.me.num });
         break;
       }
+      case 'auth': { // a real Phantom wallet: its profile shows; the live server is what checks the signature and the balance
+        const wallet = String(m.wallet).slice(0, 44), name = `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
+        const old = this.myWallet, prev = this.tickets.get(old); // points scored as a guest move to the wallet
+        this.myWallet = wallet; this.phantom = true;
+        if (prev) { this.tickets.delete(old); this.tickets.set(wallet, { ...prev, name }); }
+        this.me = { id: 1, num: playerNumber(Math.floor(Math.random() * 456)), name, verified: true, team: 0 };
+        this.emit({ t: 'authed', name, wallet, num: this.me.num, eligible: TOKEN.mint ? null : `$${TOKEN.symbol} isn't live yet` });
+        this.emitProfile();
+        break;
+      }
+      case 'me': this.emitProfile(); break;
       case 'queue': {
         if (!this.me || this.room) break;
         this.me.skin = Math.max(0, Math.min(4, Math.floor(Number(m.skin)) || 0));
@@ -217,8 +242,12 @@ export class LocalNet {
       const t = this.tickets.get(key) ?? { name: seat.name, wins: 0 };
       t.wins += pts; this.tickets.set(key, t);
     }
+    const me = sim.players.get(1), place = me ? this.teamPlace.get(me.team) ?? 0 : 0;
+    this.record.matches++; this.record.kills += me?.kills ?? 0;
+    if (place === 1) this.record.wins++;
+    if (place > 0 && (!this.record.best || place < this.record.best)) this.record.best = place;
     this.emit({ t: 'result', winner: winners[0] ?? null, winners, points, awarded: true, epoch: epochOf(Date.now()) });
-    this.emitPot();
+    this.emitPot(); this.emitProfile();
     r.timers.push(window.setTimeout(() => this.closeRoom(), RESULT_MS - 300)); // free the seat before the client shows the lobby
   }
 

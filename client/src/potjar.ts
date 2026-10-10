@@ -11,8 +11,11 @@ const MARKS = [1, 5, 10, 25, 50, 100, 250];
 interface Falling { x: number; y: number; vy: number; tx: number; spin: number }
 interface Sparkle { x: number; y: number; life: number; max: number; size: number }
 interface Floater { text: string; x: number; y: number; life: number; big: boolean }
-// crown: the King Pig wears one. rays: a slow sunburst behind it (the lobby's big pig)
-export interface JarOptions { string?: boolean; marks?: boolean; crown?: boolean; rays?: boolean }
+// crown: the King Pig wears one. rays: a slow sunburst behind it (the lobby's big pig). pipe: the fee
+// pipe coming in from the left, every trade's coins rolling down it into the slot
+export interface JarOptions { string?: boolean; marks?: boolean; crown?: boolean; rays?: boolean; pipe?: boolean }
+interface Piped { t: number; v: number; tone: number }
+interface Burst { x: number; y: number; vx: number; vy: number; spin: number; life: number }
 
 export class PotJar {
   private ctx: CanvasRenderingContext2D;
@@ -28,6 +31,9 @@ export class PotJar {
   private sparkles: Sparkle[] = [];
   private floaters: Floater[] = [];
   private crownY = 0; private crownV = 0;
+  private piping: Piped[] = [];
+  private bursts: Burst[] = [];
+  private flow = 0; // how busy the pipe has been lately: it glows with it
   scaleSol = 40;
   sol = 0;
 
@@ -59,7 +65,12 @@ export class PotJar {
   inflow(sol: number) {
     const g = this.geom();
     const n = Math.min(36, 3 + Math.round(Math.log10(1 + sol * 100) * 7));
-    for (let i = 0; i < n; i++) this.falling.push({ x: g.cx + (Math.random() - 0.5) * 6, y: g.top - 50 - i * 22, vy: 0, tx: g.cx + (Math.random() - 0.5) * g.rx * 1.1, spin: Math.random() * 6 });
+    // through the fee pipe when there is one (the coins arrive in the slot a moment later), else from above
+    if (this.opts.pipe) for (let i = 0; i < n; i++) this.piping.push({ t: -i * 0.06, v: 0.55 + Math.random() * 0.25, tone: Math.random() });
+    else for (let i = 0; i < n; i++) this.falling.push({ x: g.cx + (Math.random() - 0.5) * 6, y: g.top - 50 - i * 22, vy: 0, tx: g.cx + (Math.random() - 0.5) * g.rx * 1.1, spin: Math.random() * 6 });
+    this.flow = Math.min(1, this.flow + 0.25 + sol);
+    // a whale: coins spray out of the slot and rain back down
+    if (sol >= 0.3 && this.opts.rays) for (let i = 0; i < Math.min(60, 12 + sol * 25); i++) { const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2, s = 260 + Math.random() * 420; this.bursts.push({ x: g.cx, y: g.top, vx: Math.cos(a) * s, vy: Math.sin(a) * s, spin: Math.random() * 6, life: 0 }); }
     this.bump = Math.min(1, 0.25 + sol * 0.4);
     // the crown hops, sparkles burst out of the slot, and the amount floats up
     this.crownV -= 120 + Math.min(400, sol * 500);
@@ -69,9 +80,46 @@ export class PotJar {
 
   private geom() {
     const compact = !this.opts.string;
-    const rx = compact ? Math.min(this.w * 0.33, this.h * 0.5) : Math.min(this.w * 0.25, this.h * 0.34);
-    const ry = rx * 0.76, cy = compact ? this.h * 0.52 : this.h * 0.52;
-    return { cx: this.w / 2 - rx * 0.06, cy, rx, ry, top: cy - ry };
+    const rx = compact ? Math.min(this.w * 0.33, this.h * 0.5) : Math.min(this.w * (this.opts.pipe ? 0.24 : 0.25), this.h * 0.34);
+    const ry = rx * 0.76, cy = compact ? this.h * 0.52 : this.h * (this.opts.pipe ? 0.56 : 0.52);
+    return { cx: this.w / 2 + (this.opts.pipe ? rx * 0.18 : -rx * 0.06), cy, rx, ry, top: cy - ry };
+  }
+  // the fee pipe: a bezier from the funnel up on the left down into the slot
+  private pipePts(g: ReturnType<PotJar['geom']>) {
+    return [g.cx - g.rx * 1.75, g.top - g.ry * 0.55, g.cx - g.rx * 1.25, g.top - g.ry * 1.05, g.cx - g.rx * 0.25, g.top - g.ry * 0.95, g.cx, g.top - 10];
+  }
+  private bez(p: number[], t: number) {
+    const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    return { x: a * p[0] + b * p[2] + c * p[4] + d * p[6], y: a * p[1] + b * p[3] + c * p[5] + d * p[7] };
+  }
+  private drawPipe(g: ReturnType<PotJar['geom']>, cw: number, dt: number) {
+    const { ctx } = this, p = this.pipePts(g), w = cw * 2.6;
+    this.flow = Math.max(0, this.flow - dt * 0.25);
+    const path = new Path2D(); path.moveTo(p[0], p[1]); path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
+    // a glass tube: ink outline, paper inside, a gold glow while coins run through it
+    ctx.save(); ctx.lineCap = 'round';
+    if (this.flow > 0.02) { ctx.strokeStyle = `rgba(255,210,63,${0.35 * this.flow})`; ctx.lineWidth = w + 14; ctx.stroke(path); }
+    ctx.strokeStyle = INK; ctx.lineWidth = w + 5; ctx.stroke(path);
+    ctx.strokeStyle = 'rgba(255,253,245,0.96)'; ctx.lineWidth = w; ctx.stroke(path);
+    ctx.strokeStyle = 'rgba(29,51,184,0.12)'; ctx.lineWidth = w * 0.25; ctx.setLineDash([3, 9]); ctx.stroke(path); ctx.setLineDash([]);
+    ctx.restore();
+    // the coins in it
+    this.piping = this.piping.filter((c) => {
+      c.t += dt * c.v * (0.8 + c.t);
+      if (c.t >= 1) { this.falling.push({ x: p[6], y: p[7], vy: 120, tx: g.cx + (Math.random() - 0.5) * g.rx * 1.1, spin: Math.random() * 6 }); return false; }
+      if (c.t > 0) { const q = this.bez(p, c.t); this.coin(q.x, q.y, cw * 0.95, cw * 0.95, 0, c.tone); }
+      return true;
+    });
+    // the funnel it starts from, with its label
+    const fx = p[0], fy = p[1], fw = w * 1.7;
+    const fun = new Path2D(); fun.moveTo(fx - fw, fy - fw * 0.95); fun.lineTo(fx + fw * 0.7, fy - fw * 1.25); fun.lineTo(fx + w * 0.45, fy + 2); fun.lineTo(fx - w * 0.5, fy + 4); fun.closePath();
+    ctx.fillStyle = '#fffdf5'; ctx.fill(fun); ctx.fillStyle = `rgba(255,210,63,${0.25 + this.flow * 0.5})`; ctx.fill(fun); this.pen(fun, 2.6);
+    ctx.font = `700 ${Math.max(16, g.rx * 0.15)}px Caveat, cursive`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    const half = ctx.measureText('every trade pays in').width / 2 + 6; // kept inside the canvas on a narrow screen
+    ctx.save(); ctx.translate(Math.max(half, fx - fw * 0.05), fy + fw * 1.05); ctx.rotate(-0.08); // under the funnel's mouth
+    ctx.lineWidth = 5; ctx.strokeStyle = PAPER; ctx.strokeText('every trade pays in', 0, 0);
+    ctx.fillStyle = RED; ctx.fillText('every trade pays in', 0, 0);
+    ctx.restore();
   }
 
   private blob(cx: number, cy: number, rx: number, ry: number, amp: number, off = 0) {
@@ -107,6 +155,10 @@ export class PotJar {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.w, this.h);
     if (this.opts.rays) {
+      // a golden aura that grows with the pot and pulses on every inflow
+      const aura = ctx.createRadialGradient(g.cx, g.cy, g.rx * 0.4, g.cx, g.cy, g.rx * (1.5 + this.shown * 0.9 + this.bump * 0.4));
+      aura.addColorStop(0, `rgba(255,210,63,${0.35 + this.shown * 0.35 + this.bump * 0.25})`); aura.addColorStop(1, 'rgba(255,210,63,0)');
+      ctx.fillStyle = aura; ctx.fillRect(0, 0, this.w, this.h);
       // highlighter sunburst, slowly turning, fading out at the edges
       ctx.save(); ctx.translate(g.cx, g.cy); ctx.rotate(this.t * 0.06);
       const R = Math.max(this.w, this.h) * 0.75, n = 16;
@@ -122,6 +174,7 @@ export class PotJar {
       for (let x = g.cx - g.rx; x < g.cx + g.rx; x += 6) { ctx.beginPath(); ctx.moveTo(x, shY + g.ry * 0.14); ctx.lineTo(x + 10, shY - g.ry * 0.14); ctx.stroke(); }
       ctx.restore();
     }
+    if (this.opts.pipe) this.drawPipe(g, g.rx * 0.085, dt);
     ctx.save();
     if (this.opts.string) {
       ctx.translate(g.cx, 6); ctx.rotate(sway); ctx.translate(-g.cx, -6);
@@ -225,6 +278,14 @@ export class PotJar {
         this.coin(c.x, c.y, Math.abs(Math.cos(c.spin)) * cw + 2, cw * 0.9, 0, 0.5);
         if (c.vy > 300) { ctx.strokeStyle = INK_SOFT; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(c.x - 4, c.y - cw - 6); ctx.lineTo(c.x - 4, c.y - cw - 16); ctx.moveTo(c.x + 4, c.y - cw - 4); ctx.lineTo(c.x + 4, c.y - cw - 12); ctx.stroke(); }
       }
+      return true;
+    });
+
+    // a whale's coin spray
+    this.bursts = this.bursts.filter((b) => {
+      b.life += dt; b.vy += 1100 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.spin += dt * 9;
+      if (b.life > 2.2 || b.y > this.h + 20) return false;
+      this.coin(b.x, b.y, Math.abs(Math.cos(b.spin)) * cw + 2, cw * 0.9, 0, 0.7);
       return true;
     });
 

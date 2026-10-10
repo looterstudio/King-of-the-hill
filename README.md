@@ -121,6 +121,21 @@ Measured on the production bundle, one process with 3 match workers (4 vCPU cont
 line-of-sight culling and vehicles on: **1000 bots in ten full 100-player matches (solo, duos and
 squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
 
+## Launch checklist (the day the token goes live)
+
+1. **Paste the contract address (CA)** into `shared/src/token.ts` (`mint`). That one line puts it in the lobby
+   with copy / pump.fun / Jupiter / chart links, in the demo build, and on the server (where `TOKEN_MINT` in
+   the environment overrides it). Symbol and the $50 hold rule live in the same file.
+2. **Fees into the pot:** deploy `programs/pot_vault`, run `initialize`, and send the token's creator fees to
+   the `vault` PDA (claim them and transfer, on a schedule, or point the fee recipient at the vault if the
+   launchpad allows it). Set `POT_SOURCE=solana`, `VAULT_ADDRESS`, `CONFIG_ADDRESS` and a paid `SOLANA_RPC_URL`.
+3. **Holders:** players connect Phantom (a signature proves the wallet, it costs nothing). The server reads their
+   token balance through the RPC: the lobby profile shows what they hold, whether they qualify this hour and
+   why not; hidden checks through the hour and at the close void the points of anyone who dips under.
+4. Set `REQUIRE_WALLET` as you like (guests can still play for fun with `ALLOW_GUESTS=true`) and
+   `MIN_VERIFIED_FOR_TICKET` (4 is a good floor against farming with a few wallets).
+5. The settlement files in `data/epochs/` are what the keeper posts with `settle_epoch` every hour; winners claim.
+
 ## How a round of money moves
 
 1. Token fees (pump.fun creator fees, or a Token-2022 transfer fee swapped to SOL) are swept into the
@@ -152,7 +167,7 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 | `POT_SOURCE` | `mock` | `solana` polls the real vault |
 | `SOLANA_RPC_URL` | mainnet | use a paid RPC in production |
 | `VAULT_ADDRESS` / `CONFIG_ADDRESS` | | PDAs of the vault program |
-| `TOKEN_MINT` | | the game's coin (required when `HOLD_MIN_USD` > 0) |
+| `TOKEN_MINT` | `shared/src/token.ts` | the game's coin (the CA); required when `HOLD_MIN_USD` > 0 |
 | `HOLD_MIN_USD` | `50` | USD side of the hold requirement for scoring points |
 | `HOLD_TOKENS` | `50000` | token side: the requirement never exceeds this many tokens |
 | `TOKEN_SYMBOL` | `KING` | shown in the lobby |

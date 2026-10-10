@@ -7,13 +7,14 @@ import { WebSocketServer } from 'ws';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
 import { SKINS, playerNumber } from '../../shared/src/constants.ts';
-import { loginMessage, type ClientMsg, type PotView, type ServerMsg } from '../../shared/src/protocol.ts';
+import { loginMessage, type ClientMsg, type PotView, type ProfileView, type ServerMsg } from '../../shared/src/protocol.ts';
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
 import { fromRaw, makePot } from './pot.ts';
 import { PriceFeed } from './price.ts';
 import { CANDLE_MS, Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
+import { Profiles } from './profile.ts';
 import { InProcessHost, WorkerHost } from './host.ts';
 
 const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requireWallet ? 4 : 1));
@@ -21,6 +22,7 @@ const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requi
 const pot = makePot(config);
 const price = new PriceFeed(config);
 const epochs = new Epochs(config, pot, () => Date.now(), () => price.usd());
+const profiles = new Profiles(config.dataDir);
 const clients = new Set<Client>();
 const byWallet = new Map<string, Client>();
 let nextId = 1;
@@ -31,6 +33,7 @@ mkdirSync(config.dataDir, { recursive: true });
 const mm = new Matchmaker({
   minVerifiedForTicket: MIN_VERIFIED,
   onScore: (_room, c, points) => ({ awarded: true, epoch: epochs.recordWin(c.wallet!, c.name, points) }),
+  onResult: (_room, c, place, kills) => { profiles.match(c.wallet!, place, kills); void sendProfile(c); },
   onFlag: (room, c, f) => {
     const row = { at: Date.now(), room: room.id, mode: room.mode, wallet: c?.wallet ?? null, name: c?.name ?? `#${f.id}`, reason: f.reason };
     flags.push(row); if (flags.length > 500) flags.shift();
@@ -47,11 +50,16 @@ function potView(): PotView {
     rolloverLamports: epochs.rolloverIn.toString(), commit: epochs.commitFor(epochs.current),
     online: clients.size, rooms: mm.rooms.size, tickets: epochs.leaderboard(10),
     closeFrom: epochs.endsAt - CANDLE_MS, holdTokens: epochs.requirement(), symbol: config.tokenSymbol, solUsd: price.solUsd(),
+    mint: config.tokenMint, holdMinUsd: config.holdMinUsd,
   };
 }
 
 pot.on('inflow', (f: { lamports: bigint; source: string }) => everyone({ t: 'inflow', inflow: { lamports: f.lamports.toString(), at: Date.now(), source: f.source } }));
-epochs.on('settled', (s) => everyone({ t: 'settled', settled: s }));
+epochs.on('settled', (s) => {
+  everyone({ t: 'settled', settled: s });
+  // the hour's winners: on their record, and told right away if they're here
+  for (const w of s.winners) { profiles.prize(w.wallet, BigInt(w.lamports)); const c = byWallet.get(w.wallet); if (c) void sendProfile(c); }
+});
 setInterval(() => everyone({ t: 'pot', pot: potView() }), 2000);
 // the room list, for players in the lobby
 setInterval(() => { const s = JSON.stringify({ t: 'lobby', rooms: mm.lobby(Date.now()) } satisfies ServerMsg); for (const c of clients) if (!c.room) c.sendRaw(s, true); }, 1000);
@@ -117,6 +125,27 @@ async function holdStatus(wallet: string): Promise<string | null> {
   return `hold ${fromRaw(raw, h.decimals)} $${config.tokenSymbol} to score points for the pot (you have ${fromRaw(h.raw, h.decimals)})`;
 }
 
+// a connected wallet's lobby profile: balance, whether it qualifies this hour, standing, record
+async function profileOf(wallet: string): Promise<ProfileView> {
+  const need = epochs.requirement(), st = epochs.standing(wallet), rec = profiles.get(wallet);
+  let balance: string | null = null, needS: string | null = null, holds = need <= 0, why: string | null = null;
+  if (config.tokenMint || config.potSource === 'mock') { // (the mock pot answers for any wallet: dev runs see the whole flow)
+    try {
+      const h = await pot.holderTokens(wallet), raw = epochs.rawRequirement(epochs.current, h.decimals);
+      balance = fromRaw(h.raw, h.decimals); needS = need > 0 ? fromRaw(raw, h.decimals) : null;
+      holds = h.raw >= raw;
+      if (!holds) why = `hold ${needS} $${config.tokenSymbol} (≈ $${config.holdMinUsd}) all hour to qualify`;
+    } catch { why = 'could not read your balance yet'; holds = false; }
+  } else if (need > 0) { holds = false; why = `$${config.tokenSymbol} isn't live yet`; }
+  const voided = epochs.isVoid(epochs.scoringEpoch(), wallet);
+  if (voided) why = 'your balance dipped under the requirement at a check this hour: points void until the next hour';
+  return { wallet, symbol: config.tokenSymbol, balance, need: needS, holdMinUsd: config.holdMinUsd, qualified: holds && !voided, why, points: st.points, rank: st.rank, ...rec };
+}
+async function sendProfile(c: Client) {
+  if (!c.wallet || !c.authed) return;
+  try { c.send({ t: 'profile', profile: await profileOf(c.wallet) }); } catch (e) { console.warn('[profile]', (e as Error).message); }
+}
+
 async function signIn(c: Client, msg: Extract<ClientMsg, { t: 'auth' }>) {
   let pk: Uint8Array, sig: Uint8Array;
   try { pk = bs58.decode(String(msg.wallet)); sig = bs58.decode(String(msg.sig)); } catch { return c.send({ t: 'error', msg: 'bad signature encoding' }); }
@@ -130,7 +159,8 @@ async function signIn(c: Client, msg: Extract<ClientMsg, { t: 'auth' }>) {
   if (prev && prev !== c) { prev.send({ t: 'error', msg: 'signed in somewhere else' }); prev.ws.close(); }
   byWallet.set(wallet, c);
   c.wallet = wallet; c.name = shortWallet(wallet); c.authed = true;
-  return c.send({ t: 'authed', name: c.name, wallet, num: c.num, eligible });
+  c.send({ t: 'authed', name: c.name, wallet, num: c.num, eligible });
+  return sendProfile(c);
 }
 
 async function onMessage(c: Client, msg: ClientMsg) {
@@ -151,6 +181,10 @@ async function onMessage(c: Client, msg: ClientMsg) {
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);
       return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });
+    }
+    case 'me': {
+      if (!c.lobbyAction()) return;
+      return sendProfile(c);
     }
     case 'queue': {
       if (!c.authed) return c.send({ t: 'error', msg: 'sign in first' });
@@ -235,7 +269,7 @@ http.listen({ port: config.port, backlog: 4096 }, () => {
   console.log(`[pot-royale] :${config.port} pot=${config.potSource} payout=${config.payoutMode} hold=$${config.holdMinUsd} workers=${config.workers} wallet=${config.requireWallet} guests=${config.allowGuests} minVerified=${MIN_VERIFIED}`);
 });
 
-const shutdown = () => { price.stop(); mm.stop(); epochs.stop(); pot.stop(); wss.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); };
+const shutdown = () => { price.stop(); mm.stop(); epochs.stop(); pot.stop(); try { profiles.flush(); } catch { /* read-only disk */ } wss.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); };
 process.on('SIGINT', shutdown);
 // last resort: a bug in one handler must not take every match down with it; the specific failure
 // paths are handled where they happen, this only logs whatever slips through

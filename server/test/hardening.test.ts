@@ -187,3 +187,20 @@ test('a paused player stops, and moves again the moment they come back', async (
   assert.ok(Math.hypot(me().x - back.x, me().z - back.z) > 5, 'moves again right away');
   assert.equal(me().ack, seq);
 });
+
+test('a wallet profile keeps its record across restarts and knows where it stands this hour', async () => {
+  const { Profiles } = await import('../src/profile.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'pr-'));
+  const p = new Profiles(dir);
+  p.match('W1', 1, 4); p.match('W1', 7, 2); p.match('W1', 0, 0); p.prize('W1', 2_500_000_000n);
+  p.flush();
+  const back = new Profiles(dir).get('W1');
+  assert.deepEqual(back, { matches: 3, wins: 1, kills: 6, best: 1, prizes: 1, prizeLamports: '2500000000' });
+  assert.equal(new Profiles(dir).get('nobody').matches, 0);
+  let now = EPOCH_MS * 900 + 1000;
+  const ep = new Epochs({ ...config, dataDir: dir }, new MockPot(), () => now);
+  ep.recordWin('A', 'a', 40); ep.recordWin('B', 'b', 125); ep.recordWin('C', 'c', 40);
+  assert.deepEqual(ep.standing('B'), { points: 125, rank: 1 });
+  assert.deepEqual(ep.standing('A'), { points: 40, rank: 2 }, 'a tie shares the place');
+  assert.deepEqual(ep.standing('nobody'), { points: 0, rank: null });
+});

@@ -17,10 +17,27 @@ export interface PotView {
   closeFrom: number;         // scoring closes at a random minute between this and epochEndMs
   holdTokens: number;        // tokens a wallet must hold this epoch to keep its points
   symbol: string;
+  mint?: string;             // the token's contract address ('' before launch)
+  holdMinUsd?: number;       // the USD side of the hold requirement
   solUsd: number | null;     // to show the pot in dollars
 }
 
 export interface InflowView { lamports: string; at: number; source: string }
+
+// a connected wallet's corner of the lobby: what it holds, whether it qualifies this hour, its record
+export interface ProfileView {
+  wallet: string;
+  symbol: string;
+  balance: string | null;    // whole tokens, formatted; null when it couldn't be read (or no token yet)
+  need: string | null;       // tokens to hold this hour to qualify; null when there is no requirement
+  holdMinUsd: number;
+  qualified: boolean;        // holds enough right now and wasn't voided this hour
+  why: string | null;        // why not, when not
+  points: number;            // this hour
+  rank: number | null;       // this hour, 1 = takes the pot
+  matches: number; wins: number; kills: number; best: number; // best: best place, 0 = none yet
+  prizes: number; prizeLamports: string; // hourly pots won
+}
 
 export interface SettledView {
   epoch: number;
@@ -69,6 +86,7 @@ export type ServerMsg =
   | { t: 'pot'; pot: PotView }
   | { t: 'inflow'; inflow: InflowView }
   | { t: 'settled'; settled: SettledView }
+  | { t: 'profile'; profile: ProfileView }
   | { t: 'queued'; position: number }
   | { t: 'room'; roomId: string; you: number; seats: RoomSeat[]; state: RoomPhase; startsAt: number | null; seed: number; mode: Mode }
   | { t: 'lobby'; rooms: LobbyRoom[] }
@@ -98,6 +116,7 @@ export type ClientMsg =
   | { t: 'queue'; mode?: Mode; party?: string; room?: string; skin?: number }   // party: friends typing the same code drop on one team
   | { t: 'spec'; dir?: 1 | -1; target?: number; at?: [number, number] | null } // dead: switch who you watch, or fly a free camera
   | { t: 'leave' }
+  | { t: 'me' }                               // ask for your profile again
   | { t: 'rtc'; to: number; data: unknown }   // squad voice signalling, only ever relayed to a teammate in your match
   | ({ t: 'in' } & Input);
 

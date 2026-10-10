@@ -28,13 +28,19 @@
         <span class="word">King of the Hill <em>Royale</em></span>
       </div>
       <div class="live"><span class="dot"></span><b id="online">0</b> playing <span class="sep">·</span> <b id="rooms">0</b> rooms live</div>
+      <button id="profileChip" class="profile-chip hidden" type="button" aria-haspopup="dialog" aria-expanded="false"></button>
       <button id="radioBtn" class="radio-btn" type="button" title="80s radio: click to tune, again for the next station">📻 <span>radio off</span></button>
     </header>
+    <div id="profilePop" class="profile-pop hidden" role="dialog" aria-label="your profile"></div>
     <div class="ticker" aria-hidden="true"><div id="ticker" class="ticker-track"></div></div>
 
     <main class="spread">
       <section class="hero">
-        <p class="tagline">Drop in. Loot up. <span>Take the hill.</span></p>
+        <div class="hp-head">
+          <span class="hp-kicker">♛ every hour, on the hour ♛</span>
+          <h1 class="hp-title"><span class="hp-w1">HOURLY</span> <span class="hp-w2">PRIZE</span></h1>
+          <p class="hp-sub">The <b>#1 player of the hour</b> wins the whole pot. Paid out on-chain, every hour.</p>
+        </div>
         <div class="jar-wrap">
           <canvas id="jar"></canvas>
           <svg class="stamp" viewBox="0 0 120 120" aria-label="the winner takes the pot every hour">
@@ -45,15 +51,33 @@
           </svg>
         </div>
         <div class="prize">
-          <div class="ribbon"><svg viewBox="0 0 260 44" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8 L24 8 L24 36 L2 36 L12 22 Z M258 8 L236 8 L236 36 L258 36 L248 22 Z"/><path class="front" d="M20 4 L240 4 L240 34 L20 34 Z"/></svg><span>prize pot</span></div>
+          <div class="ribbon"><svg viewBox="0 0 260 44" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8 L24 8 L24 36 L2 36 L12 22 Z M258 8 L236 8 L236 36 L258 36 L248 22 Z"/><path class="front" d="M20 4 L240 4 L240 34 L20 34 Z"/></svg><span>this hour's prize</span></div>
           <div id="potAmount" class="amount" aria-live="off"><span class="sym">$</span></div>
           <div id="potSol" class="pot-sol"></div>
-          <svg class="scribble" viewBox="0 0 400 18" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 80 4, 160 16, 240 8 S 360 6, 396 11"/><path d="M30 15 C 120 9, 220 17, 380 12"/></svg>
-          <div class="draw-row"><span>next payout in</span>
-            <span class="cd" id="countdown"><b>--</b><i>h</i><b>--</b><i>m</i><b>--</b><i>s</i></span>
+          <div class="hour-clock">
+            <div class="draw-row"><span>winner paid in</span>
+              <span class="cd" id="countdown"><b>--</b><i>h</i><b>--</b><i>m</i><b>--</b><i>s</i></span>
+            </div>
+            <div class="hour-bar" aria-hidden="true"><i id="hourFill"></i><span id="hourLabel"></span></div>
           </div>
+          <div id="potLeader" class="pot-leader">Nobody has scored this hour yet: the first win puts you on top.</div>
           <div id="candle" class="candle">scoring closes at a random minute in the last 10</div>
           <div id="inflowToast" class="toast" aria-live="polite"></div>
+        </div>
+        <ol class="flow" aria-label="how the prize fills">
+          <li><span class="fl-ico">⇄</span><b>Every trade pays a fee</b><small>each buy and sell of <span class="sym-tok">$KING</span> drops a fee into the pig, live</small></li>
+          <li><span class="fl-ico">🐷</span><b>The King Pig fills up</b><small>all hour long; you see every coin land</small></li>
+          <li><span class="fl-ico">♛</span><b>At :00 the #1 takes it all</b><small>the player with the most points this hour wins the pot</small></li>
+        </ol>
+        <div class="qualify" id="qualify">
+          <h3>Who can win the prize</h3>
+          <ul>
+            <li><span class="q-n">1</span><span>Connect your <b>Phantom</b> wallet</span></li>
+            <li><span class="q-n">2</span><span>Hold at least <b id="qualUsd">$50</b> of <b class="sym-tok">$KING</b> for the whole hour <small>(we check your balance at secret moments)</small></span></li>
+            <li><span class="q-n">3</span><span>Score the most points: <b>win 100</b> · top 10 <b>+20</b> · each kill <b>+5</b></span></li>
+          </ul>
+          <div id="tokenCa" class="token-ca"></div>
+          <p class="q-guest">Just want to play? <b>Enter as a guest</b>: free, no wallet, no prize.</p>
         </div>
       </section>
 
@@ -92,11 +116,12 @@
         <div class="who">
           <div id="me" class="me">not connected</div>
           <button id="connectBtn" class="btn ink">Connect Phantom</button>
-          <div class="or"><span>or try it as a guest</span></div>
+          <div class="or"><span>or</span></div>
           <div class="guest">
-            <input id="guestName" maxlength="14" placeholder="nickname" autocomplete="off" aria-label="guest nickname" />
-            <button id="guestBtn" class="btn ghost">Join</button>
+            <input id="guestName" maxlength="14" placeholder="your nickname" autocomplete="off" aria-label="guest nickname" />
+            <button id="guestBtn" class="btn ghost">Enter as a guest</button>
           </div>
+          <p class="guest-note">Guests play free. To win the hourly prize, connect Phantom and hold $50 of the token.</p>
         </div>
 
         <button id="playBtn" class="btn play" disabled>Drop in · Solo</button>
@@ -107,7 +132,7 @@
     </main>
 
     <section id="guide" class="guide" aria-label="how to play">
-      <h3 class="wall-title">How to play <span>(aim, shoot, break, build, slide: all of it in one minute)</span></h3>
+      <h3 class="wall-title">How to play <span>(everything, by topic: controls, building, vehicles, squads and how to win the hourly prize)</span></h3>
       <div id="guideCards"></div>
     </section>
 

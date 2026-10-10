@@ -1,4 +1,5 @@
 import { cpus } from 'node:os';
+import { TOKEN } from '../../shared/src/token.ts';
 // Every knob comes from the environment so the same build runs locally (mock pot, guests on)
 // and in production (real vault, wallets required, guests off).
 const env = process.env;
@@ -29,11 +30,11 @@ export const config = {
   rpcUrl: env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
   vaultAddress: env.VAULT_ADDRESS ?? '',   // vault PDA: seeds ["vault"]
   configAddress: env.CONFIG_ADDRESS ?? '', // config PDA: seeds ["config"]
-  tokenMint: env.TOKEN_MINT ?? '',
+  tokenMint: env.TOKEN_MINT || TOKEN.mint,
   // to score points a wallet must hold min(HOLD_TOKENS, $HOLD_MIN_USD worth), fixed per epoch
-  holdMinUsd: Number(env.HOLD_MIN_USD ?? '50'),
-  holdTokens: Number(env.HOLD_TOKENS ?? '50000'),
-  tokenSymbol: env.TOKEN_SYMBOL ?? 'KING',
+  holdMinUsd: Number(env.HOLD_MIN_USD ?? TOKEN.holdMinUsd),
+  holdTokens: Number(env.HOLD_TOKENS ?? TOKEN.holdTokens),
+  tokenSymbol: env.TOKEN_SYMBOL ?? TOKEN.symbol,
   solMint: 'So11111111111111111111111111111111111111112',
   mockSolUsd: Number(env.MOCK_SOL_USD ?? '150'),
   priceUrl: env.PRICE_URL ?? 'https://lite-api.jup.ag/price/v3?ids=', // Jupiter price API, mint appended

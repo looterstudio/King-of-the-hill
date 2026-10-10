@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { BUILD, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
-import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
+import { BUILD, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type ProfileView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
@@ -13,7 +13,8 @@ import { voice } from './voice.ts';
 import { World } from '../../shared/src/world.ts';
 import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
-import { Training, guideHTML, tipCardHTML } from './guide.ts';
+import { Training, bindManual, guideHTML, manualHTML, tipCardHTML } from './guide.ts';
+import { TOKEN, buyLinks } from '../../shared/src/token.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
@@ -29,7 +30,8 @@ const CIRCLE = '<svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-hidde
 // `vite build --mode demo` runs the whole game in the browser with bots; otherwise talk to the server
 const DEMO = import.meta.env.MODE === 'demo';
 const net: Net | LocalNet = DEMO ? new LocalNet() : new Net();
-const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: false, crown: true, rays: true });
+const jar = new PotJar($<HTMLCanvasElement>('jar'), { string: true, marks: true, crown: true, rays: true, pipe: true });
+jar.scaleSol = 12; // an hour's pot: a few SOL already fills the glass a good way
 const miniJar = new PotJar($<HTMLCanvasElement>('miniPig'), { string: false, marks: false, crown: true });
 const canvas = $<HTMLCanvasElement>('arena');
 const game = new Game3D(canvas, $<HTMLDivElement>('tags'));
@@ -42,7 +44,7 @@ flyover.ink.setQuality(0.75);
 const idle = (window as unknown as { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback ?? ((f: () => void) => setTimeout(f, 300));
 idle(() => renderArsenal($('arsenal')));
 // how to play: drawn cards in the lobby and the waiting room, a checklist in your first matches
-$('guideCards').innerHTML = guideHTML();
+$('guideCards').innerHTML = manualHTML(); bindManual($('guideCards'));
 $('roomGuide').innerHTML = guideHTML(true);
 $('howtoLink').onclick = (e) => { e.preventDefault(); $('guide').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 $('roomTip').onclick = (e) => { if ((e.target as HTMLElement).closest('[data-all]')) { e.preventDefault(); $('roomGuideSec').scrollIntoView({ behavior: 'smooth', block: 'start' }); } };
@@ -155,7 +157,6 @@ try { $<HTMLInputElement>('guestName').value = localStorage.getItem('pr_name') ?
 
 interface Phantom { connect(): Promise<{ publicKey: { toString(): string } }>; signMessage(m: Uint8Array, enc: 'utf8'): Promise<{ signature: Uint8Array }> }
 $('connectBtn').onclick = async () => {
-  if (DEMO) return err('This demo runs on guest accounts. Wallets are used in the live game.');
   const w = window as unknown as { phantom?: { solana?: Phantom }; solana?: Phantom };
   const prov = w.phantom?.solana ?? w.solana;
   if (!prov) return err('Phantom not found. Install it from phantom.app and reload.');
@@ -262,10 +263,18 @@ $('leaveBtn').onclick = () => { voice.stop(); net.send({ t: 'leave' }); show('lo
 
 // ---------- lobby ----------
 const marks = (n: number) => '<i></i>'.repeat(Math.min(Math.ceil(n / 50), 15));
-const kfmt = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M` : n >= 1e3 ? `${+(n / 1e3).toFixed(n % 1e3 ? 1 : 0)}K` : n.toLocaleString('en-US', { maximumFractionDigits: 0 }));
 function renderPot(p: PotView) {
   state.pot = p;
-  $('holdReq').textContent = p.holdTokens > 0 ? `${kfmt(p.holdTokens)} $${p.symbol}` : `$${p.symbol}`;
+  $('holdReq').textContent = `$${p.holdMinUsd ?? TOKEN.holdMinUsd} of $${p.symbol}`;
+  setText($('qualUsd'), `$${p.holdMinUsd ?? TOKEN.holdMinUsd}`);
+  document.querySelectorAll('.sym-tok').forEach((e) => { e.textContent = `$${p.symbol}`; });
+  renderCa(p.mint || TOKEN.mint, p.symbol);
+  // who's on top this hour: they take the pot unless someone passes them before :00
+  const top = p.tickets[0], at = new Date(p.epochEndMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const lead = $('potLeader');
+  lead.classList.toggle('you', !!top && top.wallet === state.wallet);
+  setHTML(lead, top ? (top.wallet === state.wallet ? `<span class="crown">♛</span> <b>You</b> lead with <b>${top.wins} pts</b> · hold on until ${at}` : `<span class="crown">♛</span> <b>${esc(top.name)}</b> leads with <b>${top.wins} pts</b> · beat them before ${at}`)
+    : `Nobody has scored this hour yet: the first win puts you on top.`);
   jar.setSol(sol(p.lamports)); miniJar.setSol(sol(p.lamports));
   $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
@@ -273,6 +282,53 @@ function renderPot(p: PotView) {
     ? p.tickets.map((t, i) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''} ${i === 0 ? 'top' : ''}"><span class="name"><span>${i === 0 ? '<i class="crown">♛</i> ' : ''}${esc(t.name)}${i === 0 ? ' <small class="takes">takes the pot</small>' : ''}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
     : '<li class="nobody">Nobody has scored this hour. Win, place top 10 or get kills: the top scorer at the close takes the pot.</li>';
 }
+// the token's contract address with buy links, or a note until it launches
+let caShown = '';
+function renderCa(mint: string, symbol: string) {
+  if (caShown === mint + symbol) return;
+  caShown = mint + symbol;
+  if (!mint) { $('tokenCa').innerHTML = `<span>$${esc(symbol)} contract address:</span> <span class="soon">revealed at launch</span>`; return; }
+  const l = buyLinks(mint);
+  $('tokenCa').innerHTML = `<span>CA</span> <code>${esc(mint)}</code> <button type="button" data-copy>copy</button> <a href="${l.pump}" target="_blank" rel="noopener">pump.fun</a> <a href="${l.jupiter}" target="_blank" rel="noopener">Jupiter</a> <a href="${l.dexscreener}" target="_blank" rel="noopener">chart</a>`;
+}
+$('tokenCa').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest('[data-copy]');
+  if (!b) return;
+  const mint = state.pot?.mint || TOKEN.mint;
+  void navigator.clipboard?.writeText(mint).then(() => { b.textContent = 'copied ✓'; setTimeout(() => { b.textContent = 'copy'; }, 1500); });
+});
+
+// ---------- profile: a connected wallet's chip and card ----------
+let profile: ProfileView | null = null;
+const fmtNum = (s: string | null) => (s === null ? '–' : Number(s).toLocaleString('en-US', { maximumFractionDigits: 2 }));
+function renderProfile() {
+  const chip = $('profileChip'), pop = $('profilePop');
+  chip.classList.toggle('hidden', !profile);
+  if (!profile) { pop.classList.add('hidden'); return; }
+  const p = profile, short = `${p.wallet.slice(0, 4)}…${p.wallet.slice(-4)}`, hue = parseInt(p.wallet.slice(0, 6), 36) % 360;
+  setHTML(chip, `<span class="pf-av" style="background:hsl(${hue} 70% 45%)">${p.wallet[0]}</span>${short}<span class="pf-q ${p.qualified ? 'ok' : 'no'}">${p.qualified ? 'qualified' : 'not qualified'}</span>`);
+  chip.setAttribute('aria-expanded', String(!pop.classList.contains('hidden')));
+  const won = sol(p.prizeLamports);
+  setHTML(pop, `<h4>Your profile <button type="button" data-close aria-label="close">✕</button></h4><div class="pf-wallet">${esc(p.wallet)}</div>`
+    + `<div class="pf-status ${p.qualified ? 'ok' : 'no'}">${p.qualified ? `✓ Qualified for this hour's prize` : '✗ Not qualified this hour'}`
+    + `<small>${p.balance !== null ? `You hold ${fmtNum(p.balance)} $${esc(p.symbol)}${p.need ? ` · need ${fmtNum(p.need)} (≈ $${p.holdMinUsd})` : ''}` : esc(p.why ?? '')}${p.qualified || p.balance === null ? '' : `<br>${esc(p.why ?? '')}`}</small></div>`
+    + `<div class="pf-grid"><div class="gold"><b>${p.points}</b><span>points this hour</span></div><div class="gold"><b>${p.rank ? `#${p.rank}` : '–'}</b><span>rank this hour</span></div><div class="gold"><b>${p.prizes}</b><span>prizes won</span></div>`
+    + `<div><b>${p.matches}</b><span>matches</span></div><div><b>${p.wins}</b><span>wins</span></div><div><b>${p.kills}</b><span>kills</span></div></div>`
+    + `<div class="pf-foot"><span>${won > 0 ? `won ${fmtSol(won)} in total` : p.best ? `best finish #${p.best}` : 'no matches yet: drop in!'}</span><button type="button" data-refresh>refresh</button></div>`);
+  // the "who can win" checklist ticks itself off
+  const steps = document.querySelectorAll('#qualify li');
+  steps[0]?.classList.toggle('ok', true);
+  steps[1]?.classList.toggle('ok', p.qualified);
+  steps[2]?.classList.toggle('ok', p.rank === 1);
+}
+$('profileChip').onclick = () => { const pop = $('profilePop'); pop.classList.toggle('hidden'); if (!pop.classList.contains('hidden')) net.send({ t: 'me' }); renderProfile(); };
+$('profilePop').addEventListener('click', (e) => {
+  const t = e.target as HTMLElement;
+  if (t.closest('[data-close]')) { $('profilePop').classList.add('hidden'); renderProfile(); }
+  if (t.closest('[data-refresh]')) net.send({ t: 'me' });
+});
+addEventListener('mousedown', (e) => { const pop = $('profilePop'); if (!pop.classList.contains('hidden') && !(e.target as HTMLElement).closest('#profilePop, #profileChip')) { pop.classList.add('hidden'); renderProfile(); } });
+
 function toast(text: string) {
   const el = $('inflowToast'); el.textContent = text; el.classList.add('on');
   clearTimeout((toast as unknown as { t?: number }).t);
@@ -480,10 +536,13 @@ net.on((m: ServerMsg) => {
       state.authed = true; state.name = m.name; state.wallet = m.wallet;
       $('me').textContent = `Player ${m.num} · ${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}${m.eligible ? ` · ${m.eligible}` : m.wallet && state.authMode !== 'guest' ? ' · scoring points for the pot' : ''}`;
       $('me').classList.add('on');
+      // signed in with Phantom: the button says so (the profile chip up top has the details)
+      if (state.authMode === 'wallet') { $('connectBtn').textContent = 'Phantom connected ✓'; $<HTMLButtonElement>('connectBtn').disabled = true; }
       updatePlay();
       break;
     case 'error': err(m.msg); $('queueInfo').textContent = ''; break;
     case 'pot': renderPot(m.pot); break;
+    case 'profile': profile = m.profile; renderProfile(); break;
     case 'inflow': {
       const v = sol(m.inflow.lamports); jar.inflow(v); miniJar.inflow(v); toast(`+${v.toFixed(3)} SOL · ${m.inflow.source}`);
       if (v >= 0.3) ticker(`<span class="gold">🐷 <b>+${v.toFixed(2)} SOL</b> ${esc(m.inflow.source)}</span>`);
@@ -740,6 +799,10 @@ function frame(now: number) {
       if (cd[0].textContent !== hh) cd[0].textContent = hh;
       if (cd[1].textContent !== mm) cd[1].textContent = mm;
       if (cd[2].textContent !== ss) { cd[2].textContent = ss; cd[2].classList.remove('tick'); void cd[2].offsetWidth; cd[2].classList.add('tick'); }
+      // the hour as a bar filling toward the payout
+      const left = Math.max(0, state.pot.epochEndMs - Date.now()), k = 1 - left / EPOCH_MS;
+      $('hourFill').style.width = `${(Math.max(0, Math.min(1, k)) * 100).toFixed(1)}%`;
+      setText($('hourLabel'), left < 60_000 ? 'PAYING OUT…' : `${Math.ceil(left / 60_000)} MIN TO THE PAYOUT`);
     }
   } else if (state.screen === 'waiting') {
     // the bottom card: a new lesson every 6 s while you wait
