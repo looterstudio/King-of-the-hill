@@ -14,6 +14,7 @@ import { sfx } from './audio.ts';
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
+const LERP_FIELDS = [1, 2, 3, 5]; // x, y, z, pitch (yaw wraps, done apart)
 const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
@@ -53,7 +54,8 @@ export class Game3D {
   private lastTickAt = 0;
   private pending: Input[] = [];
   private seq = 0;
-  private snaps: { s: Snap; at: number }[] = [];
+  private snaps: { s: Snap; at: number; byId?: Map<number, SnapOther> }[] = [];
+  private interpBuf = new Map<number, SnapOther>(); // interpolated players, one array each, reused every frame
   private avatars = new Map<number, Figure & { tag: HTMLDivElement; html?: string }>();
   private hitUntil = new Map<number, number>(); // enemies you just hit show their health over their head
   markHit(id: number) { this.hitUntil.set(id, this.time + 2.2); }
@@ -128,7 +130,7 @@ export class Game3D {
     this.seats = new Map(seats.map((s) => [s.id, s]));
     const team = this.seats.get(you)?.team ?? 0;
     this.mates = new Set(seats.filter((s) => team > 0 && s.team === team && s.id !== you).map((s) => s.id));
-    this.snaps = []; this.pending = []; this.self = null; this.pred = null; this.watch = null; this.free = null; this.tracers = []; this.nukes = [];
+    this.snaps = []; this.interpBuf.clear(); this.pending = []; this.self = null; this.pred = null; this.watch = null; this.free = null; this.tracers = []; this.nukes = [];
     for (const a of this.avatars.values()) { this.drop(a.root); a.tag.remove(); }
     this.avatars.clear();
     for (const l of this.loot.values()) this.drop(l.g);
@@ -627,10 +629,16 @@ export class Game3D {
     let a = this.snaps[0], b = last;
     for (let i = 0; i < this.snaps.length - 1; i++) if (this.snaps[i].s.time <= rt && this.snaps[i + 1].s.time >= rt) { a = this.snaps[i]; b = this.snaps[i + 1]; break; }
     const span = b.s.time - a.s.time, k = span > 0 ? Math.min(1, Math.max(0, (rt - a.s.time) / span)) : 1;
-    const prev = new Map(a.s.others.map((o) => [o[0], o]));
+    // per frame this ran a Map and an array per player per frame (~12k allocations a second in a full
+    // lobby): the id lookup is built once per snapshot, and each player's output array is reused
+    const prev = a.byId ??= new Map(a.s.others.map((o) => [o[0], o]));
     for (const ob of b.s.others) {
-      const oa = prev.get(ob[0]) ?? ob, o = ob.slice();
-      for (const j of [1, 2, 3, 5]) o[j] = oa[j] + (ob[j] - oa[j]) * k;
+      const oa = prev.get(ob[0]) ?? ob;
+      let o = this.interpBuf.get(ob[0]);
+      if (!o) { o = []; this.interpBuf.set(ob[0], o); }
+      o.length = ob.length;
+      for (let j = 0; j < ob.length; j++) o[j] = ob[j];
+      for (const j of LERP_FIELDS) o[j] = oa[j] + (ob[j] - oa[j]) * k;
       let dy = ob[4] - oa[4]; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
       o[4] = oa[4] + dy * k;
       out.set(o[0], o);
