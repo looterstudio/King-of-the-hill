@@ -1,7 +1,7 @@
 // Doodle models built from primitives. The ink renderer outlines and hatches them, so a handful
 // of boxes and cylinders reads as a hand-drawn figure. Nothing here is loaded from files.
 import * as THREE from 'three';
-import { WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
+import { SKINS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 import { INK_IDS, type InkRenderer } from './ink.ts';
 
 type Mat = THREE.Material;
@@ -280,48 +280,85 @@ export interface Figure {
   guns: Map<WeaponId, THREE.Group>; axe: THREE.Group; chute: THREE.Group; crown: THREE.Group; // axe: the diamond pickaxe
   phase: number; lastX: number; lastZ: number; speed: number;
   gunMats: GunMats; held: THREE.Group | null; // only what is in hand is in the scene (13 hidden guns cost every frame)
+  hip: number; // how high the torso and legs hang (short Cupsey is lower)
 }
 
 const SUIT_INKS = [INK_IDS.RED, INK_IDS.PINK, INK_IDS.ORANGE, INK_IDS.GREEN, INK_IDS.BROWN];
 const pivot = (x: number, y: number, z: number, ...kids: THREE.Object3D[]) => { const g = new THREE.Group(); g.position.set(x, y, z); if (kids.length) g.add(...kids); return g; };
 
 // skin: 0 Scribble (beanie), 1 Crayon Knight (helmet and plume), 2 Ink Ninja (mask, headband),
-// 3 Robo Pen (box head, antenna), 4 Captain Blot (tricorn, eyepatch, red coat)
-export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure {
-  const suit = ink.material(skin === 1 ? INK_IDS.GRAPHITE : skin === 2 ? INK_IDS.GRAPHITE : skin === 3 ? INK_IDS.BLUE : skin === 4 ? INK_IDS.RED : SUIT_INKS[id % SUIT_INKS.length]);
-  const hatInk = ink.material(skin === 1 ? INK_IDS.BLUE : skin === 2 ? INK_IDS.RED : skin === 3 ? INK_IDS.ORANGE : skin === 4 ? INK_IDS.GRAPHITE : SUIT_INKS[(id * 7 + 2) % SUIT_INKS.length]);
-  const dark = ink.material(INK_IDS.GRAPHITE), paper = ink.material(INK_IDS.PAPER);
+// 3 Robo Pen (box head, antenna), 4 Captain Blot (tricorn, eyepatch, red coat), 5 Chill House (a house for
+// a head: window eyes, a round nose, a chimney; grey sweater, rolled-up jeans), 6 Cupsey (a tall plush
+// gumdrop, white on top, green below, rosy cheeks, stubby green arms and feet), 7 Retardio (clown face,
+// orange bob under a black cap with a patch, black long-sleeve with a print, orange plaid trousers, purple
+// shoes). Every one keeps the same joints, so they all run, aim, glide, ride and fall the same way.
+export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.length): Figure {
+  const M = (i: number) => ink.material(i);
+  const dark = M(INK_IDS.GRAPHITE), paper = M(INK_IDS.PAPER);
+  const suit = M(skin === 1 || skin === 2 || skin === 5 || skin === 7 ? INK_IDS.GRAPHITE : skin === 3 ? INK_IDS.BLUE : skin === 4 ? INK_IDS.RED : skin === 6 ? INK_IDS.GREEN : SUIT_INKS[id % SUIT_INKS.length]);
+  const hatInk = M(skin === 1 ? INK_IDS.BLUE : skin === 2 ? INK_IDS.RED : skin === 3 ? INK_IDS.ORANGE : skin === 4 ? INK_IDS.GRAPHITE : skin === 5 ? INK_IDS.BROWN : skin === 6 ? INK_IDS.GREEN : skin === 7 ? INK_IDS.ORANGE : SUIT_INKS[(id * 7 + 2) % SUIT_INKS.length]);
   const root = new THREE.Group();
+  const hip = skin === 6 ? 0.32 : 0.78;
 
   // legs hang from the hips; the pivot swings them
-  const leg = () => pivot(0, 0.78, 0, box(0.17, 0.62, 0.2, suit, 0, -0.33, 0), box(0.19, 0.1, 0.28, dark, 0, -0.72, -0.04));
+  const leg = () => {
+    if (skin === 5) return pivot(0, hip, 0, box(0.17, 0.56, 0.2, M(INK_IDS.BLUE), 0, -0.3, 0), box(0.19, 0.07, 0.22, paper, 0, -0.6, 0), // jeans, rolled cuff
+      box(0.19, 0.1, 0.28, M(INK_IDS.BROWN), 0, -0.72, -0.04), box(0.2, 0.03, 0.29, paper, 0, -0.775, -0.04));                   // sneaker, white sole
+    if (skin === 6) return pivot(0, hip, 0, box(0.16, 0.22, 0.18, suit, 0, -0.11, 0), box(0.2, 0.1, 0.27, suit, 0, -0.27, -0.04)); // stubby feet
+    if (skin === 7) return pivot(0, hip, 0, box(0.17, 0.62, 0.2, M(INK_IDS.ORANGE), 0, -0.33, 0), // plaid: dark bands and a stripe
+      box(0.18, 0.03, 0.21, dark, 0, -0.14, 0), box(0.18, 0.03, 0.21, dark, 0, -0.42, 0), box(0.03, 0.58, 0.012, dark, 0.035, -0.33, -0.106),
+      box(0.2, 0.12, 0.3, M(INK_IDS.PURPLE), 0, -0.71, -0.05));
+    return pivot(0, hip, 0, box(0.17, 0.62, 0.2, suit, 0, -0.33, 0), box(0.19, 0.1, 0.28, dark, 0, -0.72, -0.04));
+  };
   const legL = leg(), legR = leg();
-  legL.position.x = -0.13; legR.position.x = 0.13;
+  legL.position.x = skin === 6 ? -0.17 : -0.13; legR.position.x = -legL.position.x;
 
-  const torso = pivot(0, 0.78, 0,
-    box(0.5, 0.6, 0.3, suit, 0, 0.3, 0),                  // body
-    box(0.36, 0.42, 0.16, hatInk, 0, 0.32, 0.22),         // backpack
-    box(0.52, 0.08, 0.32, dark, 0, 0.02, 0));             // belt
+  let torso: THREE.Group, armY = 0.55, armX = 0.3;
+  if (skin === 6) { // the gumdrop: white over green, tall enough that its top is where a head would be
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.56), paper);
+    const bottom = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 12, 0, Math.PI * 2, Math.PI * 0.56, Math.PI * 0.44), suit);
+    for (const m of [top, bottom]) { m.scale.y = 1.4; m.position.y = 0.7; }
+    torso = pivot(0, hip, 0, top, bottom);
+    armY = 0.62; armX = 0.5;
+  } else {
+    torso = pivot(0, hip, 0, box(0.5, 0.6, 0.3, suit, 0, 0.3, 0), box(0.52, 0.08, 0.32, dark, 0, 0.02, 0)); // body, belt (or hem)
+    if (skin < 5) torso.add(box(0.36, 0.42, 0.16, hatInk, 0, 0.32, 0.22)); // backpack
+    if (skin === 5) torso.add(box(0.52, 0.05, 0.32, dark, 0, 0.58, 0), box(0.2, 0.06, 0.02, dark, 0, 0.5, -0.155)); // collar, a ribbed V
+    if (skin === 7) torso.add(box(0.3, 0.22, 0.02, M(INK_IDS.ORANGE), 0, 0.36, -0.155), box(0.18, 0.07, 0.025, M(INK_IDS.RED), 0, 0.38, -0.162), box(0.22, 0.03, 0.025, paper, 0, 0.3, -0.162)); // a shirt print
+  }
   // arms reach forward to hold the gun; they pitch with the aim
-  const arm = (side: number) => pivot(side * 0.3, 0.55, 0, box(0.13, 0.13, 0.5, suit, 0, -0.03, -0.22), box(0.12, 0.12, 0.12, paper, side * -0.02, -0.03, -0.5));
+  const arm = (side: number) => skin === 6
+    ? pivot(side * armX, armY, 0, box(0.11, 0.11, 0.26, suit, 0, 0, -0.12), new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), suit).translateZ(-0.27))
+    : pivot(side * armX, armY, 0, box(0.13, 0.13, 0.5, suit, 0, -0.03, -0.22), box(0.12, 0.12, 0.12, paper, side * -0.02, -0.03, -0.5));
   const armL = arm(-1), armR = arm(1);
   armL.rotation.y = -0.35; // left hand comes across to the handguard
   const guns = new Map<WeaponId, THREE.Group>(); // built the first time this player holds each one
-  const gunMats = { body: ink.material(INK_IDS.BLUE), dark, accent: ink.material(INK_IDS.ORANGE) };
-  const axe = intern(buildPickaxe(ink.material(INK_IDS.BROWN), ink.material(INK_IDS.DIAMOND)));
+  const gunMats = { body: M(INK_IDS.BLUE), dark, accent: M(INK_IDS.ORANGE) };
+  const axe = intern(buildPickaxe(M(INK_IDS.BROWN), M(INK_IDS.DIAMOND)));
   axe.scale.setScalar(1.3); axe.position.set(0.02, -0.04, -0.4);
   torso.add(armL, armR);
 
   // head: each character has its own
-  const head = pivot(0, 0.66, 0);
+  const head = pivot(0, skin === 6 ? 1.12 : 0.66, 0);
   if (skin === 3) { // Robo Pen: a box head, a visor of orange eyes, an antenna
     head.add(box(0.46, 0.4, 0.42, paper, 0, 0.02, 0), box(0.34, 0.1, 0.03, dark, 0, 0.05, -0.215), box(0.08, 0.05, 0.03, hatInk, -0.08, 0.05, -0.235), box(0.08, 0.05, 0.03, hatInk, 0.08, 0.05, -0.235));
     head.add(box(0.03, 0.3, 0.03, dark, 0.12, 0.36, 0), new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), hatInk).translateY(0.52).translateX(0.12));
+  } else if (skin === 5) { // Chill House: walls, a pitched roof, a chimney, two windows for eyes, a round nose
+    head.add(box(0.52, 0.4, 0.46, paper, 0, 0.08, 0));
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.44, 0.32, 4), M(INK_IDS.RED)); roof.rotation.y = Math.PI / 4; roof.position.y = 0.44; head.add(roof);
+    head.add(box(0.08, 0.2, 0.08, M(INK_IDS.BROWN), 0.13, 0.5, 0.07));
+    for (const x of [-0.12, 0.12]) head.add(box(0.14, 0.14, 0.02, dark, x, 0.14, -0.235), box(0.11, 0.11, 0.022, M(INK_IDS.BLUE), x, 0.14, -0.238), box(0.11, 0.014, 0.026, dark, x, 0.14, -0.242), box(0.014, 0.11, 0.026, dark, x, 0.14, -0.242));
+    head.add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), M(INK_IDS.BROWN)).translateY(0.01).translateZ(-0.255), box(0.13, 0.02, 0.02, dark, 0, -0.07, -0.236));
+  } else if (skin === 6) { // Cupsey: a face on the gumdrop, rosy cheeks, a little sprout on top
+    for (const x of [-0.12, 0.12]) head.add(new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), dark).translateX(x).translateZ(-0.385));
+    for (const x of [-0.22, 0.22]) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.02, 12), M(INK_IDS.PINK)); c.rotation.set(Math.PI / 2, 0, 0); c.rotation.y = x > 0 ? -0.55 : 0.55; c.position.set(x, -0.09, -0.36); head.add(c); }
+    head.add(box(0.07, 0.02, 0.02, dark, 0, -0.05, -0.39));
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 6), suit); leaf.position.set(0.04, 0.62, 0); leaf.rotation.z = -0.4; head.add(leaf);
   } else {
     head.add(new THREE.Mesh(new THREE.SphereGeometry(0.25, 14, 10), skin === 2 ? dark : paper));
     if (skin === 2) head.add(box(0.44, 0.09, 0.05, paper, 0, 0.03, -0.215)); // the ninja's eye slit
     head.add(box(0.05, 0.07, 0.03, dark, -0.09, 0.03, -0.235), box(0.05, 0.07, 0.03, dark, 0.09, 0.03, -0.235));
-    if (skin !== 2) head.add(box(0.1, 0.02, 0.03, dark, 0, -0.08, -0.23));
+    if (skin !== 2 && skin !== 7) head.add(box(0.1, 0.02, 0.03, dark, 0, -0.08, -0.23));
   }
   if (skin === 0) { // Scribble: a beanie with a pom-pom
     const beanie = new THREE.Mesh(new THREE.SphereGeometry(0.265, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), hatInk);
@@ -330,12 +367,21 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure
     head.add(beanie, pom);
   } else if (skin === 1) { // Crayon Knight: a steel helmet with a visor bar and a plume
     const helm = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 8, 0, Math.PI * 2, 0, Math.PI / 1.7), dark); helm.position.y = 0.02;
-    head.add(helm, box(0.36, 0.05, 0.05, dark, 0, -0.02, -0.25), box(0.06, 0.26, 0.3, ink.material(INK_IDS.RED), 0, 0.36, 0.04));
+    head.add(helm, box(0.36, 0.05, 0.05, dark, 0, -0.02, -0.25), box(0.06, 0.26, 0.3, M(INK_IDS.RED), 0, 0.36, 0.04));
   } else if (skin === 2) { // Ink Ninja: a red headband with tails
     head.add(box(0.53, 0.07, 0.53, hatInk, 0, 0.13, 0), box(0.05, 0.05, 0.3, hatInk, 0.06, 0.1, 0.38), box(0.05, 0.05, 0.26, hatInk, -0.06, 0.06, 0.36));
   } else if (skin === 4) { // Captain Blot: a tricorn hat and an eyepatch
     const hat = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.2, 3), hatInk); hat.position.y = 0.22; hat.rotation.y = Math.PI / 6;
     head.add(hat, box(0.16, 0.12, 0.2, hatInk, 0, 0.33, 0), box(0.09, 0.09, 0.03, dark, 0.09, 0.03, -0.245), box(0.3, 0.02, 0.02, dark, 0, 0.1, -0.23));
+  } else if (skin === 7) { // Retardio: clown paint, a red nose, an orange bob, a black cap with a patch
+    const blue = M(INK_IDS.BLUE), red = M(INK_IDS.RED);
+    for (const x of [-0.09, 0.09]) for (const y of [0.115, -0.05]) { const d = box(0.045, 0.045, 0.02, blue, x, y, -0.238); d.rotation.z = Math.PI / 4; head.add(d); }
+    head.add(new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), red).translateY(-0.01).translateZ(-0.255), box(0.15, 0.03, 0.02, red, 0, -0.11, -0.222));
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.275, 12, 8, 0, Math.PI * 2, 0, Math.PI / 1.8), hatInk); hair.position.y = 0.0;
+    head.add(hair, box(0.08, 0.25, 0.3, hatInk, -0.24, -0.07, 0.03), box(0.08, 0.25, 0.3, hatInk, 0.24, -0.07, 0.03), box(0.44, 0.27, 0.08, hatInk, 0, -0.06, 0.22));
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2.3), dark); cap.position.y = 0.07;
+    head.add(cap, box(0.3, 0.03, 0.18, dark, 0, 0.1, -0.27), box(0.17, 0.08, 0.02, paper, 0, 0.21, -0.245));
+    for (const x of [-0.052, -0.018, 0.018, 0.052]) head.add(box(0.018, 0.045, 0.022, dark, x, 0.21, -0.255)); // the patch's four letters
   }
   torso.add(head);
   root.add(legL, legR, torso);
@@ -354,13 +400,13 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure
 
   // kill leader's crown
   const crown = new THREE.Group();
-  const gold = ink.material(INK_IDS.ORANGE);
+  const gold = M(INK_IDS.ORANGE);
   crown.add(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.2, 0.12, 10, 1, true), gold));
   for (let i = 0; i < 5; i++) { const sp = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 4), gold); const a = (i / 5) * Math.PI * 2; sp.position.set(Math.cos(a) * 0.2, 0.12, Math.sin(a) * 0.2); crown.add(sp); }
-  crown.position.y = 2.08; // attached for the kill leader only
+  crown.position.y = skin === 5 ? 2.22 : skin === 6 ? 1.86 : 2.08; // attached for the kill leader only
 
   intern(root); intern(chute); intern(crown);
-  return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0, gunMats, held: null };
+  return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0, gunMats, held: null, hip };
 }
 
 // a body left where a player fell: flat on its back, arms out, nothing in hand. Feet stay on the
@@ -370,7 +416,7 @@ export function poseCorpse(f: Figure, yaw: number, seed: number): THREE.Group {
   g.rotation.y = yaw;
   if (f.held) { f.armR.remove(f.held); f.held = null; }
   f.root.position.set(0, 0.17, 0); f.root.rotation.set(Math.PI / 2, 0, 0);
-  f.torso.position.y = 0.78; f.torso.rotation.set(0, 0, 0);
+  f.torso.position.y = f.hip; f.torso.rotation.set(0, 0, 0);
   const k = (seed % 7) / 7;
   f.armL.rotation.set(-1.35, 0, -0.5 - k * 0.6); f.armR.rotation.set(-1.35, 0, 0.5 + (1 - k) * 0.6);
   f.legL.rotation.set(0, 0, 0.12 + k * 0.15); f.legR.rotation.set(0, 0, -0.12 - (1 - k) * 0.15);
@@ -408,13 +454,13 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   f.legL.rotation.x = sliding ? 1.3 : swing; // feet first in a slide
   f.legR.rotation.x = sliding ? 1.3 : -swing;
   f.torso.rotation.x = sliding ? 0.55 : run * -0.08;
-  f.torso.position.y = sliding ? 0.42 : 0.78 + Math.abs(Math.cos(f.phase)) * 0.04 * run;
+  f.torso.position.y = sliding ? f.hip * 0.54 : f.hip + Math.abs(Math.cos(f.phase)) * 0.04 * run;
   // arms: up holding the chute lines while gliding, otherwise aiming
   const aim = gliding ? 2.6 : pitch;
   f.armL.rotation.x = aim; f.armR.rotation.x = aim;
   f.head.rotation.x = gliding ? 0 : pitch * 0.6;
   if (down) { // knocked: flat on the belly, crawling on the elbows, no gun
-    f.torso.rotation.x = 1.35; f.torso.position.y = 0.3;
+    f.torso.rotation.x = 1.35; f.torso.position.y = f.hip * 0.38;
     f.legL.rotation.x = 1.45 + swing * 0.3; f.legR.rotation.x = 1.45 - swing * 0.3;
     f.armL.rotation.x = 2.4 + swing * 0.5; f.armR.rotation.x = 2.4 - swing * 0.5; f.head.rotation.x = -0.9;
   }
@@ -428,7 +474,7 @@ function hold(f: Figure, want: THREE.Group | null) {
 // a passenger, facing where they aim. Drivers keep both hands on the bars or the wheel; passengers hold
 // their gun up (they can shoot)
 export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | null, yaw: number, pitch: number, legs: number, drive: boolean, weapon: WeaponId | null, leader: boolean, dt: number) {
-  f.root.position.set(at.x, at.y - 0.78, at.z);
+  f.root.position.set(at.x, at.y - f.hip, at.z);
   if (q) f.root.quaternion.copy(q); else f.root.rotation.set(0, yaw, 0);
   let want: THREE.Group | null = null;
   if (!drive && weapon) {
@@ -441,7 +487,7 @@ export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | nu
   if (leader) f.crown.rotation.y += dt * 1.5;
   f.speed = 0; f.lastX = at.x; f.lastZ = at.z;
   f.legL.rotation.set(legs, 0, 0.1); f.legR.rotation.set(legs, 0, -0.1);
-  f.torso.position.y = 0.78; f.torso.rotation.x = drive ? -0.22 : 0;
+  f.torso.position.y = f.hip; f.torso.rotation.x = drive ? -0.22 : 0;
   const arm = drive ? -0.45 : pitch;
   f.armL.rotation.x = arm; f.armR.rotation.x = arm;
   f.head.rotation.x = drive ? 0.2 : pitch * 0.6;

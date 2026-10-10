@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 
 // ink palette, indexed by the ink id written in pass 1 (matches shared/src/world.ts INK)
-export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8 } as const;
+export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9 } as const;
 
 const passOneVert = /* glsl */`
 attribute float aInk;
@@ -71,6 +71,7 @@ vec3 inkColor(float id) {
   if (id < 4.5) return vec3(0.15, 0.52, 0.28);  // green
   if (id < 5.5) return vec3(0.88, 0.38, 0.62);  // pink
   if (id < 6.5) return vec3(0.45, 0.30, 0.18);  // brown
+  if (id > 8.5) return vec3(0.42, 0.20, 0.66);  // purple
   if (id > 7.5) return vec3(0.02, 0.60, 0.80);  // diamond
   return vec3(0.17, 0.18, 0.23);
 }
@@ -115,7 +116,8 @@ void main() {
     if (id > 1.5 && id < 2.5) col = mix(col, vec3(0.85, 0.85, 0.87), 0.45 * fade);
     if (id > 4.5 && id < 5.5) col = mix(col, vec3(0.99, 0.84, 0.92), 0.55 * fade);
     if (id > 5.5 && id < 6.5) col = mix(col, vec3(0.93, 0.85, 0.74), 0.6 * fade);
-    if (id > 7.5) col = mix(col, vec3(0.62, 0.95, 1.0), 0.8 * fade);
+    if (id > 8.5) col = mix(col, vec3(0.86, 0.78, 0.96), 0.6 * fade);
+    else if (id > 7.5) col = mix(col, vec3(0.62, 0.95, 1.0), 0.8 * fade);
     // hatching in the shadows, screen-space, two directions when it gets dark
     if (id < 6.5 || id > 7.5) {
       float s = b.r;

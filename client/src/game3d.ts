@@ -4,7 +4,7 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, covered, isAir, EYE_H, KNOCK, MATERIAL, MISSILE, PLAYER_HP, ROCKET, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { AXE, BUILD, covered, isAir, EYE_H, KNOCK, MATERIAL, MISSILE, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
 import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
@@ -423,7 +423,7 @@ export class Game3D {
     else return;
     if (this.world) y = this.world.groundAt(x, z, y + 0.5);
     this.elimBurst(x, y, z, victim);
-    const fig = buildFigure(this.ink, victim, this.seats.get(victim)?.skin ?? victim % 5);
+    const fig = buildFigure(this.ink, victim, this.seats.get(victim)?.skin ?? victim % SKINS.length);
     const g = poseCorpse(fig, yaw, victim);
     g.position.set(x, y, z);
     this.ink.scene.add(g);
@@ -458,7 +458,7 @@ export class Game3D {
   private avatar(id: number) {
     let a = this.avatars.get(id);
     if (a) return a;
-    const fig = buildFigure(this.ink, id, this.seats.get(id)?.skin ?? id % 5);
+    const fig = buildFigure(this.ink, id, this.seats.get(id)?.skin ?? id % SKINS.length);
     this.ink.scene.add(fig.root);
     const tag = document.createElement('div');
     tag.className = this.mates.has(id) ? 'tag mate' : 'tag';
@@ -1214,7 +1214,7 @@ export class Game3D {
       poseRider(a, at.pos, at.driver ? m.root.quaternion : null, o[4], o[5], SEATS[v[1]].legs, at.driver, o[8] >= 0 ? WEAPON_IDS[o[8]] : null, this.leader?.[0] === o[0], dt);
     }
     const me = this.self, p = this.pred;
-    const skin = this.seats.get(this.you)?.skin ?? this.you % 5;
+    const skin = this.seats.get(this.you)?.skin ?? this.you % SKINS.length;
     if (me?.alive && p && (this.tpNow || p.ride) && (!this.selfFig || this.selfSkin !== skin)) {
       if (this.selfFig) this.drop(this.selfFig.root);
       this.selfFig = buildFigure(this.ink, this.you, skin); this.selfSkin = skin;

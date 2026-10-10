@@ -6,7 +6,7 @@ import type { InkRenderer } from './ink.ts';
 import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure } from './models.ts';
 import { SKINS } from '../../shared/src/constants.ts';
 
-const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0]; // INK_IDS order
+const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0, 0x7b3fb0]; // INK_IDS order
 const RARITY_CSS: Record<string, string> = { common: '#7a7f8c', uncommon: '#2f9e44', rare: '#2f7fd6', epic: '#9c36b5', legendary: '#e8a317' };
 const PERK_TEXT: Record<PerkId, string> = {
   grenade: 'bounces, then a big blast', molotov: 'a patch of fire on the ground', shock: 'throws everyone through the air',

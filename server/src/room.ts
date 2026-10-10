@@ -4,7 +4,7 @@
 // routed to the right sockets.
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, matchPoints, playerNumber, RESULT_MS, ROOM_MAX, ROOM_MIN, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
+import { COUNTDOWN_MS, FILL_WAIT_MS, MODES, OPEN_ROOMS, matchPoints, playerNumber, RESULT_MS, ROOM_MAX, ROOM_MIN, SKINS, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
 import { BOT_NAMES } from '../../shared/src/bots.ts';
 import type { LobbyRoom, RoomPhase, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import type { MatchHost } from './host.ts';
@@ -160,7 +160,7 @@ export class Room {
           this.phase = 'live';
           this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
           for (const c of this.seats) c.team = teams.get(c.id) ?? c.id;
-          this.botSeats = bots.map((id, i) => ({ id, num: playerNumber(id * 7 + this.seed), name: BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? String(Math.floor(i / BOT_NAMES.length)) : ''), verified: false, team: teams.get(id) ?? id, skin: id % 5, bot: true }));
+          this.botSeats = bots.map((id, i) => ({ id, num: playerNumber(id * 7 + this.seed), name: BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? String(Math.floor(i / BOT_NAMES.length)) : ''), verified: false, team: teams.get(id) ?? id, skin: id % SKINS.length, bot: true }));
           this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries([...this.seats.map((c) => [c.id, c.team]), ...this.botSeats.map((b) => [b.id, b.team])]), bots);
           this.announce();
         }

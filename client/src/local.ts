@@ -1,7 +1,7 @@
 // Offline demo transport: plays the server's role inside the browser with bots and a simulated
 // fee stream. Same Sim, same snapshots, same input queue semantics, so the UI under test is real.
 import {
-  COUNTDOWN_MS, matchPoints, MAP_HALF, MODES, MODE_IDS, RESULT_MS, ROOM_MAX, SNAP_EVERY, TICK_HZ, epochEnd, epochOf, playerNumber, type Mode,
+  COUNTDOWN_MS, matchPoints, MAP_HALF, MODES, MODE_IDS, RESULT_MS, ROOM_MAX, SKINS, SNAP_EVERY, TICK_HZ, epochEnd, epochOf, playerNumber, type Mode,
 } from '../../shared/src/constants.ts';
 import type { ClientMsg, LobbyRoom, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, emptyInput, sanitizeInput, type TickInputs } from '../../shared/src/sim.ts';
@@ -125,7 +125,7 @@ export class LocalNet {
       case 'me': this.emitProfile(); break;
       case 'queue': {
         if (!this.me || this.room) break;
-        this.me.skin = Math.max(0, Math.min(4, Math.floor(Number(m.skin)) || 0));
+        this.me.skin = Math.max(0, Math.min(SKINS.length - 1, Math.floor(Number(m.skin)) || 0));
         const picked = this.fake.find((r) => r.id === m.room && r.state === 'waiting');
         this.openRoom(picked ? picked.mode : MODE_IDS.includes(m.mode as Mode) ? m.mode! : 'solo', picked?.id);
         if (picked) this.fake = this.fake.filter((r) => r !== picked);
@@ -154,7 +154,7 @@ export class LocalNet {
       delay += 12 + Math.random() * 30;
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
-        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * 5), bot: true });
+        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * SKINS.length), bot: true });
         room.bots.push(newBot(id, Math.random));
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }

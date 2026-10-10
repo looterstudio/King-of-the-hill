@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { BUILD, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { BUILD, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, SKINS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
 import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type ProfileView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
@@ -100,7 +100,7 @@ addEventListener('keydown', (e) => {
 try { game.thirdPerson = localStorage.getItem('pr_view') !== 'fp'; } catch { /* private window: third person */ }
 // the character you drop in as (remembered between visits)
 let mySkin = 0;
-try { mySkin = Math.max(0, Math.min(4, Number(localStorage.getItem('skin')) || 0)); } catch { /* private window */ }
+try { mySkin = Math.max(0, Math.min(SKINS.length - 1, Number(localStorage.getItem('skin')) || 0)); } catch { /* private window */ }
 setTimeout(() => renderSkins($('skinList'), mySkin, (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } }), 50);
 let flyVisible = true;
 try { new IntersectionObserver((e) => { flyVisible = e[0].isIntersecting; }).observe(flyCanvas); } catch { /* old browser: always draw */ }
