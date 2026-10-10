@@ -589,3 +589,63 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .howto-grid div:nth-child(5), .howto-grid div:nth-child(6) { grid-column: span 2; }
 .howto-grid span { color: var(--ink-soft); font-weight: 600; } .howto-grid b { color: var(--ink); }
 .howto p { margin: 10px 0 0; font-size: 14px; color: var(--ink-soft); } .howto small { float: right; font-family: var(--f-note); font-size: 18px; color: var(--red); }
+
+/* ---------- how to play: drawn cards (lobby, waiting room) ---------- */
+.howto-link { display: block; margin-top: 10px; text-align: center; font-size: 15px; color: var(--ink-soft); text-decoration: none; }
+.howto-link b { color: var(--red); text-decoration: underline wavy var(--red); text-underline-offset: 3px; }
+.howto-link:hover b { color: var(--ink); }
+.guide { margin: 34px 0 10px; scroll-margin-top: 20px; }
+.guide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.guide-card { --accent: var(--ink); display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--card); border: 2.5px solid var(--ink); border-radius: 8px 12px 7px 11px; padding: 12px 12px 13px; box-shadow: 3px 4px 0 var(--accent); }
+.guide-card:nth-child(odd) { rotate: -0.5deg; } .guide-card:nth-child(even) { rotate: 0.4deg; }
+.guide-card svg { width: 62px; height: 46px; fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+.guide-card svg text { fill: var(--accent); stroke: none; font-family: var(--f-hand); font-weight: 800; }
+.guide-card svg .fill, .guide-card svg .gem { fill: var(--accent); fill-opacity: .35; }
+.guide-card svg .dash { stroke-dasharray: 3 3; }
+.guide-card svg .hit { stroke: var(--red); stroke-width: 3; }
+.guide-card h4 { margin: 0; font-size: 17px; font-weight: 800; line-height: 1.15; }
+.guide-card .g-keys { margin: 3px 0 4px; font-size: 13px; font-weight: 700; color: var(--accent); }
+.guide-card kbd { font-family: var(--f-hand); font-size: 12px; font-weight: 800; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 5px; background: var(--card); }
+.guide-card p { margin: 0; font-size: 13.5px; line-height: 1.38; color: var(--ink-soft); }
+.guide-card.red { --accent: var(--red); } .guide-card.orange { --accent: #e8a317; } .guide-card.blue { --accent: var(--ink); }
+.guide-card.pink { --accent: #c03a8a; } .guide-card.green { --accent: #2a8a4a; } .guide-card.teal { --accent: var(--teal); }
+.guide-card.diamond { --accent: #0b9bbf; }
+.guide-grid.compact { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; text-align: left; }
+.guide-grid.compact .guide-card { padding: 9px 10px 10px; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; }
+.guide-grid.compact .guide-card svg { width: 48px; height: 36px; }
+.guide-grid.compact .guide-card h4 { font-size: 15px; }
+.guide-grid.compact .guide-card p { font-size: 12.5px; }
+.room-guide { width: min(1120px, 100%); margin: 8px 0 230px; } /* room to scroll the last cards above the pinned tip */
+
+/* ---------- ammo / reload / minigun, under the crosshair ---------- */
+.ammo-tip { position: absolute; left: 50%; top: calc(50% + 34px); transform: translateX(-50%); display: grid; justify-items: center; gap: 3px; font-size: 15px; font-weight: 800; text-align: center; white-space: nowrap; }
+.ammo-tip:empty { display: none; }
+.ammo-tip .red { color: var(--red); font-size: 19px; letter-spacing: .04em; animation: pop .25s ease-out; }
+.ammo-tip .soft { color: var(--ink-soft); font-weight: 700; font-size: 14px; }
+.ammo-tip kbd { font-family: inherit; font-size: 12px; font-weight: 800; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 5px; }
+.ammo-tip .meter { width: 120px; height: 7px; border: 1.8px solid var(--ink); border-radius: var(--wobble); overflow: hidden; }
+.ammo-tip .meter i { display: block; height: 100%; background: var(--ink); }
+.ammo-tip .meter.spin i { background: #c03a8a; }
+
+/* ---------- basic training checklist ---------- */
+.training { position: absolute; left: max(16px, 4vw); bottom: 205px; transform: rotate(-.4deg); width: 248px; display: grid; gap: 2px; padding: 9px 12px 10px; background: rgba(255,253,245,.9); border: 2.2px solid var(--ink); border-radius: 9px 13px 8px 12px; box-shadow: 3px 3px 0 #0b9bbf; mix-blend-mode: normal !important; }
+.training h4 { margin: 0 0 3px; font-size: 16px; font-weight: 800; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.training h4 small { font-family: var(--f-note); font-size: 16px; color: var(--ink-soft); font-weight: 700; }
+.training .drill { display: grid; grid-template-columns: 14px auto minmax(0, 1fr); gap: 6px; align-items: center; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.training .drill i { width: 11px; height: 11px; border: 1.8px solid currentColor; border-radius: 3px; }
+.training .drill kbd { font-family: inherit; font-size: 11px; font-weight: 800; border: 1.5px solid currentColor; border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.training .drill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.training .drill.done { color: #2a8a4a; } .training .drill.done span { text-decoration: line-through; text-decoration-thickness: 2px; }
+.training .drill.done i { background: #2a8a4a; box-shadow: inset 0 0 0 2px var(--card); }
+.training .drill.next { color: var(--ink); font-size: 14.5px; font-weight: 800; padding: 3px 0; }
+.training .drill.next kbd { background: var(--hl); color: var(--ink); border-color: var(--ink); font-size: 13px; }
+.training .drill.just { animation: pop .35s ease-out; }
+@media (max-height: 820px) { .training .drill:not(.next) { display: none; } } /* short screens: just the next thing to try */
+
+.room-tip { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); width: min(460px, calc(100vw - 32px)); z-index: 5; display: grid; gap: 4px; padding: 8px 10px 10px; background: rgba(255,253,245,.96); border: 2.5px solid var(--ink); border-radius: 10px 14px 9px 13px; box-shadow: 4px 4px 0 #0b9bbf; text-align: left; }
+.room-tip:empty { display: none; }
+.room-tip .tip-head { display: flex; gap: 8px; align-items: baseline; font-size: 14px; color: var(--ink-soft); }
+.room-tip .tip-head b { color: var(--red); font-family: var(--f-note); font-size: 20px; }
+.room-tip .tip-head a { margin-left: auto; color: var(--ink); font-weight: 700; }
+.room-tip .guide-card { box-shadow: none; border-width: 0; padding: 2px 0 0; rotate: 0deg; background: transparent; animation: pop .3s ease-out; }
+.room-guide { scroll-margin-top: 20px; }

@@ -3,10 +3,10 @@
 import * as THREE from 'three';
 import { PERKS, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type PerkId } from '../../shared/src/constants.ts';
 import type { InkRenderer } from './ink.ts';
-import { buildGun, buildItem, buildVehicle, buildAxe, buildFigure } from './models.ts';
+import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure } from './models.ts';
 import { SKINS } from '../../shared/src/constants.ts';
 
-const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4]; // INK_IDS order
+const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0]; // INK_IDS order
 const RARITY_CSS: Record<string, string> = { common: '#7a7f8c', uncommon: '#2f9e44', rare: '#2f7fd6', epic: '#9c36b5', legendary: '#e8a317' };
 const PERK_TEXT: Record<PerkId, string> = {
   grenade: 'bounces, then a big blast', molotov: 'a patch of fire on the ground', shock: 'throws everyone through the air',
@@ -48,7 +48,7 @@ export function renderArsenal(el: HTMLElement) {
     return card(picture(renderer, buildGun(id, gm), -Math.PI / 2 + 0.25), d.name, RARITY_CSS[d.rarity], d.rarity,
       `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : ''}${id === 'heavy' ? ' · headshot kills' : ''}`);
   });
-  guns.push(card(picture(renderer, buildAxe(gm), -Math.PI / 2 + 0.25), 'Axe', '#8b5a2b', 'always', 'chops walls, cars and people · gives material · places blocks'));
+  guns.push(card(picture(renderer, buildPickaxe(mats[6], mats[8]), -Math.PI / 2 + 0.25), 'Diamond Pickaxe', '#0fa3c4', 'always yours', 'X · left click breaks walls, cars, people (gives ▦) · right click builds a block'));
   const perks = (Object.keys(PERKS) as PerkId[]).map((k) => card(picture(renderer, buildItem(k, fakeInk), 0.6, 0.5), PERKS[k].name, RARITY_CSS[PERKS[k].rarity], `×${PERKS[k].count}`, PERK_TEXT[k]));
   const veh = VEHICLE_KINDS.map((k, i) => {
     const d = VEHICLES[k];

@@ -100,10 +100,16 @@
         </div>
 
         <button id="playBtn" class="btn play" disabled>Drop in · Solo</button>
+        <a href="#guide" id="howtoLink" class="howto-link">New here? <b>How to play</b> in one minute ↓</a>
         <div id="queueInfo" class="queue"></div>
         <div id="error" class="error" role="alert"></div>
       </aside>
     </main>
+
+    <section id="guide" class="guide" aria-label="how to play">
+      <h3 class="wall-title">How to play <span>(aim, shoot, break, build, slide: all of it in one minute)</span></h3>
+      <div id="guideCards"></div>
+    </section>
 
     <section class="stats-strip" aria-label="what is in the game">
       <div><b data-count="100">0</b><span>players a room</span></div>
@@ -119,7 +125,7 @@
     <section class="wall">
       <h3 class="wall-title">Everything on the island <span>(and yes, all of it works)</span></h3>
       <div class="wall-grid">
-      <article class="wall-card red"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M8 44 V18 H20 V44 M24 44 V8 H36 V30 L40 26 L44 34 L42 44 M48 44 L52 36 L56 44 M14 14 L18 6 M30 4 L32 0"/></svg><h4>Everything breaks</h4><p>Rockets blow holes in walls, tank shells and C4 knock them down, a plane flown into a tower can bring the whole thing down. Your axe chops anything for material; build with it, block by block.</p></article>
+      <article class="wall-card red"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M8 44 V18 H20 V44 M24 44 V8 H36 V30 L40 26 L44 34 L42 44 M48 44 L52 36 L56 44 M14 14 L18 6 M30 4 L32 0"/></svg><h4>Everything breaks</h4><p>Rockets blow holes in walls, tank shells and C4 knock them down, a plane flown into a tower can bring the whole thing down. Your diamond pickaxe breaks anything for material; build with it, block by block.</p></article>
       <article class="wall-card blue"><span class="badge">80</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M24 46 V6 H36 V46 M30 6 V0 M24 14 H36 M24 22 H36 M24 30 H36 M24 38 H36"/></svg><h4>The Needle</h4><p>An 80-floor megatower. Ride the updraft in its core to the top, loot rare guns on every floor, jump out of a window and glide off.</p></article>
       <article class="wall-card green"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M4 30 H40 V20 H52 L56 30 V36 H4 Z M8 36 m0 0 a5 5 0 1 0 10 0 M42 36 a5 5 0 1 0 10 0 M28 20 H56"/></svg><h4>Tanks and motorbikes</h4><p>Tanks drive through walls and their cannon flattens houses. Motorbikes are the fastest thing on wheels, with room for a friend on the back.</p></article>
       <article class="wall-card pink"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M10 40 H50 M18 40 L24 28 H36 L42 40 M30 28 V14 M24 20 H36"/></svg><h4>Knocked, not out</h4><p>250 health and 250 shield, fights that last. In duos and squads you get knocked first: crawl to cover and your team picks you up.</p></article>
@@ -195,16 +201,19 @@
       <div class="intro">
         <canvas id="mapPreview" width="340" height="340" aria-label="map of the island"></canvas>
         <ul class="tips">
-          <li><b>Glide in.</b> Look down to dive, look up to float.</li>
           <li><b>Golden pencil cases</b> (★ on the map) hold the legendaries.</li>
           <li><b>The last circle</b> always closes on the King's Tower.</li>
-          <li><kbd>E</kbd> open / pick up · <kbd>5</kbd> shield · <kbd>6</kbd> medkit · <kbd>G</kbd> perk · <kbd>Shift</kbd> sprint</li>
-          <li><kbd>X</kbd> axe: left click chops anything for material, right click or <kbd>B</kbd> places a block. Rockets, tanks and planes bring buildings down.</li>
+          <li>Rockets, tanks and planes bring buildings down.</li>
         </ul>
       </div>
     </div>
     <p id="roomFoot" class="room-foot">Up to 100 drop in. Every match scores points for the pot.</p>
     <button id="leaveBtn" class="btn ghost">Leave room</button>
+    <aside id="roomTip" class="room-tip" aria-live="polite"></aside>
+    <section id="roomGuideSec" class="room-guide" aria-label="how to play">
+      <h3 class="wall-title">While you wait: how to play</h3>
+      <div id="roomGuide"></div>
+    </section>
   </div>
 </section>
 
@@ -243,17 +252,21 @@
   </div>
   <div id="prompt" class="prompt"></div>
   <div id="axeHint" class="axe-hint hidden"></div>
+  <div id="ammoTip" class="ammo-tip"></div>
+  <div id="training" class="training hidden"></div>
   <div id="howto" class="howto hidden">
     <h3>How to play</h3>
     <div class="howto-grid">
       <div><kbd>WASD</kbd><span>move</span></div><div><kbd>Mouse</kbd><span>aim</span></div>
       <div><kbd>left click</kbd><span>shoot</span></div><div><kbd>right click</kbd><span>aim down sights</span></div>
       <div><kbd>E</kbd><span>open cases · pick up · get in vehicles · hold to revive</span></div>
-      <div><kbd>X</kbd><span>axe: <b>left click</b> chop anything (gives ▦) · <b>right click</b> or <b>B</b> place a block on the blue cube</span></div>
+      <div><kbd>X</kbd><span>diamond pickaxe: <b>left click</b> break anything (gives ▦) · <b>right click</b> or <b>B</b> build a block on the blue cube</span></div>
+      <div><kbd>R</kbd><span>reload (between fights)</span></div><div><kbd>Shift</kbd><span>sprint</span></div>
+      <div><kbd>Shift</kbd>+<kbd>C</kbd><span>slide (sprint, then C)</span></div><div><kbd>Space</kbd><span>jump · double · wall jump</span></div>
       <div><kbd>1-4</kbd><span>guns</span></div><div><kbd>5</kbd> <kbd>6</kbd><span>shield · medkit</span></div>
-      <div><kbd>G</kbd><span>perk / grenade</span></div><div><kbd>Space</kbd> <kbd>C</kbd> <kbd>Q</kbd><span>jump · slide · grapple</span></div>
+      <div><kbd>G</kbd><span>perk / grenade</span></div><div><kbd>Q</kbd><span>grapple (hold)</span></div>
     </div>
-    <p>Rockets, C4, tanks and planes break buildings. The storm closes on the King's Tower. <small>press any key</small></p>
+    <p>Minigun: hold left click, it spins up first. The storm closes on the King's Tower. <small>H shows this again</small></p>
   </div>
   <div id="useBar" class="use-bar hidden"><span id="useLabel"></span><div><i id="useFill"></i></div></div>
   <div id="nukeWarn" class="nuke-warn hidden"></div>
@@ -274,12 +287,14 @@
         <p><kbd>WASD</kbd> move · <kbd>Mouse</kbd> look · <kbd>Shift</kbd> sprint</p>
         <p><kbd>LMB</kbd> fire · <kbd>RMB</kbd> aim down sights</p>
         <p><kbd>Space</kbd> jump · again in the air = double jump · on a wall = wall jump</p>
-        <p><kbd>C</kbd>/<kbd>Ctrl</kbd> slide on the ground · air dash in the air</p>
+        <p><kbd>C</kbd>/<kbd>Ctrl</kbd> while sprinting = slide · in the air = air dash</p>
         <p><kbd>Q</kbd> hold to grapple and reel in</p>
         <p><kbd>E</kbd>/<kbd>F</kbd> open pencil cases · pick up or swap guns · get in and out of cars, helicopters, planes</p>
         <p><kbd>5</kbd> drink a shield · <kbd>6</kbd> use a medkit · <kbd>G</kbd> use your perk</p>
-        <p><kbd>R</kbd> reload · <kbd>1-4</kbd>/<kbd>wheel</kbd> switch weapon</p>
-        <p><kbd>X</kbd> axe · <kbd>left click</kbd> chop walls, cars, people (broken blocks give material) · <kbd>right click</kbd> or <kbd>B</kbd> place a block where the blue cube is</p>
+        <p><kbd>R</kbd> reload: do it between fights; an empty gun reloads when you click · <kbd>1-4</kbd>/<kbd>wheel</kbd> switch weapon</p>
+        <p><kbd>X</kbd> diamond pickaxe · <kbd>left click</kbd> break walls, cars, people (every block gives ▦ material) · <kbd>right click</kbd> or <kbd>B</kbd> build a block where the blue cube is</p>
+        <p>Minigun: hold <kbd>LMB</kbd>, the barrels spin up for a moment, then it shreds · big drum, slow reload</p>
+        <p><kbd>H</kbd> controls card · training checklist on the left while you learn</p>
         <p>Teammate knocked? Stand next to them and hold <kbd>E</kbd> for 5 s</p>
         <p><kbd>V</kbd> hold to talk to your squad · <kbd>U</kbd> mute them · in a vehicle: <kbd>N</kbd> next radio station · <kbd>M</kbd> radio off</p>
         <p>The Needle: step into the blue updraft in the core to fly up 80 floors; jump out of a window and your glider opens</p>

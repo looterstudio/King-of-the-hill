@@ -13,6 +13,7 @@ import { voice } from './voice.ts';
 import { World } from '../../shared/src/world.ts';
 import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
+import { Training, guideHTML, tipCardHTML } from './guide.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
@@ -40,6 +41,24 @@ flyover.ink.setQuality(0.75);
 // the arsenal pictures are drawn once, when the page is idle
 const idle = (window as unknown as { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback ?? ((f: () => void) => setTimeout(f, 300));
 idle(() => renderArsenal($('arsenal')));
+// how to play: drawn cards in the lobby and the waiting room, a checklist in your first matches
+$('guideCards').innerHTML = guideHTML();
+$('roomGuide').innerHTML = guideHTML(true);
+$('howtoLink').onclick = (e) => { e.preventDefault(); $('guide').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+$('roomTip').onclick = (e) => { if ((e.target as HTMLElement).closest('[data-all]')) { e.preventDefault(); $('roomGuideSec').scrollIntoView({ behavior: 'smooth', block: 'start' }); } };
+let roomTipAt = 0, roomTipI = 0;
+const training = new Training($('training'));
+// tips that teach as you play: each shows once a match and stops after a few matches
+let tipsSeen = new Set<string>();
+function tipOnce(key: string, text: string, ms: number, times = 3) {
+  if (tipsSeen.has(key)) return;
+  tipsSeen.add(key);
+  let n = 0;
+  try { n = Number(localStorage.getItem(`tip:${key}`)) || 0; localStorage.setItem(`tip:${key}`, String(n + 1)); } catch { /* private window */ }
+  if (n < times) hint(text, ms);
+}
+// what the training list watches between frames
+const learn = { yaw: 0, pitch: 0, look: 0, walk: 0, sprint: 0, x: 0, z: 0, grounded: false, glided: false, mats: 0, combat: 0 };
 // the radio: off -> station 1 -> 2 -> 3 -> off in the lobby; in a vehicle it comes on by itself
 radio.onChange = (name, tag) => {
   setHTML($('radioBtn'), `📻 <span>${esc(name)}</span>`);
@@ -52,9 +71,17 @@ $('radioBtn').onclick = () => {
   else { radio.stop(); radio.muted = true; setHTML($('radioBtn'), '📻 <span>radio off</span>'); }
 };
 addEventListener('keyup', (e) => { if (e.code === 'KeyV') void voice.talk(false); });
+addEventListener('blur', () => { void voice.talk(false); }); // V let go in another window
+// mid-match, Ctrl is slide: Ctrl+W (or a stray Ctrl+R) would close or reload the tab and lose the match
+addEventListener('beforeunload', (e) => { if (state.screen === 'game' && !state.over && game.self?.alive) { e.preventDefault(); e.returnValue = ''; } });
 let howtoDone = false, howtoAt = 0;
 function closeHowto() { howtoAt = 0; $('howto').classList.add('hidden'); }
-addEventListener('keydown', () => { if (howtoAt && performance.now() - howtoAt > 1200) closeHowto(); });
+function openHowto() { $('howto').classList.remove('hidden'); howtoAt = performance.now(); }
+addEventListener('keydown', (e) => {
+  if (state.screen === 'game' && !e.repeat && e.code === 'KeyH') { if (howtoAt) closeHowto(); else openHowto(); return; } // H: the controls card
+  if (state.screen === 'game' && !e.repeat && e.code === 'KeyT') training.toggle();                                    // T: the training list
+  if (howtoAt && performance.now() - howtoAt > 1200) closeHowto();
+});
 addEventListener('mousedown', () => { if (howtoAt && performance.now() - howtoAt > 1200) closeHowto(); });
 addEventListener('keydown', (e) => {
   if (state.screen !== 'game') return;
@@ -100,12 +127,17 @@ const state = {
 try { const m = localStorage.getItem('pr_mode') as Mode | null; if (m && m in MODES) state.mode = m; state.party = localStorage.getItem('pr_party') ?? ''; } catch { /* storage blocked */ }
 
 function show(s: Screen) {
+  const prev = state.screen;
   state.screen = s;
   $('lobby').classList.toggle('hidden', s !== 'lobby');
   $('waiting').classList.toggle('hidden', s !== 'waiting');
   $('hud').classList.toggle('hidden', s !== 'game');
   canvas.style.visibility = s === 'game' ? 'visible' : 'hidden';
-  if (s !== 'game') { input.unlock(); $('pause').classList.add('hidden'); sfx.engine(0, 0); }
+  if (s !== 'game') {
+    input.unlock(); $('pause').classList.add('hidden'); sfx.engine(0, 0); sfx.spin(0);
+    voice.stop(); if (prev === 'game' && radio.on) radio.stop(); // the vehicle radio doesn't follow you out of the match
+    document.body.classList.remove('knocked');
+  }
   if (s === 'lobby') { jar.resize(); flyover.ink.resize(); updatePlay(); }
 }
 
@@ -269,11 +301,13 @@ function feed(html: string, mine = false) {
   const f = $('feed'); f.prepend(el);
   while (f.children.length > 6) f.lastChild?.remove();
 }
+let bannerTimer = 0;
 function banner(word: string, sub: string, ink = false, ms = 0) {
   const b = $('banner');
   b.innerHTML = `<span class="big ${ink ? 'ink' : ''}">${word}${CIRCLE}</span>${sub ? `<small>${sub}</small>` : ''}`;
   b.classList.remove('hidden');
-  if (ms > 0) setTimeout(() => b.classList.add('hidden'), ms);
+  clearTimeout(bannerTimer); // an earlier banner's timer must not hide this one (Knocked, then Victory)
+  if (ms > 0) bannerTimer = window.setTimeout(() => b.classList.add('hidden'), ms);
 }
 let hintTimer = 0;
 function hint(text: string, ms = 2500) {
@@ -417,7 +451,20 @@ function drawMinimap() {
 }
 
 // ---------- messages ----------
+// the socket dropped: say so (a frozen match with no word was all you got); the reconnect's hello
+// brings you back to the lobby
+let lostAt = 0;
+net.onClose = () => {
+  if (!lostAt) lostAt = Date.now();
+  state.authed = false; updatePlay();
+  if (state.screen === 'game' && !state.over) { input.unlock(); banner('Connection lost', 'reconnecting to the game server…'); }
+  else $('me').textContent = 'Connection to the game server lost · reconnecting…';
+};
 net.on((m: ServerMsg) => {
+  if (m.t === 'hello' && lostAt) {
+    if (state.screen !== 'lobby') { $('banner').classList.add('hidden'); err('The connection dropped, so you left that match. You are back in the lobby.'); }
+    lostAt = 0;
+  }
   switch (m.t) {
     case 'hello':
       state.nonce = m.nonce; state.authed = false; updatePlay();
@@ -466,6 +513,7 @@ net.on((m: ServerMsg) => {
       if (m.state === 'waiting' || m.state === 'countdown') { if (state.screen !== 'waiting') shownSeats = new Set(); show('waiting'); renderSeats(); drawPreview(m.seed); }
       if (m.state === 'live') {
         state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set(); howtoDone = false;
+        tipsSeen = new Set(); training.reset(); Object.assign(learn, { look: 0, walk: 0, sprint: 0, glided: false, mats: 0, combat: 0 });
         game.setRoom(m.seed, m.seats, m.you);
         $('feed').innerHTML = '';
         // squad voice with your teammates (online matches; the demo's teammates are bots)
@@ -485,6 +533,7 @@ net.on((m: ServerMsg) => {
       break;
     case 'event': {
       if (m.kind === 'hit') {
+        if (m.by === state.you || m.victim === state.you) learn.combat = performance.now();
         if (m.by === state.you) {
           hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head); game.markHit(m.victim);
           if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); }
@@ -509,6 +558,7 @@ net.on((m: ServerMsg) => {
       if (m.kind === 'chop') {
         const cam = game.ink.camera.position;
         if (m.by === state.you || Math.hypot(m.x - cam.x, m.z - cam.z) < 40) sfx.chop(m.broke);
+        if (m.by === state.you && m.broke) training.tick('break');
         break;
       }
       if (m.kind === 'knock') {
@@ -531,6 +581,7 @@ net.on((m: ServerMsg) => {
       }
       if (m.by === state.you && m.victim !== state.you) { hint(m.head ? `headshot · ${label(m.victim)} eliminated` : `${label(m.victim)} eliminated`, 1800); sfx.elim(); hitmarker(m.head, true); }
       state.dead.add(m.victim);
+      if (m.cause !== 'left') game.onElim(m.victim);
       const mine = m.victim === state.you || m.by === state.you || game.mates.has(m.victim) || (m.by !== null && game.mates.has(m.by));
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : m.by === null ? 'a wreck' : label(m.by);
       feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : m.cause === 'ram' ? 'run over by ' : m.cause === 'boom' ? 'blown up by ' : ''}${esc(how)}</span>`, mine);
@@ -557,6 +608,52 @@ net.on((m: ServerMsg) => {
     }
   }
 });
+
+// ---------- teaching while you play ----------
+// the training list ticks itself off from what you actually do; the ammo line under the crosshair
+// says when to reload and how the minigun winds up
+function learnFrame(me: NonNullable<typeof game.self>, dt: number, w: string | null, mag: number) {
+  const body = game.me, def = w ? WEAPONS[w as keyof typeof WEAPONS] : null;
+  let tip = '';
+  training.setAlive(me.alive);
+  if (me.alive && body) {
+    learn.look += Math.min(0.3, Math.abs(input.yaw - learn.yaw) + Math.abs(input.pitch - learn.pitch)); // (the spawn heading snapping in is not you looking)
+    learn.yaw = input.yaw; learn.pitch = input.pitch;
+    if (learn.look > 2.5) training.tick('look');
+    if (body.gliding) learn.glided = true;
+    else if (learn.glided && body.grounded) training.tick('glide');
+    const step = Math.hypot(body.x - learn.x, body.z - learn.z);
+    learn.x = body.x; learn.z = body.z;
+    if (body.grounded && !body.ride && step < 2) learn.walk += step;
+    if (learn.walk > 8) training.tick('move');
+    if (body.grounded && !body.ride && Math.hypot(body.vx, body.vz) > 7.4) learn.sprint += dt;
+    if (learn.sprint > 1) training.tick('sprint');
+    if (learn.grounded && !body.grounded && body.vy > 3 && !body.ride && !body.gliding) training.tick('jump');
+    learn.grounded = body.grounded;
+    if (body.slideT > 0) training.tick('slide');
+    if (def && input.fire && mag > 0 && !body.gliding) training.tick('shoot');
+    if (def && input.aim) training.tick('ads');
+    if (me.reloadT > 0) training.tick('reload');
+    if (me.axe) training.tick('pick');
+    if (me.axe && me.mats < learn.mats) training.tick('build');
+    learn.mats = me.mats;
+    if (me.use) training.tick('heal');
+    training.update();
+    // first time with a gun, and with the minigun: how it works
+    if (def && w !== 'minigun') tipOnce('gun', 'left click shoot · right click aim · R reload', 3500);
+    if (w === 'minigun') tipOnce('minigun', `minigun · hold left click: it spins up, then shreds · ${def!.reload} s reload: do it in cover`, 6000, 4);
+    // a quiet moment with a half-empty gun: that is when to reload
+    if (def && def.mag > 4 && mag < def.mag / 2 && me.reloadT === 0 && performance.now() - learn.combat > 3500 && !body.gliding) tipOnce('calm', 'quiet moment · reload now (R) so the next fight starts full', 3500, 4);
+    // under the crosshair: reloading, empty, spinning up, low
+    if (def && !body.gliding && (!body.ride || body.seat > 0)) {
+      if (me.reloadT > 0) tip = `<span class="soft">reloading ${me.reloadT.toFixed(1)} s</span><div class="meter"><i style="width:${Math.round(Math.max(0, 1 - me.reloadT / def.reload) * 100)}%"></i></div>`;
+      else if (mag === 0) tip = '<span class="red">EMPTY</span><span class="soft">press <kbd>R</kbd> to reload</span>';
+      else if (def.spinUp && game.spinK > 0 && game.spinK < 1) tip = `<span class="soft">spinning up…</span><div class="meter spin"><i style="width:${Math.round(game.spinK * 100)}%"></i></div>`;
+      else if (def.mag > 4 && mag <= Math.floor(def.mag * 0.25)) tip = '<span class="soft">low ammo · <kbd>R</kbd> reload</span>';
+    }
+  }
+  setHTML($('ammoTip'), tip);
+}
 
 // ---------- input upload, 30 Hz ----------
 // 30 inputs per second of real time, whatever the timer does: a busy main thread (a heavy frame, a slow
@@ -640,8 +737,10 @@ function frame(now: number) {
       if (cd[2].textContent !== ss) { cd[2].textContent = ss; cd[2].classList.remove('tick'); void cd[2].offsetWidth; cd[2].classList.add('tick'); }
     }
   } else if (state.screen === 'waiting') {
+    // the bottom card: a new lesson every 6 s while you wait
+    if (performance.now() - roomTipAt > 6000) { roomTipAt = performance.now(); setHTML($('roomTip'), tipCardHTML(roomTipI++)); }
     const n = state.seats.length, counting = state.phase === 'countdown' && state.startsAt;
-    $('waitStatus').innerHTML = counting
+    $('waitStatus').innerHTML = lostAt ? '<small>connection lost</small>reconnecting…' : counting
       ? `<small>dropping in</small>${Math.max(0, Math.ceil((state.startsAt! - Date.now()) / 1000))}`
       : `<small>waiting for players</small>${n}<span class="of">/${ROOM_MAX}</span>`;
   } else {
@@ -659,9 +758,9 @@ function frame(now: number) {
       setText($('ammoMax'), def ? `/${def.mag}` : '');
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
       setHTML($('magTally'), def ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
-      setText($('weapon'), me.axe ? 'Axe' : def ? def.name : 'unarmed');
+      setText($('weapon'), me.axe ? 'Diamond Pickaxe' : def ? def.name : 'unarmed');
       $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
-      setHTML($('weapons'), `<li class="axe ${me.axe ? 'on' : ''}"><span><kbd>X</kbd> axe</span><em>▦ ${me.mats}</em></li>` + me.slots.map((s, i) => s
+      setHTML($('weapons'), `<li class="axe ${me.axe ? 'on' : ''}"><span><kbd>X</kbd> pickaxe</span><em>▦ ${me.mats}</em></li>` + me.slots.map((s, i) => s
         ? `<li class="${i === me.cur && !me.axe ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}${me.ups?.[i] ? `<b class="stars">${'★'.repeat(me.ups[i])}</b>` : ''}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
         : `<li class="empty"><span>empty</span><em></em></li>`).join(''));
       const shields = me.items.big + me.items.mini;
@@ -673,22 +772,18 @@ function frame(now: number) {
         : me.reviving > 0 ? { label: 'reviving teammate…', k: me.reviving / KNOCK.revive, cls: 'revive' }
         : me.down > 0 && me.reviveT > 0 ? { label: 'being picked up…', k: me.reviveT / KNOCK.revive, cls: 'revive' }
         : me.down > 0 ? { label: `KNOCKED · bleeding out ${Math.ceil(me.down)}s`, k: me.down / KNOCK.bleed, cls: 'bleed' } : null;
-      // how to play: the first few matches, once you land
-      if (!howtoDone && me.alive && game.me && !game.me.gliding) {
-        howtoDone = true;
-        let seen = 0;
-        try { seen = Number(localStorage.getItem('howto')) || 0; localStorage.setItem('howto', String(seen + 1)); } catch { /* private window */ }
-        if (seen < 3) { $('howto').classList.remove('hidden'); howtoAt = performance.now(); }
-      }
-      if (howtoAt && performance.now() - howtoAt > 14000) closeHowto();
-      // the axe: say what the buttons do and what you're aiming at
+      // how to play: once you land, point at the controls card (the training list is already up)
+      if (!howtoDone && me.alive && game.me && !game.me.gliding) { howtoDone = true; tipOnce('controls', 'H · all the controls  ·  T · hide the training list', 3500); }
+      if (howtoAt && performance.now() - howtoAt > 20000) closeHowto();
+      learnFrame(me, dt, w, mag);
+      // the pickaxe: say what the buttons do and what you're aiming at
       const axeOn = me.alive && me.axe && !game.me?.ride;
       $('axeHint').classList.toggle('hidden', !axeOn);
-      if (axeOn && (input.aim || input.isDown('KeyB')) && me.mats < BUILD.cost) hint('not enough material ▦ · chop something with left click first', 1200);
+      if (axeOn && (input.aim || input.isDown('KeyB')) && me.mats < BUILD.cost) hint('not enough material ▦ · break something with left click first', 1200);
       if (axeOn) {
         const aim = game.axeAim;
-        setHTML($('axeHint'), `<span class="red"><kbd>left click</kbd> chop${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
-          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>right click</kbd> or <kbd>B</kbd> place block at the blue cube (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> gun</span>`);
+        setHTML($('axeHint'), `<span class="red"><kbd>left click</kbd> break${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
+          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>right click</kbd> or <kbd>B</kbd> build a block at the blue cube (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> gun</span>`);
       }
       $('useBar').classList.toggle('hidden', !bar || !me.alive);
       if (bar) { setText($('useLabel'), bar.label); $('useFill').style.width = `${bar.k * 100}%`; $('useBar').dataset.kind = bar.cls; }
@@ -701,7 +796,7 @@ function frame(now: number) {
       $('crosshair').style.setProperty('--s', `${Math.round(6 + spread * 900)}px`);
       $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
       $('scope').classList.toggle('hidden', !scoped);
-      if (body?.gliding && me.alive) hint('gliding · look down to dive, look up to float', 400);
+      if (body?.gliding && me.alive) tipOnce('glide', 'gliding · look down to dive, look up to float · land anywhere', 5000, 5);
     }
     // teammates: name + health, struck out when they go down
     const sq = $('squad');

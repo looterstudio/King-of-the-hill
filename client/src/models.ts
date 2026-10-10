@@ -241,13 +241,21 @@ export function buildSupply(ink: InkRenderer): THREE.Group {
   return g;
 }
 
-// the axe: a wooden handle with a steel head, held blade forward
-export function buildAxe(m: GunMats): THREE.Group {
+// the diamond pickaxe: a wooden handle and a two-pointed diamond head, held points forward.
+// (In code it is still the "axe": the protocol bit and the sim constant kept their names.)
+export function buildPickaxe(wood: Mat, gem: Mat): THREE.Group {
   const g = new THREE.Group();
-  const handle = box(0.05, 0.05, 0.72, m.accent, 0, 0, -0.3);
-  const head = box(0.04, 0.2, 0.16, m.dark, 0, 0.07, -0.62);
-  const edge = box(0.045, 0.24, 0.04, m.body, 0, 0.07, -0.72);
-  g.add(handle, head, edge);
+  g.add(box(0.05, 0.05, 0.8, wood, 0, 0, -0.32));                       // handle
+  g.add(box(0.07, 0.09, 0.09, gem, 0, 0, -0.7));                        // socket
+  // the head: two arms sweeping back from the socket, each ending in a point
+  for (const s of [1, -1]) {
+    const arm = box(0.055, 0.26, 0.07, gem, 0, s * 0.15, -0.67);
+    arm.rotation.x = s * 0.35;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.14, 4), gem);
+    tip.position.set(0, s * 0.33, -0.6); tip.rotation.x = s > 0 ? 0.42 : Math.PI - 0.42; // up (down) and curving back
+    g.add(arm, tip);
+  }
+  g.add(box(0.06, 0.05, 0.05, wood, 0, 0, -0.76));                      // the handle's end through the head
   return g;
 }
 
@@ -255,7 +263,7 @@ export function buildAxe(m: GunMats): THREE.Group {
 export interface Figure {
   root: THREE.Group; torso: THREE.Group; head: THREE.Group;
   legL: THREE.Group; legR: THREE.Group; armL: THREE.Group; armR: THREE.Group;
-  guns: Map<WeaponId, THREE.Group>; axe: THREE.Group; chute: THREE.Group; crown: THREE.Group;
+  guns: Map<WeaponId, THREE.Group>; axe: THREE.Group; chute: THREE.Group; crown: THREE.Group; // axe: the diamond pickaxe
   phase: number; lastX: number; lastZ: number; speed: number;
   gunMats: GunMats; held: THREE.Group | null; // only what is in hand is in the scene (13 hidden guns cost every frame)
 }
@@ -286,7 +294,7 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure
   armL.rotation.y = -0.35; // left hand comes across to the handguard
   const guns = new Map<WeaponId, THREE.Group>(); // built the first time this player holds each one
   const gunMats = { body: ink.material(INK_IDS.BLUE), dark, accent: ink.material(INK_IDS.ORANGE) };
-  const axe = intern(buildAxe(gunMats));
+  const axe = intern(buildPickaxe(ink.material(INK_IDS.BROWN), ink.material(INK_IDS.DIAMOND)));
   axe.scale.setScalar(1.3); axe.position.set(0.02, -0.04, -0.4);
   torso.add(armL, armR);
 
@@ -341,6 +349,22 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % 5): Figure
   return { root, torso, head, legL, legR, armL, armR, guns, axe, chute, crown, phase: 0, lastX: 0, lastZ: 0, speed: 0, gunMats, held: null };
 }
 
+// a body left where a player fell: flat on its back, arms out, nothing in hand. Feet stay on the
+// spot, the body lies back from where they faced
+export function poseCorpse(f: Figure, yaw: number, seed: number): THREE.Group {
+  const g = new THREE.Group();
+  g.rotation.y = yaw;
+  if (f.held) { f.armR.remove(f.held); f.held = null; }
+  f.root.position.set(0, 0.17, 0); f.root.rotation.set(Math.PI / 2, 0, 0);
+  f.torso.position.y = 0.78; f.torso.rotation.set(0, 0, 0);
+  const k = (seed % 7) / 7;
+  f.armL.rotation.set(-1.35, 0, -0.5 - k * 0.6); f.armR.rotation.set(-1.35, 0, 0.5 + (1 - k) * 0.6);
+  f.legL.rotation.set(0, 0, 0.12 + k * 0.15); f.legR.rotation.set(0, 0, -0.12 - (1 - k) * 0.15);
+  f.head.rotation.set(0, (k - 0.5) * 1.4, 0);
+  g.add(f.root);
+  return g;
+}
+
 // pose a figure for this frame from its interpolated state
 export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number, down = false, axe = false) {
   const moved = Math.hypot(x - f.lastX, z - f.lastZ);
@@ -348,7 +372,7 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   f.lastX = x; f.lastZ = z;
   f.root.position.set(x, y, z);
   f.root.rotation.y = yaw;
-  // what is in hand: the axe, the gun, or nothing (gliding, knocked)
+  // what is in hand: the pickaxe, the gun, or nothing (gliding, knocked)
   let want: THREE.Group | null = null;
   if (!gliding && !down) {
     if (axe) want = f.axe;

@@ -27,7 +27,8 @@ class Voice {
   stop() {
     for (const { pc, audio } of this.pcs.values()) { pc.close(); audio.srcObject = null; audio.remove(); }
     this.pcs.clear();
-    this.talking = false;
+    this.talking = false; this.want = false;
+    this.mic?.stop(); this.mic = null; // hand the microphone back (the browser's recording light goes off)
   }
 
   private peer(id: number) {
@@ -68,18 +69,23 @@ class Voice {
   }
 
   // push to talk: the first press asks for the microphone
+  // (V let go while the permission prompt was open must not leave the mic open once it is granted)
+  private want = false;
   async talk(on: boolean) {
+    this.want = on;
     if (!this.active) return;
     if (on && !this.mic && !this.asking) {
       this.asking = true;
       try {
         const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-        this.mic = st.getAudioTracks()[0];
+        const track = st.getAudioTracks()[0];
+        if (!this.active) { track?.stop(); return; } // the match ended while we asked
+        this.mic = track;
         for (const { pc } of this.pcs.values()) for (const t of pc.getTransceivers()) void t.sender.replaceTrack(this.mic);
       } catch { /* no mic or refused */ } finally { this.asking = false; }
     }
-    if (this.mic) this.mic.enabled = on;
-    this.talking = on && !!this.mic;
+    if (this.mic) this.mic.enabled = this.want;
+    this.talking = this.want && !!this.mic;
   }
   setDeaf(d: boolean) { this.deaf = d; for (const { audio } of this.pcs.values()) audio.muted = d; }
   // who is talking right now (a quick level meter on each teammate's stream)

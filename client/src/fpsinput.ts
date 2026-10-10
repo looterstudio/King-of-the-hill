@@ -30,7 +30,7 @@ export class FpsInput {
       if (e.code === 'KeyG') this.latched.perk = true;
       if (e.code === 'Digit5') this.latched.item = 1;
       if (e.code === 'Digit6') this.latched.item = 2;
-      if (['Space', 'Tab', 'KeyC', 'ControlLeft'].includes(e.code)) e.preventDefault();
+      if (['Space', 'Tab', 'KeyC', 'ControlLeft'].includes(e.code) || e.ctrlKey) e.preventDefault(); // Ctrl is slide: no Ctrl+S/D/F browser dialogs mid-fight
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => { this.keys.clear(); this.fire = false; this.aim = false; });
@@ -41,7 +41,16 @@ export class FpsInput {
     });
     addEventListener('mouseup', (e) => { if (e.button === 0) this.fire = false; if (e.button === 2) this.aim = false; });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
-    addEventListener('wheel', (e) => { if (this.locked) this.latched.slot = e.deltaY > 0 ? -1 : -2; }, { passive: true });
+    // a trackpad sends dozens of tiny wheel events per swipe: step one weapon per notch's worth of scroll
+    let acc = 0, last = 0, stepped = 0;
+    addEventListener('wheel', (e) => {
+      if (!this.locked) return;
+      const now = performance.now();
+      if (now - last > 250) acc = 0;
+      last = now;
+      acc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      if (Math.abs(acc) >= 50 && now - stepped > 120) { this.latched.slot = acc > 0 ? -1 : -2; acc = 0; stepped = now; }
+    }, { passive: true });
     addEventListener('mousemove', (e) => {
       if (!this.locked) return;
       const k = 0.0022 * this.sens * (this.aim ? 0.55 : 1);

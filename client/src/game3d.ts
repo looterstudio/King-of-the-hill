@@ -8,7 +8,7 @@ import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE
 import { moveStep, spreadFor, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildAxe, buildCase, buildFigure, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, type Figure, type VehicleModel } from './models.ts';
+import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
@@ -76,6 +76,9 @@ export class Game3D {
   private sepIdx = new Map<number, THREE.Mesh>(); // boxes drawn as their own mesh (forts)
   private falling: { g: THREE.Object3D; t: number; v: number; rx: number; rz: number; land?: number; dust?: boolean }[] = [];
   private debris: { m: THREE.Mesh; vx: number; vy: number; vz: number; t: number }[] = [];
+  private corpses: { g: THREE.Group; t: number }[] = [];
+  // your own death: the camera pulls up off your body for a moment before it follows anyone else
+  private deathCam: { x: number; y: number; z: number; yaw: number; t: number } | null = null;
   private axeView: THREE.Group | null = null;
   private axeSwing = 0;
   private axeLocal = 0;
@@ -88,6 +91,9 @@ export class Game3D {
   caption = ''; // the lobby flyover: the place on screen
   private bob = 0;
   private localCd = 0;
+  private spinLocal = 0;   // minigun barrels, predicted from our own trigger
+  private fireHeld = false;
+  get spinK() { const w = this.weapon, s = w ? WEAPONS[w].spinUp : 0; return s ? this.spinLocal / s : 0; }
   private time = 0;
   private tagLayer: HTMLDivElement;
   private poiTags: HTMLDivElement[] = [];
@@ -132,7 +138,8 @@ export class Game3D {
     this.loot.clear(); this.cases.clear(); this.fx.clear(); this.builds.clear(); this.booms = [];
     for (const f of this.falling) this.drop(f.g);
     for (const d of this.debris) this.drop(d.m);
-    this.falling = []; this.debris = []; this.shardCache = null;
+    for (const c of this.corpses) this.drop(c.g);
+    this.falling = []; this.debris = []; this.corpses = []; this.deathCam = null; this.shardCache = null;
     for (const m of this.vmodels.values()) this.drop(m.root);
     this.vmodels.clear(); this.drops = []; this.vehiclesNow = [];
     this.buildWorld(new World(seed)); // always fresh: forts from the last match must not linger
@@ -366,6 +373,36 @@ export class Game3D {
     this.booms.push({ m, t: 0, r: nuke ? r * 0.8 : r * 0.6, life: nuke ? 1.4 : 0.4 });
   }
 
+  // ---------------- the fallen ----------------
+  // a player is out: leave their body on the ground where they fell (where we last saw them; one we
+  // never saw leaves nothing). Bodies stay 90 s, the oldest go first past 24
+  onElim(victim: number) {
+    let x: number, y: number, z: number, yaw: number;
+    const a = this.avatars.get(victim), o = this.infoOf(victim);
+    const b = this.pred ?? this.self;
+    if (victim === this.you && b && this.self) {
+      x = b.x; y = b.y; z = b.z; yaw = this.self.yaw;
+      if (b.ride && !b.seat) return; // blown up in the driver's seat: the wreck is the body
+    } else if (a?.root.visible) { x = a.root.position.x; y = a.root.position.y; z = a.root.position.z; yaw = a.root.rotation.y; }
+    else if (o) { if (o[7] & OTHER_RIDE) return; x = o[1]; y = o[2]; z = o[3]; yaw = o[4]; }
+    else return;
+    if (this.world) y = this.world.groundAt(x, z, y + 0.5);
+    const fig = buildFigure(this.ink, victim, this.seats.get(victim)?.skin ?? victim % 5);
+    const g = poseCorpse(fig, yaw, victim);
+    g.position.set(x, y, z);
+    this.ink.scene.add(g);
+    this.corpses.push({ g, t: 0 });
+    if (this.corpses.length > 24) this.drop(this.corpses.shift()!.g);
+    if (victim === this.you) this.deathCam = { x, y, z, yaw, t: 0 };
+  }
+  private stepCorpses(dt: number) {
+    for (const c of this.corpses) {
+      c.t += dt;
+      if (c.t > 88) c.g.position.y -= dt * 0.6; // the last two seconds: sink away
+    }
+    while (this.corpses.length && this.corpses[0].t > 90) this.drop(this.corpses.shift()!.g);
+  }
+
   // ---------------- avatars ----------------
   private avatar(id: number) {
     let a = this.avatars.get(id);
@@ -388,8 +425,13 @@ export class Game3D {
       g.scale.setScalar(0.62); g.position.set(0.2, -0.2, -0.5); g.visible = false;
       this.ink.viewScene.add(g); this.guns.set(id, g);
     }
-    const axe = buildAxe(mats);
-    axe.scale.setScalar(0.75); axe.position.set(0.28, -0.3, -0.35); axe.visible = false;
+    // held in profile so the two-pointed head reads: the handle runs up and left from the hand, the
+    // head at its top. The outer group only swings (a pitch about the screen's x axis)
+    const model = buildPickaxe(this.ink.material(INK_IDS.BROWN, true), this.ink.material(INK_IDS.DIAMOND, true));
+    model.rotation.y = 1.25;
+    const tilt = new THREE.Group(); tilt.rotation.z = -0.6; tilt.add(model);
+    const axe = new THREE.Group(); axe.add(tilt);
+    axe.scale.setScalar(0.55); axe.position.set(0.36, -0.36, -0.5); axe.visible = false;
     this.ink.viewScene.add(axe); this.axeView = axe;
     // where a block would go: a wire cube, shown while the axe is out
     this.ghost = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02)), new THREE.LineBasicMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.9, depthTest: false }));
@@ -500,7 +542,9 @@ export class Game3D {
       }
     }
     if (!s.self) return;
+    const reloading = (this.self?.reloadT ?? 0) > 0;
     this.self = s.self;
+    if (s.self.alive && s.self.reloadT > 0 && !reloading) sfx.reload(s.self.reloadT); // the server started a reload (R, or firing on empty)
     if (!s.self.alive && s.watch !== undefined && s.watch !== this.you) this.watch = s.watch;
     if (!this.world) return;
     if (!s.self.alive) { this.pred = null; return; }
@@ -530,7 +574,6 @@ export class Game3D {
       slot = filled[(at + (slot === -1 ? 1 : -1) + n) % n] + 1;
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
-    if (c.reload && this.self.reloadT === 0) sfx.reload();
     const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
@@ -541,10 +584,19 @@ export class Game3D {
     this.localCd = Math.max(0, this.localCd - DT);
     this.axeLocal = Math.max(0, this.axeLocal - DT);
     if (this.self.axe && c.fire && this.axeLocal === 0 && !this.pred.gliding && !this.pred.ride && !this.self.use) { this.axeLocal = AXE.cd; this.axeSwing = 1; sfx.swing(); }
-    const w = this.weapon;
-    if (w && c.fire && this.localCd === 0 && this.self.mags[this.self.cur] > 0 && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use && (!covered(this.pred.ride) || this.pred.seat > 0)) {
+    const w = this.weapon, mag = this.self.mags[this.self.cur] ?? 0;
+    const ready = !!w && this.self.reloadT === 0 && !this.pred.gliding && !this.self.use && (!covered(this.pred.ride) || this.pred.seat > 0);
+    // the minigun spins up while the trigger is held (the same rule as the sim), and you hear it
+    const spinUp = w ? WEAPONS[w].spinUp ?? 0 : 0;
+    const was = this.spinLocal;
+    this.spinLocal = spinUp && ready && mag > 0 && c.fire ? Math.min(spinUp, this.spinLocal + DT) : spinUp && ready ? Math.max(0, this.spinLocal - DT * 2) : 0;
+    if (spinUp && was < spinUp && this.spinLocal >= spinUp) sfx.spunUp();
+    sfx.spin(spinUp ? this.spinLocal / spinUp : 0);
+    if (c.fire && !this.fireHeld && w && mag === 0 && this.self.reloadT === 0) sfx.dry(); // click: empty (the sim starts the reload)
+    this.fireHeld = c.fire;
+    if (w && c.fire && this.localCd === 0 && mag > 0 && ready) {
       const def = WEAPONS[w];
-      if (!def.spinUp || this.self.spin >= def.spinUp - 0.05) {
+      if (!def.spinUp || this.spinLocal >= def.spinUp - 0.05) {
         this.localCd = def.burst ? def.cd + 0.15 : def.cd;
         this.gunKick = 1;
         sfx.shot(w);
@@ -721,6 +773,7 @@ export class Game3D {
   // ---------------- frame ----------------
   frame(dt: number, look: { yaw: number; pitch: number; aim: boolean }) {
     this.lookYaw = look.yaw;
+    if (!this.self?.alive && this.spinLocal) { this.spinLocal = 0; sfx.spin(0); }
     if (!this.world) return;
     this.time += dt;
     const cam = this.ink.camera;
@@ -759,6 +812,18 @@ export class Game3D {
       const sprinting = this.pred.grounded && speed > 7.4 && this.pred.slideT <= 0;
       const fov = 78 / zoom + (this.pred.dashT > 0 || this.pred.hook ? 8 : sprinting || this.pred.slideT > 0 ? 7 : 0);
       if (Math.abs(cam.fov - fov) > 0.05) { cam.fov += (fov - cam.fov) * Math.min(1, dt * 14); cam.updateProjectionMatrix(); }
+    } else if (this.deathCam && this.deathCam.t < 3.2 && !this.free) {
+      // eliminated: rise up and back from your own body, looking down at it
+      const d = this.deathCam, k = Math.min(1, d.t / 1.6), ease = k * k * (3 - 2 * k);
+      d.t += dt;
+      // pulled in when a wall or a roof edge is in the way, so the body stays in sight
+      const bx = d.x + Math.sin(d.yaw) * 0.9, bz = d.z + Math.cos(d.yaw) * 0.9, by = d.y + 0.4;
+      let ex = d.x - Math.sin(d.yaw) * (1 + ease * 1.4) - bx, ey = 1.2 + ease * 1.1, ez = d.z - Math.cos(d.yaw) * (1 + ease * 1.4) - bz;
+      const len = Math.hypot(ex, ey, ez), hit = this.world.raycast(bx, by, bz, ex / len, ey / len, ez / len, len);
+      if (hit < len) { const f = Math.max(0.25, (hit - 0.4) / len); ex *= f; ey *= f; ez *= f; }
+      cam.position.set(bx + ex, by + ey, bz + ez);
+      cam.lookAt(bx, d.y + 0.2, bz);
+      if (cam.fov !== 78) { cam.fov = 78; cam.updateProjectionMatrix(); }
     } else if (this.free) {
       cam.position.copy(this.free);
       cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
@@ -888,8 +953,8 @@ export class Game3D {
       this.axeView.visible = axeOut;
       this.axeSwing = Math.max(0, this.axeSwing - dt * 4.5);
       const s = Math.sin(this.axeSwing * Math.PI);
-      this.axeView.rotation.set(0.5 - s * 1.5, 0.15, -0.2 + s * 0.3);
-      this.axeView.position.set(0.28 - s * 0.1, -0.3 + Math.sin(this.bob) * 0.012, -0.35 - s * 0.15);
+      this.axeView.rotation.set(-s * 1.3, 0, s * 0.25);
+      this.axeView.position.set(0.36 - s * 0.08, -0.36 + Math.sin(this.bob) * 0.012, -0.5 - s * 0.12);
     }
     // with the axe out: outline what a swing would hit (the 2 m block a wall breaks into there)
     this.axeAim = null;
@@ -933,6 +998,7 @@ export class Game3D {
     }
 
     this.drawVehicles(dt);
+    this.stepCorpses(dt);
 
     this.placeNames(innerWidth, innerHeight);
     this.updatePrompt();

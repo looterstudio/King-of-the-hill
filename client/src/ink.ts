@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 
 // ink palette, indexed by the ink id written in pass 1 (matches shared/src/world.ts INK)
-export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7 } as const;
+export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8 } as const;
 
 const passOneVert = /* glsl */`
 attribute float aInk;
@@ -41,7 +41,7 @@ void main() {
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;
   float shade = clamp(dot(n, uLight) * 0.5 + 0.5, 0.0, 1.0);
-  gl_FragColor = vec4(shade, (vInk + 0.5) / 8.0, n.x * 0.5 + 0.5, n.y * 0.5 + 0.5);
+  gl_FragColor = vec4(shade, (vInk + 0.5) / 16.0, n.x * 0.5 + 0.5, n.y * 0.5 + 0.5);
 }`;
 
 const postVert = /* glsl */`
@@ -71,11 +71,12 @@ vec3 inkColor(float id) {
   if (id < 4.5) return vec3(0.15, 0.52, 0.28);  // green
   if (id < 5.5) return vec3(0.88, 0.38, 0.62);  // pink
   if (id < 6.5) return vec3(0.45, 0.30, 0.18);  // brown
+  if (id > 7.5) return vec3(0.02, 0.60, 0.80);  // diamond
   return vec3(0.17, 0.18, 0.23);
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float linDepth(float d) { float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }
-float inkId(vec4 b) { return floor(b.g * 8.0); }
+float inkId(vec4 b) { return floor(b.g * 16.0); } // a half-float target: 16 ids fit with room to spare
 
 void main() {
   vec2 px = 1.0 / uRes;
@@ -114,8 +115,9 @@ void main() {
     if (id > 1.5 && id < 2.5) col = mix(col, vec3(0.85, 0.85, 0.87), 0.45 * fade);
     if (id > 4.5 && id < 5.5) col = mix(col, vec3(0.99, 0.84, 0.92), 0.55 * fade);
     if (id > 5.5 && id < 6.5) col = mix(col, vec3(0.93, 0.85, 0.74), 0.6 * fade);
+    if (id > 7.5) col = mix(col, vec3(0.62, 0.95, 1.0), 0.8 * fade);
     // hatching in the shadows, screen-space, two directions when it gets dark
-    if (id < 6.5) {
+    if (id < 6.5 || id > 7.5) {
       float s = b.r;
       float h1 = step(mod(frag.x + frag.y, 6.0 * uPx), 1.3 * uPx) * (1.0 - smoothstep(0.45, 0.62, s));
       float h2 = step(mod(frag.x - frag.y, 6.0 * uPx), 1.3 * uPx) * (1.0 - smoothstep(0.22, 0.36, s));
@@ -132,7 +134,7 @@ void main() {
     vec2 n0 = b.ba * 2.0 - 1.0, n1 = bl.ba * 2.0 - 1.0, n2 = bu.ba * 2.0 - 1.0;
     edge = max(edge, smoothstep(0.25, 0.5, length(n0 - n1) + length(n0 - n2)) * 0.9);
     if (inkId(bl) != id || inkId(bu) != id) edge = max(edge, 0.9);
-    if (id > 6.5) edge *= 0.6; // the ground keeps only the contact lines
+    if (id > 6.5 && id < 7.5) edge *= 0.6; // the ground keeps only the contact lines
     col = mix(col, ink, edge * (0.25 + 0.75 * fade));
 
     // circles drawn on the ground: next safe zone (blue dashes), storm edge (red)

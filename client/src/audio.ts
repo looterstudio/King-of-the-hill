@@ -38,6 +38,30 @@ class Sfx {
     this.eng.gain.gain.setTargetAtTime(ride === 2 ? 0.06 : 0.045, t, 0.15);
   }
 
+  // the minigun's barrels: a motor whine that climbs as they spin up and winds down when you let go,
+  // so you hear when it is about to fire. k = 0 still, 1 full speed
+  private whirr: { osc: OscillatorNode; buzz: OscillatorNode; gain: GainNode; bp: BiquadFilterNode } | null = null;
+  spin(k: number) {
+    const c = this.ctx;
+    if (!c || !this.master) return;
+    if (k <= 0.001 || !this.enabled) { if (this.whirr) this.whirr.gain.gain.setTargetAtTime(0, c.currentTime, 0.12); return; }
+    if (!this.whirr) {
+      const osc = c.createOscillator(), buzz = c.createOscillator(), gain = c.createGain(), bp = c.createBiquadFilter();
+      osc.type = 'sawtooth'; buzz.type = 'square'; bp.type = 'bandpass'; bp.Q.value = 2.5; gain.gain.value = 0;
+      osc.connect(bp); buzz.connect(bp); bp.connect(gain); gain.connect(this.master); osc.start(); buzz.start();
+      this.whirr = { osc, buzz, gain, bp };
+    }
+    const t = c.currentTime;
+    this.whirr.osc.frequency.setTargetAtTime(70 + k * 360, t, 0.05);
+    this.whirr.buzz.frequency.setTargetAtTime(35 + k * 180, t, 0.05);
+    this.whirr.bp.frequency.setTargetAtTime(500 + k * 1600, t, 0.05);
+    this.whirr.gain.gain.setTargetAtTime(0.025 + k * 0.05, t, 0.04);
+  }
+  // full speed reached: a click as the bolt engages
+  spunUp() { if (this.ctx && this.enabled) { this.burst(4200, 4, 0.18, 0.03, 'bandpass'); this.tone(900, 1400, 0.06, 0.06, 'square'); } }
+  // pulling the trigger on an empty gun
+  dry() { if (this.ctx && this.enabled) this.burst(3800, 6, 0.2, 0.025, 'bandpass'); }
+
   private env(g: GainNode, t: number, peak: number, decay: number) {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(peak, t + 0.005);
@@ -69,7 +93,7 @@ class Sfx {
     if (w === 'rocket' || w === 'stinger') { this.burst(500, 0.6, 0.8 * v, 0.6); this.tone(160, 50, 0.4 * v, 0.5, 'sawtooth'); return; }
     if (w === 'heavy' || w === 'hunting') { this.burst(900, 0.7, 0.9 * v, w === 'heavy' ? 0.8 : 0.5); this.tone(w === 'heavy' ? 80 : 120, 35, 0.55 * v, 0.45, 'triangle'); }
     else if (w === 'tac' || w === 'pump') { this.burst(1400, 0.5, 0.85 * v, 0.35); this.tone(90, 45, 0.35 * v, 0.25, 'triangle'); }
-    else if (w === 'minigun') { this.burst(2600, 1, 0.35 * v, 0.06); }
+    else if (w === 'minigun') { this.burst(1900, 0.8, 0.5 * v, 0.07); this.tone(150, 70, 0.16 * v, 0.05, 'square'); }
     else if (w === 'pistol') { this.burst(2600, 0.9, 0.45 * v, 0.1); this.tone(220, 90, 0.15 * v, 0.07, 'square'); }
     else { this.burst(w === 'scar' ? 1900 : 2200, 0.8, 0.5 * v, 0.12); this.tone(w === 'scar' ? 130 : 160, 70, 0.22 * v, 0.08, 'square'); }
   }
@@ -80,7 +104,14 @@ class Sfx {
   }
   hurt() { if (this.ctx && this.enabled) { this.burst(500, 1, 0.4, 0.15); this.tone(180, 90, 0.25, 0.15, 'sawtooth'); } }
   elim() { if (this.ctx && this.enabled) { this.tone(880, 880, 0.3, 0.1, 'square'); this.tone(1320, 1320, 0.3, 0.16, 'square', 0.09); } }
-  reload() { if (this.ctx && this.enabled) { this.burst(3000, 3, 0.25, 0.04, 'bandpass'); setTimeout(() => this.ctx && this.burst(2400, 3, 0.25, 0.05, 'bandpass'), 180); } }
+  // a reload you can hear through: the mag (or drum) comes out, goes in, and the gun is racked when
+  // it is ready to fire again (the last click lands as the reload ends)
+  reload(secs = 1.5) {
+    if (!this.ctx || !this.enabled) return;
+    this.burst(3000, 3, 0.25, 0.04, 'bandpass');
+    setTimeout(() => this.ctx && this.burst(2400, 3, 0.25, 0.05, 'bandpass'), Math.min(600, secs * 300));
+    setTimeout(() => { if (this.ctx) { this.burst(1800, 2.5, 0.3, 0.06, 'bandpass'); this.tone(700, 500, 0.05, 0.05, 'square'); } }, Math.max(250, secs * 1000 - 120));
+  }
   boom(nuke: boolean, distance: number) {
     if (!this.ctx || !this.enabled) return;
     const v = Math.max(0.05, 1 - distance / (nuke ? 500 : 160));
