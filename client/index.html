@@ -37,11 +37,11 @@
         <p class="tagline">Drop in. Loot up. <span>Take the hill.</span></p>
         <div class="jar-wrap">
           <canvas id="jar"></canvas>
-          <svg class="stamp" viewBox="0 0 120 120" aria-label="paid out every 6 hours">
+          <svg class="stamp" viewBox="0 0 120 120" aria-label="the winner takes the pot every hour">
             <defs><path id="stampRing" d="M60 60 m-44 0 a44 44 0 1 1 88 0 a44 44 0 1 1 -88 0"/></defs>
             <circle cx="60" cy="60" r="56"/><circle cx="60" cy="60" r="33"/>
-            <text><textPath href="#stampRing" startOffset="0">PAID OUT ★ EVERY 6 HOURS ★ PAID OUT ★ EVERY 6 HOURS ★</textPath></text>
-            <text class="stamp-mid" x="60" y="58">6h</text><text class="stamp-sub" x="60" y="75">payout</text>
+            <text><textPath href="#stampRing" startOffset="0">WINNER TAKES IT ★ EVERY HOUR ★ WINNER TAKES IT ★ EVERY HOUR ★</textPath></text>
+            <text class="stamp-mid" x="60" y="58">1h</text><text class="stamp-sub" x="60" y="75">payout</text>
           </svg>
         </div>
         <div class="prize">
@@ -52,7 +52,7 @@
           <div class="draw-row"><span>next payout in</span>
             <span class="cd" id="countdown"><b>--</b><i>h</i><b>--</b><i>m</i><b>--</b><i>s</i></span>
           </div>
-          <div id="candle" class="candle">scoring closes at a random minute in the last 30</div>
+          <div id="candle" class="candle">scoring closes at a random minute in the last 10</div>
           <div id="inflowToast" class="toast" aria-live="polite"></div>
         </div>
       </section>
@@ -119,7 +119,7 @@
       <div><b data-count="12">0</b><span>guns</span></div>
       <div><b data-count="9">0</b><span>perks</span></div>
       <div><b data-count="800" data-suffix=" m">0</b><span>island width</span></div>
-      <div><b data-count="6" data-suffix=" h">0</b><span>between payouts</span></div>
+      <div><b data-count="1" data-suffix=" h">0</b><span>winner takes the pot</span></div>
     </section>
 
     <section class="wall">
@@ -136,7 +136,7 @@
       <article class="wall-card orange"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M30 16 m-10 0 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0 M22 24 L26 32 M38 24 L34 32 M22 32 H38 V44 H22 Z"/></svg><h4>Supply drops</h4><p>A balloon crate falls into every new circle: a guaranteed legendary, C4 or a nuke, full shields.</p></article>
       <article class="wall-card green"><span class="badge">2x</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M4 40 L20 14 L28 26 L38 8 L56 40 Z"/></svg><h4>A huge island</h4><p>800 by 800 m: an 80-floor megatower, a 30-floor skyscraper, two castles, a desert town and a pyramid, a snowy peak and a ski lodge, mountains to climb, a port with a ship.</p></article>
       <article class="wall-card teal"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M14 12 m-6 0 a6 6 0 1 0 12 0 a6 6 0 1 0 -12 0 M30 12 m-6 0 a6 6 0 1 0 12 0 a6 6 0 1 0 -12 0 M46 12 m-6 0 a6 6 0 1 0 12 0 a6 6 0 1 0 -12 0 M4 40 Q14 22 24 40 M20 40 Q30 22 40 40 M36 40 Q46 22 56 40"/></svg><h4>Solo, duos, squads</h4><p>Party codes put friends on one team. Spectate, free camera, anti-cheat that hides enemies behind walls.</p></article>
-      <article class="wall-card red"><span class="badge">$</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M12 30 m-8 0 a20 14 0 1 0 40 0 a20 14 0 1 0 -40 0 M40 22 L52 16 M18 18 V10 M26 16 V8"/></svg><h4>A real pot every 6 h</h4><p>Trading fees fill the King Pig. Every match scores points: a win, a top-10 finish, every kill. The pot is split by points, on-chain.</p></article>
+      <article class="wall-card red"><span class="badge">$</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M12 30 m-8 0 a20 14 0 1 0 40 0 a20 14 0 1 0 -40 0 M40 22 L52 16 M18 18 V10 M26 16 V8"/></svg><h4>Winner takes the pot, every hour</h4><p>Trading fees fill the King Pig. Every match scores points: a win, a top-10 finish, every kill. Whoever has the most points when the hour closes takes the whole pot, on-chain.</p></article>
       </div>
     </section>
 
@@ -170,19 +170,19 @@
         <ul id="roomList" class="roomlist"><li class="nobody">No rooms yet. Hit drop in and you open the first one.</li></ul>
       </div>
       <div class="sheet">
-        <div class="sheet-head"><h3>Points this round</h3><span class="aside">win 100 · top 10 +20 · kill +5</span></div>
+        <div class="sheet-head"><h3>Points this hour</h3><span class="aside">top of the list takes the pot · win 100 · top 10 +20 · kill +5</span></div>
         <ol id="tickets" class="ledger"></ol>
       </div>
       <div class="sheet receipt">
         <div class="sheet-head"><h3>Last payout</h3><span class="aside">verifiable on-chain</span></div>
-        <div id="lastDraw" class="empty">No payout yet. The first one closes when the countdown hits zero.</div>
+        <div id="lastDraw" class="empty">No payout yet. When the countdown hits zero, the top scorer of the hour takes the pot.</div>
       </div>
     </section>
     <ol class="how">
       <li><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="12" width="36" height="26" rx="4"/><circle cx="33" cy="25" r="3"/><path d="M6 18 H42"/></svg><b>Hold <span id="holdReq" class="hl">50K $KING</span></b><span>play free; holders score points for the pot</span></li>
       <li><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 20 C 8 8, 40 8, 40 20 Z M10 20 L24 40 L38 20 M24 20 V40"/></svg><b>Drop in with up to 100</b><span>solo, duos or squads</span></li>
       <li><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="8" y="16" width="32" height="20" rx="6"/><path d="M8 24 H40 M20 16 V12 H28 V16"/></svg><b>Loot pencil cases</b><span>guns, shields, perks, the atomic bomb</span></li>
-      <li><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 34 L14 14 L22 24 L24 10 L26 24 L34 14 L38 34 Z M10 38 H38"/></svg><b>Score every match</b><span>win, place, kill: the pot is split by points every 6 h</span></li>
+      <li><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 34 L14 14 L22 24 L24 10 L26 24 L34 14 L38 34 Z M10 38 H38"/></svg><b>Top the hour</b><span>win, place, kill: the most points each hour takes the whole pot</span></li>
     </ol>
 
   </div>

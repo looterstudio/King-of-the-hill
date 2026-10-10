@@ -649,3 +649,5 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .room-tip .tip-head a { margin-left: auto; color: var(--ink); font-weight: 700; }
 .room-tip .guide-card { box-shadow: none; border-width: 0; padding: 2px 0 0; rotate: 0deg; background: transparent; animation: pop .3s ease-out; }
 .room-guide { scroll-margin-top: 20px; }
+
+.ledger .takes { font-family: var(--f-note); font-size: 16px; color: var(--red); font-weight: 700; margin-left: 4px; }

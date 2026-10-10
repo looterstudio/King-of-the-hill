@@ -72,10 +72,22 @@ export class LocalNet {
     setTimeout(fee, 900);
   }
 
+  // the top of the hour: the demo pays its leader the pot (less the 10% rollover) and starts over,
+  // like the server does at every boundary
+  private potEpoch = epochOf(Date.now());
+  private settleHour(epoch: number) {
+    const top = [...this.tickets.entries()].sort((a, b) => b[1].wins - a[1].wins)[0];
+    const pot = this.lamports, paid = top ? (pot * 9000n) / 10_000n : 0n;
+    this.emit({ t: 'settled', settled: { epoch: this.potEpoch, potLamports: pot.toString(), rollover: (pot - paid).toString(), merkleRoot: 'demo', reveal: '',
+      winners: top ? [{ wallet: top[0], name: top[1].name, lamports: paid.toString() }] : [] } });
+    this.lamports = pot - paid; this.tickets.clear(); this.potEpoch = epoch;
+  }
+
   private emitPot() {
     const epoch = epochOf(Date.now());
+    if (epoch !== this.potEpoch) this.settleHour(epoch);
     const top = [...this.tickets.entries()].map(([wallet, t]) => ({ wallet, name: t.name, wins: t.wins })).sort((a, b) => b.wins - a.wins).slice(0, 8);
-    this.emit({ t: 'pot', pot: { epoch, epochEndMs: epochEnd(epoch), lamports: this.lamports.toString(), rolloverLamports: '0', commit: '', online: 1287 + Math.floor(Math.random() * 40), rooms: 31 + Math.floor(Math.random() * 4), tickets: top, closeFrom: epochEnd(epoch) - 30 * 60_000, holdTokens: 50_000, symbol: 'KING', solUsd: 150 } });
+    this.emit({ t: 'pot', pot: { epoch, epochEndMs: epochEnd(epoch), lamports: this.lamports.toString(), rolloverLamports: '0', commit: '', online: 1287 + Math.floor(Math.random() * 40), rooms: 31 + Math.floor(Math.random() * 4), tickets: top, closeFrom: epochEnd(epoch) - 10 * 60_000, holdTokens: 50_000, symbol: 'KING', solUsd: 150 } });
   }
 
   send(m: ClientMsg) {

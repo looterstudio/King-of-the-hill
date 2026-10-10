@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { BUILD, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { BUILD, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
 import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
@@ -270,8 +270,8 @@ function renderPot(p: PotView) {
   $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
   $('tickets').innerHTML = p.tickets.length
-    ? p.tickets.map((t, i) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''} ${i === 0 ? 'top' : ''}"><span class="name"><span>${i === 0 ? '<i class="crown">♛</i> ' : ''}${esc(t.name)}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
-    : '<li class="nobody">Nobody has scored yet. Win, place top 10 or get kills to show up here.</li>';
+    ? p.tickets.map((t, i) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''} ${i === 0 ? 'top' : ''}"><span class="name"><span>${i === 0 ? '<i class="crown">♛</i> ' : ''}${esc(t.name)}${i === 0 ? ' <small class="takes">takes the pot</small>' : ''}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
+    : '<li class="nobody">Nobody has scored this hour. Win, place top 10 or get kills: the top scorer at the close takes the pot.</li>';
 }
 function toast(text: string) {
   const el = $('inflowToast'); el.textContent = text; el.classList.add('on');
@@ -498,9 +498,12 @@ net.on((m: ServerMsg) => {
     case 'settled': {
       const s = m.settled;
       $('lastDraw').className = 'draw-sum';
+      // which hour it was: the pot that closed at HH:00, your local time
+      const hour = new Date(epochEnd(s.epoch)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       $('lastDraw').innerHTML = s.winners.length
-        ? `<div>Round #${s.epoch} · pot <b>${fmtSol(sol(s.potLamports))}</b></div><ol class="ledger">${s.winners.slice(0, 6).map((w) => `<li><span class="name"><span>${esc(w.name || w.wallet.slice(0, 6))}</span></span><span class="marks"><em>${fmtSol(sol(w.lamports))}</em></span></li>`).join('')}</ol><div class="root">merkle root ${s.merkleRoot}</div>`
-        : `Round #${s.epoch}: nobody scored, so ${fmtSol(sol(s.rollover))} rolls into the next one.`;
+        ? `<div>The ${hour} pot · <b>${fmtSol(sol(s.potLamports))}</b></div><ol class="ledger">${s.winners.slice(0, 6).map((w) => `<li><span class="name"><span><i class="crown">♛</i> ${esc(w.name || w.wallet.slice(0, 6))}</span></span><span class="marks"><em>${fmtSol(sol(w.lamports))}</em></span></li>`).join('')}</ol><div class="root">merkle root ${s.merkleRoot}</div>`
+        : `The ${hour} pot: nobody scored, so ${fmtSol(sol(s.rollover))} rolls into the next one.`;
+      if (s.winners.length) ticker(`<span class="gold">♛ <b>${esc(s.winners.map((w) => w.name || w.wallet.slice(0, 6)).join(' + '))}</b> took the ${hour} pot · ${fmtSol(sol(s.winners.reduce((t, w) => t + BigInt(w.lamports), 0n)))}</span>`);
       break;
     }
     case 'queued': $('queueInfo').textContent = `In queue, position ${m.position}`; break;
@@ -601,7 +604,7 @@ net.on((m: ServerMsg) => {
       const won = winners.includes(state.you), team = winners.length > 1, mine = m.points?.[state.you] ?? 0;
       const word = !winners.length ? 'Draw' : won ? 'Victory!' : team ? `Team ${label(winners[0])} wins` : `${label(winners[0])} wins`;
       const sub = !m.awarded ? (mine ? `${mine} points · not counted: not enough verified wallets in this match` : '')
-        : mine ? `+${mine} points for the pot${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
+        : mine ? `+${mine} points this hour · the top scorer takes the pot${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
       if (winners.length) ticker(`<span class="gold">♛ <b>${esc(winners.map((w) => seatOf(w)?.name ?? label(w)).join(' + '))}</b> won a ${MODES[state.roomMode].name.toLowerCase()} match</span>`);
       banner(word, sub, won);
       voice.stop();
@@ -730,7 +733,7 @@ function frame(now: number) {
         setText($('potSol'), `${target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} SOL`);
       } else { odometer($('potAmount'), target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })); setText($('potSol'), ''); }
       const closing = Date.now() >= state.pot.closeFrom;
-      setText($('candle'), closing ? 'scoring can close any minute now' : 'scoring closes at a random minute in the last 30');
+      setText($('candle'), closing ? 'scoring can close any minute now' : 'scoring closes at a random minute in the last 10');
       $('candle').classList.toggle('hot', closing);
       const [hh, mm, ss] = hms(state.pot.epochEndMs - Date.now()).split(':');
       const cd = $('countdown').querySelectorAll('b');

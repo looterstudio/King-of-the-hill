@@ -6,8 +6,8 @@ the King's Tower in the middle of the island: the final circle always closes on 
 common to legendary (the SCAR and a one-shot Heavy Sniper are the prizes), shields and medkits, and
 five perks: grenades, smoke, launch pads, instant forts and, for the luckiest, an atomic bomb you
 can drop anywhere on the map. Play **solo, duos or squads**; every match scores points (a win, a
-top-10 finish, kills), and the token's trading fees fill one shared pot that is split by points
-every 6 hours (00/06/12/18 UTC).
+top-10 finish, kills), and the token's trading fees fill one shared pot: **every hour, on the hour
+(UTC), the player with the most points that hour takes it.**
 
 - **Fights that last.** 250 health + 250 shield. Guns keep their damage, so an assault rifle needs
   a full magazine (about 3 s) instead of one second; explosives, fire, rams and the storm scale with
@@ -133,14 +133,14 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 3. **No buying 5 minutes before the payout.** The server checks every scoring wallet's balance at
    six secret moments in the epoch and again at the close; below the requirement at any of them and
    that wallet's points for the epoch are void (`data/voids.jsonl`). Scoring itself closes at a
-   random minute inside the last 30 (a candle close), so nobody can time the end; points after it
+   random minute inside the last 10 (a candle close), so nobody can time the end; points after it
    count for the next epoch. Snapshot times and the close minute derive from the epoch secret, whose
    hash is published at epoch start and which is revealed at settlement, so anyone can check them.
    Points only count if the match started with at least `MIN_VERIFIED_FOR_TICKET` distinct wallets,
    so a handful of your own wallets can't farm a near-empty match.
-4. At the 6h boundary the server takes a snapshot of the free vault balance, keeps `ROLLOVER_BPS` (10%) to start
-   the next pot, splits the rest (`PAYOUT_MODE=prorata` by points, or `draw` with weighted 60/25/15
-   tiers seeded by commit-reveal), and writes `data/epochs/<epoch>.json` with a merkle root and a proof per winner.
+4. At the top of every hour the server takes a snapshot of the free vault balance, keeps `ROLLOVER_BPS` (10%) to start
+   the next pot and pays the rest out (`PAYOUT_MODE=winner`: the hour's top scorer takes it all, a tie splits it;
+   or `prorata` by points, or `draw` with weighted 60/25/15 tiers seeded by commit-reveal), and writes `data/epochs/<epoch>.json` with a merkle root and a proof per winner.
 5. The authority (your Squads multisig) posts `settle_epoch(root, total, count)` on chain. Winners call `claim` with their proof.
    The program never lets the authority pay out more than the free balance, settle an epoch early or twice,
    or touch funds already owed to unclaimed winners. Unclaimed prizes go back into the pot after 30 days.
@@ -159,7 +159,7 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 | `PRICE_URL` | Jupiter price v3 | mint is appended to it |
 | `REQUIRE_WALLET` / `ALLOW_GUESTS` | `false` / `true` | set `true` / `false` in production |
 | `MIN_VERIFIED_FOR_TICKET` | 4 with wallets, 1 in dev | anti-farm floor |
-| `PAYOUT_MODE` | `prorata` | or `draw` |
+| `PAYOUT_MODE` | `winner` | the hour's top scorer takes the pot; or `prorata` (split by points), `draw` |
 | `ROLLOVER_BPS` | `1000` | share of each pot carried into the next |
 | `MAX_ROOMS`, `OPEN_ROOMS`, `MAX_CONNECTIONS` | 10 / 5 / 5000 | per-process caps |
 | `WORKERS` | cores − 1 | threads that run live matches |

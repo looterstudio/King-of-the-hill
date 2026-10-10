@@ -168,7 +168,7 @@ export const PLANE_GUN = { dmg: 12, cd: 0.07, range: 200, spread: 0.02 };
 export const BOMB = { radius: 8, dmg: 310, cd: 2.5 };
 
 // economy
-export const EPOCH_MS = 6 * 60 * 60 * 1000; // pot draws every 6h, aligned to 00/06/12/18 UTC
+export const EPOCH_MS = 60 * 60 * 1000; // the pot pays out every hour, on the hour (UTC)
 export const LAMPORTS_PER_SOL = 1_000_000_000n;
 
 export const epochOf = (ms: number) => Math.floor(ms / EPOCH_MS);

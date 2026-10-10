@@ -1,5 +1,5 @@
-// 6-hour epochs. Every match scores points (a win, a top placement, kills); at the boundary the
-// pot is snapshotted, split by the payout policy, and written out as a merkle root the on-chain
+// Hourly epochs. Every match scores points (a win, a top placement, kills); at the boundary the
+// pot is snapshotted, paid out by the payout policy (by default the hour's top scorer takes it), and written out as a merkle root the on-chain
 // vault will honour for claims.
 //
 // Two things stop "buy 5 minutes before the payout, sell right after":
@@ -7,7 +7,7 @@
 //     and again at the close; below it at any of them and that wallet's points for the epoch are
 //     void. The requirement is fixed in tokens when the epoch starts: min(HOLD_TOKENS, $HOLD_MIN_USD
 //     at the hour's median price), so a price drop never pushes a holder out mid-epoch.
-//   - scoring closes at a random minute inside the last 30 (a candle close): nobody can time it.
+//   - scoring closes at a random minute inside the last 10 (a candle close): nobody can time it.
 //     Points scored after it count for the next epoch.
 // The snapshot times and the close minute come from the epoch secret, whose hash is published
 // when the epoch starts and which is revealed at settlement, so anyone can check them afterwards.
@@ -24,7 +24,7 @@ import { buildTree } from './merkle.ts';
 
 interface Tally { name: string; wins: number }
 
-export const CANDLE_MS = 30 * 60_000; // scoring closes at a random moment inside the last 30 minutes
+export const CANDLE_MS = 10 * 60_000; // scoring closes at a random moment inside the last 10 minutes
 const SNAPSHOTS = 6;                  // hidden balance checks per epoch
 const SWEEP_CONCURRENCY = 8;
 
@@ -62,7 +62,7 @@ export class Epochs extends EventEmitter {
 
   // ---------- hold requirement, snapshots, candle close ----------
   private derive(epoch: number, tag: string) { return createHmac('sha256', this.secretFor(epoch)).update(tag).digest().readUInt32BE(0); }
-  // when scoring for this epoch stops: a random minute in the last 30
+  // when scoring for this epoch stops: a random minute in the last 10
   closeAt(epoch: number) { return epochEnd(epoch) - CANDLE_MS + (this.derive(epoch, 'close') % (CANDLE_MS / 60_000)) * 60_000; }
   snapshotTimes(epoch: number) {
     const start = epoch * EPOCH_MS;

@@ -1,6 +1,6 @@
 //! Pot Royale prize vault.
 //!
-//! Token trading fees are swept (as SOL) into the `vault` PDA. Every 6h epoch the operator posts
+//! Token trading fees are swept (as SOL) into the `vault` PDA. Every hourly epoch the operator posts
 //! one merkle root of (wallet, amount) payouts; winners pull their own share with a proof.
 //!
 //! What the operator key CAN do: allocate the free vault balance to a root it publishes (so the
@@ -21,7 +21,7 @@ declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 pub const MAX_CLAIMS: u32 = 8192;
 pub const MAX_PROOF: usize = 14; // ceil(log2(8192)) + 1
 pub const CLAIM_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
-pub const EPOCH_SECONDS: i64 = 6 * 60 * 60; // the server's EPOCH_MS; fixed so a typo can't break the timing
+pub const EPOCH_SECONDS: i64 = 60 * 60; // the server's EPOCH_MS (hourly); fixed so a typo can't break the timing
 pub const CLAIM_DELAY_SECS: i64 = 30 * 60;  // a root can be cancelled before anyone can claim from it
 
 #[program]

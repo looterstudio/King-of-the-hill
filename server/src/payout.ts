@@ -5,7 +5,7 @@ export interface Payout { wallet: string; lamports: bigint }
 export interface PayoutResult { payouts: Payout[]; rollover: bigint; distributable: bigint }
 
 export interface PayoutPolicy {
-  mode: 'prorata' | 'draw';
+  mode: 'winner' | 'prorata' | 'draw';
   rolloverBps: number;
   drawTiersBps: number[];
   seed: Buffer; // only used by draw
@@ -29,11 +29,17 @@ export function computePayouts(pot: bigint, wins: Map<string, number>, policy: P
   if (totalTickets === 0n) return { payouts: [], rollover: pot, distributable: 0n };
 
   const distributable = (pot * (BPS - BigInt(policy.rolloverBps))) / BPS;
-  const payouts = policy.mode === 'draw' ? draw(distributable, entries, policy) : prorata(distributable, entries, totalTickets);
+  const payouts = policy.mode === 'winner' ? winner(distributable, entries) : policy.mode === 'draw' ? draw(distributable, entries, policy) : prorata(distributable, entries, totalTickets);
   const kept = payouts.filter((p) => p.lamports >= MIN_PAYOUT_LAMPORTS);
   const paid = kept.reduce((s, p) => s + p.lamports, 0n);
   // rounding dust, shares under the minimum and any unawarded tiers stay in the pot
   return { payouts: kept, rollover: pot - paid, distributable };
+}
+
+// the hour's winner takes the pot: the most points; a tie splits it evenly (the dust rolls over)
+function winner(dist: bigint, entries: [string, number][]): Payout[] {
+  const top = Math.max(...entries.map(([, w]) => w)), best = entries.filter(([, w]) => w === top);
+  return best.map(([wallet]) => ({ wallet, lamports: dist / BigInt(best.length) }));
 }
 
 function prorata(dist: bigint, entries: [string, number][], total: bigint): Payout[] {

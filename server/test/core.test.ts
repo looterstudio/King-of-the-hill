@@ -16,7 +16,7 @@ import { MockPot } from '../src/pot.ts';
 import { config } from '../src/config.ts';
 
 const wallet = () => bs58.encode(nacl.sign.keyPair().publicKey);
-const policy = (mode: 'prorata' | 'draw', seed = Buffer.alloc(32, 7)) => ({ mode, rolloverBps: 1000, drawTiersBps: [6000, 2500, 1500], seed });
+const policy = (mode: 'winner' | 'prorata' | 'draw', seed = Buffer.alloc(32, 7)) => ({ mode, rolloverBps: 1000, drawTiersBps: [6000, 2500, 1500], seed });
 
 const inp = (o: Partial<Input> = {}): Input => ({ ...emptyInput(), ...o });
 const DT = 1 / TICK_HZ;
@@ -313,6 +313,22 @@ test('prorata never pays more than the pot and keeps dust in rollover', () => {
   const paid = r.payouts.reduce((s, p) => s + p.lamports, 0n);
   assert.equal(paid + r.rollover, pot);
   assert.ok(r.rollover >= pot / 10n);
+});
+
+test('every hour the top scorer takes the pot: a tie splits it, the rest rolls over', async () => {
+  const { config: cfg } = await import('../src/config.ts');
+  assert.equal(EPOCH_MS, 60 * 60 * 1000, 'hourly');
+  assert.equal(cfg.payoutMode, 'winner', 'the default policy');
+  const a = wallet(), b = wallet(), c = wallet(), pot = 1_000_000_001n;
+  const one = computePayouts(pot, new Map([[a, 40], [b, 125], [c, 5]]), policy('winner'));
+  assert.deepEqual(one.payouts.map((p) => p.wallet), [b]);
+  assert.equal(one.payouts[0].lamports, (pot * 9000n) / 10_000n, 'all of it but the 10% rollover');
+  assert.equal(one.payouts[0].lamports + one.rollover, pot);
+  const tie = computePayouts(pot, new Map([[a, 125], [b, 125], [c, 5]]), policy('winner'));
+  assert.deepEqual(tie.payouts.map((p) => p.wallet).sort(), [a, b].sort());
+  assert.equal(tie.payouts[0].lamports, tie.payouts[1].lamports);
+  assert.equal(tie.payouts.reduce((s, p) => s + p.lamports, 0n) + tie.rollover, pot, 'the odd lamport rolls over');
+  assert.equal(computePayouts(pot, new Map(), policy('winner')).rollover, pot, 'nobody scored: it all rolls over');
 });
 
 test('no tickets means the whole pot rolls over', () => {
@@ -783,7 +799,7 @@ test('candle close: points scored after the random close count for the next epoc
   let now = EPOCH_MS * 500 + 10;
   const ep = new Epochs({ ...config, dataDir: dir }, new MockPot(), () => now);
   const close = ep.closeAt(500);
-  assert.ok(close >= EPOCH_MS * 501 - 30 * 60_000 && close < EPOCH_MS * 501, 'inside the last 30 minutes');
+  assert.ok(close >= EPOCH_MS * 501 - 10 * 60_000 && close < EPOCH_MS * 501, 'inside the last 10 minutes');
   assert.equal(ep.recordWin(wallet(), 'early', 20), 500);
   now = close + 1;
   assert.equal(ep.recordWin(wallet(), 'late', 20), 501);

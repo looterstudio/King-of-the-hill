@@ -14,7 +14,7 @@ ws ──> Client (rate-limited, auth'd) ──> Matchmaker queue ──> Room (
                                                              │
                                           win ──> Epochs (append-only wins.jsonl)
 Pot source (mock | vault RPC) ──> inflow events ──> every client (lobby animation)
-Every 6h: Epochs.settle ──> payout.ts ──> merkle.ts ──> data/epochs/N.json ──> keeper ──> chain
+Every hour: Epochs.settle ──> payout.ts ──> merkle.ts ──> data/epochs/N.json ──> keeper ──> chain
 ```
 
 - **One tick loop per process** drives every room (drift-corrected `setTimeout`). The cost scales
