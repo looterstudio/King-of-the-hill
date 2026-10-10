@@ -164,13 +164,13 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 
 | var | default | meaning |
 | --- | --- | --- |
-| `POT_SOURCE` | `mock` | `solana` polls the real vault |
+| `POT_SOURCE` | `mock` | `solana` polls the real vault; `off` runs real matches with no pot (before the token launches) |
 | `SOLANA_RPC_URL` | mainnet | use a paid RPC in production |
 | `VAULT_ADDRESS` / `CONFIG_ADDRESS` | | PDAs of the vault program |
 | `TOKEN_MINT` | `shared/src/token.ts` | the game's coin (the CA); required when `HOLD_MIN_USD` > 0 |
 | `HOLD_MIN_USD` | `50` | USD side of the hold requirement for scoring points |
 | `HOLD_TOKENS` | `50000` | token side: the requirement never exceeds this many tokens |
-| `TOKEN_SYMBOL` | `KING` | shown in the lobby |
+| `TOKEN_SYMBOL` | `KOTH` | shown in the lobby |
 | `PRICE_URL` | Jupiter price v3 | mint is appended to it |
 | `REQUIRE_WALLET` / `ALLOW_GUESTS` | `false` / `true` | set `true` / `false` in production |
 | `MIN_VERIFIED_FOR_TICKET` | 4 with wallets, 1 in dev | anti-farm floor |

@@ -26,7 +26,7 @@ export const config = {
   allowGuests: bool(env.ALLOW_GUESTS, true),
 
   // pot
-  potSource: (env.POT_SOURCE ?? 'mock') as 'mock' | 'solana',
+  potSource: (env.POT_SOURCE ?? 'mock') as 'mock' | 'solana' | 'off', // off: real players, no pot until the token launches
   rpcUrl: env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
   vaultAddress: env.VAULT_ADDRESS ?? '',   // vault PDA: seeds ["vault"]
   configAddress: env.CONFIG_ADDRESS ?? '', // config PDA: seeds ["config"]

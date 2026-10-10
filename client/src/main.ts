@@ -601,6 +601,7 @@ net.on((m: ServerMsg) => {
       break;
     }
     case 'settled': {
+      if (state.pot?.live === false) break; // nothing was paid: no pot before launch
       const s = m.settled;
       $('lastDraw').className = 'draw-sum';
       // which hour it was: the pot that closed at HH:00, your local time
@@ -884,7 +885,12 @@ function frame(now: number) {
   if (state.screen === 'lobby') {
     jar.frame(dt);
     if (flyVisible) { flyover.showcase(dt, flyCanvas.clientWidth, flyCanvas.clientHeight); setText($('flyCaption'), flyover.caption); }
-    if (state.pot) {
+    if (state.pot?.live === false) {
+      // no pot before the token launches: say so instead of showing an amount
+      const amt = $('potAmount');
+      if (amt.dataset.v !== 'soon') { amt.dataset.v = 'soon'; amt.dataset.sym = ''; amt.innerHTML = '<span class="soon">soon</span>'; }
+      setText($('potSol'), `the prize opens when $${state.pot.symbol} launches`);
+    } else if (state.pot) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
       if (Math.abs(target - state.potShown) < 0.0005) state.potShown = target;
@@ -1022,7 +1028,8 @@ function frame(now: number) {
     const g = game.ring, st = $('storm');
     st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
-    if (state.pot) { const s = sol(state.pot.lamports), u = state.pot.solUsd; setText($('miniPot'), u ? `$${Math.round(s * u).toLocaleString('en-US')}` : fmtSol(s)); }
+    if (state.pot?.live === false) setText($('miniPot'), 'pot soon');
+    else if (state.pot) { const s = sol(state.pot.lamports), u = state.pot.solUsd; setText($('miniPot'), u ? `$${Math.round(s * u).toLocaleString('en-US')}` : fmtSol(s)); }
     if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); }
     miniJar.frame(dt);
   }
