@@ -14,6 +14,12 @@ top-10 finish, kills), and the token's trading fees fill one shared pot: **every
   headshot in one. Shotguns keep a tight cone on the move and full damage out to 8 m. Hit an enemy
   and their health bar shows over their head for two seconds; damage numbers, headshot and kill
   markers on every hit.
+- **Sights per gun, your own hands.** Right click aims down the gun's own sight: irons on pistols,
+  SMGs and shotguns, a red dot on the rifles, a real scope only on the two snipers, an open ring on
+  the launchers (held on the shoulder, never over the middle of the screen). In first person you see
+  your arms, in your character's colours, holding the gun through recoil, reloads and swaps. The
+  drawing is made at full screen resolution with FXAA on the pen lines (settings: quality,
+  render scale, antialias).
 - **A storm that forces the fight.** It starts closing 30 s in, while the last players are still
   gliding, and keeps coming in every half minute through seven circles (about 4 minutes to nothing).
   Once fewer than 60% of the teams are left it hurries, up to 4x as fast with a tenth of them, so a
