@@ -6,19 +6,30 @@
 import * as THREE from 'three';
 
 // ink palette, indexed by the ink id written in pass 1 (matches shared/src/world.ts INK)
-export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9 } as const;
+// (SKIN, YELLOW, BLACK and WHITE are for the characters: faces, robots, hair, clothes)
+export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9, SKIN: 10, YELLOW: 11, BLACK: 12, WHITE: 13 } as const;
+// a material whose ink comes from each vertex (aInk): a whole character is one mesh in many inks
+export const INK_VERTEX = -1;
 
 const passOneVert = /* glsl */`
 attribute float aInk;
 uniform float uInk;
 varying vec3 vN;
 varying float vInk;
+#include <skinning_pars_vertex>
 void main() {
-  vec3 p = position;
-  vec3 n = normal;
+  vec3 transformed = position;
+  vec3 objectNormal = normal;
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <skinning_vertex>
+  vec3 p = transformed;
+  vec3 n = objectNormal;
   #ifdef USE_INSTANCING
     p = (instanceMatrix * vec4(p, 1.0)).xyz;
     n = mat3(instanceMatrix) * n;
+  #endif
+  #if defined(USE_INSTANCING) || defined(VERTEX_INK)
     vInk = aInk;
   #else
     vInk = uInk;
@@ -71,9 +82,13 @@ vec3 inkColor(float id) {
   if (id < 4.5) return vec3(0.15, 0.52, 0.28);  // green
   if (id < 5.5) return vec3(0.88, 0.38, 0.62);  // pink
   if (id < 6.5) return vec3(0.45, 0.30, 0.18);  // brown
-  if (id > 8.5) return vec3(0.42, 0.20, 0.66);  // purple
-  if (id > 7.5) return vec3(0.02, 0.60, 0.80);  // diamond
-  return vec3(0.17, 0.18, 0.23);
+  if (id < 7.5) return vec3(0.17, 0.18, 0.23);  // paper (its lines are graphite)
+  if (id < 8.5) return vec3(0.02, 0.60, 0.80);  // diamond
+  if (id < 9.5) return vec3(0.42, 0.20, 0.66);  // purple
+  if (id < 10.5) return vec3(0.66, 0.36, 0.27); // skin: a warm brown line
+  if (id < 11.5) return vec3(0.80, 0.58, 0.02); // yellow
+  if (id < 12.5) return vec3(0.07, 0.07, 0.10); // black
+  return vec3(0.30, 0.34, 0.47);                // white cloth: a cool grey line
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float linDepth(float d) { float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }
@@ -116,7 +131,11 @@ void main() {
     if (id > 1.5 && id < 2.5) col = mix(col, vec3(0.85, 0.85, 0.87), 0.45 * fade);
     if (id > 4.5 && id < 5.5) col = mix(col, vec3(0.99, 0.84, 0.92), 0.55 * fade);
     if (id > 5.5 && id < 6.5) col = mix(col, vec3(0.93, 0.85, 0.74), 0.6 * fade);
-    if (id > 8.5) col = mix(col, vec3(0.86, 0.78, 0.96), 0.6 * fade);
+    if (id > 12.5) col = mix(col, vec3(1.0, 1.0, 1.0), 0.9 * fade);
+    else if (id > 11.5) col = mix(col, vec3(0.20, 0.20, 0.25), 0.88 * fade);
+    else if (id > 10.5) col = mix(col, vec3(1.0, 0.89, 0.30), 0.75 * fade);
+    else if (id > 9.5) col = mix(col, vec3(1.0, 0.84, 0.71), 0.7 * fade);
+    else if (id > 8.5) col = mix(col, vec3(0.86, 0.78, 0.96), 0.6 * fade);
     else if (id > 7.5) col = mix(col, vec3(0.62, 0.95, 1.0), 0.8 * fade);
     // hatching in the shadows, screen-space, two directions when it gets dark
     if (id < 6.5 || id > 7.5) {
@@ -232,9 +251,10 @@ export class InkRenderer {
     const hit = this.cache.get(key);
     if (hit) return hit;
     const m = new THREE.ShaderMaterial({
-      vertexShader: passOneVert, fragmentShader: passOneFrag, side: THREE.DoubleSide, defines: front ? { FRONT: '' } : {},
+      vertexShader: passOneVert, fragmentShader: passOneFrag, side: THREE.DoubleSide, defines: { ...(front ? { FRONT: '' } : {}), ...(ink === INK_VERTEX ? { VERTEX_INK: '' } : {}) },
       uniforms: { uInk: { value: ink }, uLight: { value: this.lightView } },
     });
+    m.userData.ink = ink;
     this.materials.push(m);
     this.cache.set(key, m);
     return m;

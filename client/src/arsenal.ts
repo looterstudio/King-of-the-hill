@@ -3,10 +3,10 @@
 import * as THREE from 'three';
 import { PERKS, UPGRADE, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type PerkId } from '../../shared/src/constants.ts';
 import type { InkRenderer } from './ink.ts';
-import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure, upgradeGun } from './models.ts';
+import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure, posedGeometry, poseStand, upgradeGun } from './models.ts';
 import { SKINS } from '../../shared/src/constants.ts';
 
-const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0, 0x7b3fb0]; // INK_IDS order
+const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0, 0x7b3fb0, 0xf3c6a5, 0xf5c518, 0x25262d, 0xffffff]; // INK_IDS order
 const RARITY_CSS: Record<string, string> = { common: '#7a7f8c', uncommon: '#2f9e44', rare: '#2f7fd6', epic: '#7b3fb0', legendary: '#e8a317' };
 const PERK_TEXT: Record<PerkId, string> = {
   grenade: 'bounces, then a big blast', molotov: 'a patch of fire on the ground', shock: 'throws everyone through the air',
@@ -74,23 +74,26 @@ export function renderArsenal(el: HTMLElement) {
 }
 
 // the character picker: one picture per character, click to choose
+export let skinPics: string[] = []; // (the profile card shows yours)
 export function renderSkins(el: HTMLElement, picked: number, onPick: (i: number) => void) {
   const canvas = document.createElement('canvas');
   canvas.width = 160; canvas.height = 200;
   let renderer: THREE.WebGLRenderer;
   try { renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true }); } catch { return; }
   renderer.setClearColor(0x000000, 0);
-  const mats = COLORS.map((c) => new THREE.MeshLambertMaterial({ color: c }));
-  const fakeInk = { material: (id: number) => mats[id] } as unknown as InkRenderer;
+  const mats = COLORS.map((c) => new THREE.MeshLambertMaterial({ color: c })), byVertex = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const fakeInk = { material: (id: number) => mats[id] ?? byVertex } as unknown as InkRenderer;
+  const col = new THREE.Color();
   const pics = SKINS.map((_, i) => {
+    // a character is one skinned mesh with its inks per vertex: pose it, bake the pose, colour each vertex
     const f = buildFigure(fakeInk, 7, i);
-    // hidden parts still count for the framing: take them off
-    f.root.remove(f.chute, f.crown);
-    for (const g of f.guns.values()) g.parent?.remove(g);
-    f.axe.parent?.remove(f.axe);
-    f.armL.rotation.x = -1.25; f.armR.rotation.x = -1.25; f.armL.rotation.y = 0; // arms down at the sides, face visible
-    return picture(renderer, f.root, Math.PI + 0.5, 0.15);
+    poseStand(f);
+    const geo = posedGeometry(f), ink = geo.getAttribute('aInk'), rgb = new Float32Array(ink.count * 3);
+    for (let k = 0; k < ink.count; k++) col.setHex(COLORS[ink.getX(k)] ?? 0x888888).toArray(rgb, k * 3);
+    geo.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
+    return picture(renderer, new THREE.Mesh(geo, byVertex), Math.PI + 0.5, 0.15);
   });
+  skinPics = pics;
   renderer.dispose(); renderer.forceContextLoss();
   el.innerHTML = SKINS.map((n, i) => `<button type="button" class="skin ${i === picked ? 'on' : ''}" data-skin="${i}" aria-label="${n}"><img src="${pics[i]}" alt=""><span>${n}</span></button>`).join('');
   el.onclick = (e) => {
