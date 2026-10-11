@@ -32,11 +32,13 @@ body.landing-on #lobby { visibility: hidden; }
 .lp-nav .btn { padding: 7px 18px; background: var(--ink); color: var(--card); }
 
 /* hero */
-.lp-hero { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); gap: clamp(24px, 4vw, 64px); align-items: center; margin-top: clamp(20px, 5vh, 56px); }
+.lp-hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: clamp(24px, 4vw, 64px); align-items: center; margin-top: clamp(20px, 5vh, 56px); }
 .lp-kicker { font-family: var(--f-note); font-size: 27px; font-weight: 700; color: var(--red); display: inline-block; transform: rotate(-2deg); }
-.lp-hero h1 { margin: 8px 0 0; font-size: clamp(40px, 5.4vw, 74px); line-height: 1.02; font-weight: 800; letter-spacing: -0.025em; text-wrap: balance; }
-.lp-hero h1 .lp-break { color: var(--red); position: relative; white-space: nowrap; }
-.lp-hero h1 .lp-break svg { position: absolute; left: -2%; bottom: -.16em; width: 104%; height: .28em; fill: none; stroke: var(--red); stroke-width: 3; stroke-linecap: round; }
+.lp-hero h1 { margin: 8px 0 0; font-size: clamp(36px, 4.1vw, 60px); line-height: 1.02; font-weight: 800; letter-spacing: -0.025em; text-wrap: balance; }
+.lp-hero h1 .lp-line { display: block; }
+.lp-hero h1 .lp-break { color: var(--red); }
+.lp-hero h1 .lp-u { position: relative; white-space: nowrap; }
+.lp-hero h1 .lp-u svg { position: absolute; left: -2%; bottom: -.16em; width: 104%; height: .28em; fill: none; stroke: var(--red); stroke-width: 3; stroke-linecap: round; }
 .lp-lede { margin: 20px 0 0; font-size: clamp(17px, 1.5vw, 20px); line-height: 1.5; color: var(--graphite); max-width: 33em; }
 .lp-lede b { color: var(--ink); }
 .lp-cta { display: flex; align-items: center; gap: 22px; margin-top: 30px; flex-wrap: wrap; }
@@ -52,12 +54,13 @@ body.landing-on #lobby { visibility: hidden; }
 
 /* the pig, pinned to the page */
 .lp-pig { position: relative; aspect-ratio: 1 / .92; background: var(--card); border: 2.5px solid var(--ink); border-radius: var(--wobble); box-shadow: 8px 9px 0 rgba(29, 51, 184, .9); transform: rotate(1.4deg); }
-.lp-pig canvas { position: absolute; inset: 8px 8px 64px; width: calc(100% - 16px); height: calc(100% - 72px); display: block; }
+.lp-pig canvas { position: absolute; inset: 10px; width: calc(100% - 20px); height: calc(100% - 20px); display: block; border-radius: 8px; background: #0c0e22; }
 .lp-pig .tape { top: -12px; }
-.lp-pig-cap { position: absolute; left: 0; right: 0; bottom: 14px; text-align: center; }
+.lp-pig-cap { position: absolute; left: 10px; right: 10px; bottom: 10px; padding: 40px 12px 16px; text-align: center; border-radius: 0 0 8px 8px; background: linear-gradient(transparent, rgba(12, 14, 34, .85) 55%); color: #fff4c9; }
 .lp-pig-cap b { display: block; font-size: clamp(19px, 1.8vw, 24px); font-weight: 800; letter-spacing: -0.01em; }
-.lp-pig-cap span { font-family: var(--f-note); font-size: 21px; color: var(--ink-soft); }
+.lp-pig-cap span { font-family: var(--f-note); font-size: 21px; color: rgba(255, 244, 201, .75); }
 .lp-stamp { position: absolute; right: -18px; top: 18%; width: 104px; height: 104px; transform: rotate(12deg); fill: none; stroke: var(--red); stroke-width: 2.4; }
+.lp-stamp { background: var(--card); border-radius: 50%; }
 .lp-stamp text { fill: var(--red); stroke: none; font-family: var(--f-hand); font-weight: 800; text-anchor: middle; }
 
 /* sections */

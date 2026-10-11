@@ -60,7 +60,7 @@ function html() {
   <section class="lp-hero">
     <div>
       <span class="lp-kicker">a battle royale drawn in ballpoint</span>
-      <h1>${ROOM_MAX} players. One island. <span class="lp-break">Every wall breaks.${SCRIBBLE}</span></h1>
+      <h1><span class="lp-line">${ROOM_MAX} players.</span> <span class="lp-line">One island.</span> <span class="lp-line lp-break">Every wall <span class="lp-u">breaks.${SCRIBBLE}</span></span></h1>
       <p class="lp-lede">Jump from the paper plane, loot pencil cases and fight your way to the <b>King's Tower</b>. Last one standing wins, and every hour the <b>top scorer takes the pot</b>.</p>
       <div class="lp-cta">
         <button class="btn play lp-play" type="button" data-play>Play free<span class="arrow" aria-hidden="true">→</span></button>
@@ -156,7 +156,7 @@ export function initLanding() {
   let open = false, raf = 0, last = 0, nextCoin = 0, userPaused = false, filmSeen = false;
 
   // the pig: same drawing as the lobby's, no numbers, coins dropping in now and then
-  const jar = new PotJar(root.querySelector<HTMLCanvasElement>('#lpJar')!, { string: true, marks: false, crown: true });
+  const jar = new PotJar(root.querySelector<HTMLCanvasElement>('#lpJar')!, { string: true, marks: false, crown: true, stage: true });
   jar.scaleSol = 10; jar.setSol(9);
   const draw = (now: number) => {
     raf = 0;
