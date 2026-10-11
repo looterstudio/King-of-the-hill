@@ -509,6 +509,7 @@ let unlockedAt = 0;
 const menu = new GameMenu($('pause'), $('menuCard'), {
   resume: () => { sfx.unlock(); const wait = unlockedAt + 1100 - performance.now(); if (wait > 0) setTimeout(() => input.lock(), wait); else input.lock(); },
   leave: () => leaveMatch(),
+  inventory: () => inventory.html(),
 });
 $('pause').addEventListener('mousedown', (e) => { if (e.target === $('pause')) { sfx.unlock(); input.lock(); } }); // a click beside the card plays too
 function leaveMatch() {

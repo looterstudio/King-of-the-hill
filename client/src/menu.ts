@@ -4,7 +4,7 @@
 import { controlsHTML, controlsStrip } from './keycaps.ts';
 import { resetSettings, setSetting, settings, type Settings } from './settings.ts';
 
-type Page = 'main' | 'settings' | 'controls';
+type Page = 'main' | 'settings' | 'controls' | 'inventory';
 type Field =
   | { k: 'sens' | 'adsSens' | 'fov' | 'master' | 'music' | 'effects' | 'renderScale'; type: 'range'; label: string; min: number; max: number; step: number; fmt: (v: number) => string }
   | { k: 'invert' | 'antialias' | 'announcer'; type: 'toggle'; label: string; note?: string }
@@ -41,13 +41,13 @@ export class GameMenu {
   private leaveArmed = 0;
   visible = false;
 
-  constructor(private root: HTMLElement, private card: HTMLElement, private on: { resume: () => void; leave: () => void }) {
+  constructor(private root: HTMLElement, private card: HTMLElement, private on: { resume: () => void; leave: () => void; inventory: () => string }) {
     card.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!t) return;
       const act = t.dataset.act;
       if (act === 'resume') this.on.resume();
-      else if (act === 'settings' || act === 'controls' || act === 'main') this.go(act);
+      else if (act === 'settings' || act === 'controls' || act === 'inventory' || act === 'main') this.go(act);
       else if (act === 'reset') { resetSettings(); this.render(); }
       else if (act === 'leave') {
         // a second click within 3 s really leaves: a stray click shouldn't throw a match away
@@ -94,6 +94,11 @@ export class GameMenu {
         + '<p class="mn-foot">Saved on this device. Changes apply right away.</p>';
       return;
     }
+    if (this.page === 'inventory') {
+      this.card.innerHTML = `<div class="mn-head">${back}<h2>Inventory</h2><span></span></div><div class="inventory in-menu">${this.on.inventory()}</div>`
+        + '<p class="mn-foot">In a match: hold <b>Tab</b> (or press <b>I</b>) for this list, hold <b>Z</b> for the item wheel.</p>';
+      return;
+    }
     if (this.page === 'controls') {
       this.card.innerHTML = `<div class="mn-head">${back}<h2>Controls</h2><span></span></div>${controlsHTML()}`
         + '<p class="mn-foot">In a vehicle: <b>W S</b> drive, <b>A D</b> steer, <b>E</b> get out. Knocked teammate? Hold <b>E</b> next to them.</p>';
@@ -106,7 +111,7 @@ export class GameMenu {
         + '<nav class="mn-nav small"><button data-act="settings" type="button">Settings</button><button data-act="controls" type="button">All controls</button><button data-act="leave" type="button" class="quiet">Back to menu</button></nav>'
       : '<h2 class="mn-title">Paused</h2><p class="mn-sub">The match keeps going. Your character stands still.</p>'
         + '<nav class="mn-nav"><button class="btn play mn-big" data-act="resume" type="button">Resume</button>'
-        + '<button data-act="settings" type="button">Settings</button><button data-act="controls" type="button">Controls</button>'
+        + '<button data-act="inventory" type="button">Inventory</button><button data-act="settings" type="button">Settings</button><button data-act="controls" type="button">Controls</button>'
         + '<button data-act="leave" type="button" class="quiet">Back to menu</button></nav>';
   }
 }

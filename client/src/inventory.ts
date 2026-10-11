@@ -91,6 +91,13 @@ export class Inventory {
     const me = this.me;
     this.panel.classList.toggle('hidden', !this.open || !me);
     if (!this.open || !me) return;
+    const html = `<header><h3>Inventory</h3><span><kbd>Tab</kbd> hold · <kbd>I</kbd> ${this.pinned ? 'close' : 'keep open'} · <kbd>Z</kbd> item wheel</span></header>${this.html()}`;
+    if ((this.panel as HTMLElement & { _h?: string })._h !== html) { (this.panel as HTMLElement & { _h?: string })._h = html; this.panel.innerHTML = html; }
+  }
+  // the two columns: weapons on one side, shields, healing, perk and material on the other (the Esc menu shows them too)
+  html(): string {
+    const me = this.me;
+    if (!me) return '<p class="inv-none">Nothing yet: you carry what you pick up in a match.</p>';
     const row = (icon: string, doc: Doc, side: string, cls = '', color = '') =>
       `<div class="inv-row ${cls}" ${color ? `style="--rc:${color}"` : ''}><i class="${icon}"></i><div><b>${doc.name}</b><span>${doc.what}</span><em>${keys(doc.how)}</em></div><strong>${side}</strong></div>`;
     const guns = [row('ico ico-axe', AXE_DOC, `▦ ${me.mats}`, me.axe ? 'on' : '', '#0fa3c4')];
@@ -102,8 +109,7 @@ export class Inventory {
     const items = (['big', 'mini', 'med'] as ItemId[]).map((k) => row(`pic ico-item-${k}`, ITEM_DOCS[k], `×${me.items[k]}`, me.items[k] ? '' : 'none'));
     const perk = me.perk ? row(`pic ico-item-${me.perk.kind}`, PERK_DOCS[me.perk.kind], `×${me.perk.n}`, '', RARITY_CSS[PERKS[me.perk.kind].rarity])
       : `<div class="inv-row none"><i class="pic"></i><div><b>No perk</b><span>Pencil cases drop grenades, C4, launch pads, forts and more. One kind at a time.</span></div><strong></strong></div>`;
-    this.panel.innerHTML = `<header><h3>Inventory</h3><span><kbd>Tab</kbd> hold · <kbd>I</kbd> ${this.pinned ? 'close' : 'keep open'} · <kbd>Z</kbd> item wheel</span></header>`
-      + `<div class="inv-cols"><section><h4>Weapons</h4>${guns.join('')}</section>`
+    return `<div class="inv-cols"><section><h4>Weapons</h4>${guns.join('')}</section>`
       + `<section><h4>Shields and healing</h4>${items.join('')}<h4>Perk</h4>${perk}<h4>Building</h4>${row('pic mats', MATS_DOC, `▦ ${me.mats}`)}</section></div>`;
   }
 
