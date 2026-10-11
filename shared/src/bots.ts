@@ -1,6 +1,6 @@
 // The offline demo's bots: a pure function of the bot's memory and the simulation (no DOM), so the
 // same brain runs in the browser and in headless tests (server/test/bots.test.ts); the server fills its rooms with them too.
-import { EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
+import { AXE, BUILD, EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, SLOTS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
 import { emptyInput, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
 import { rayBox, type World } from './world.ts';
 
@@ -10,6 +10,11 @@ interface Waypoint { x: number; z: number; hop: number; drop: boolean }
 interface Plan { gx: number; gz: number; y: number; at: number; pts: Waypoint[]; i: number; noWay: boolean } // noWay: can't get any closer than here
 // steering answer: which way to walk (world space), whether to jump something, and whether the goal can't be reached
 interface Dir { x: number; z: number; hop: boolean; stuck: boolean }
+interface Bench { id: number; x: number; y: number; z: number } // an upgrade bench as a goal (ids below zero, apart from loot's)
+// something going up with the axe's blocks: a wall between us and who is shooting, or a pillar under our feet.
+// cells: 1 m blocks by their low corner, bottom row first; cur/curT: the one we aim at, and since when (one we
+// can't place is given up on); skip: those given up on
+interface Job { kind: 'wall' | 'pillar'; cells: { x: number; y: number; z: number }[]; until: number; cur: number; curT: number; skip: number }
 
 // names for the bots that fill a room
 export const BOT_NAMES = ['degen', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'paperhand', 'diamond', 'jeet', 'moonboi', 'gmgm', 'solchad', 'wifhat', 'ape420', 'fomo', 'ngmi', 'rekt', 'gigabrain', 'anon', 'whale', 'hodl', 'pixel', 'scribble', 'inky', 'doodle', 'crayon'];
@@ -19,9 +24,14 @@ export interface Bot {
   target: number | null; los: boolean; vis: number; losT: number; seenT: number; acqT: number; // target visible at the last check (2 head, 1 chest), last seen, first seen
   wp: Pt; wpT: number; carId: number; carT: number; seq: number; dropX: number; dropZ: number; landed: boolean; mode: string; dest: Pt;
   plan: Plan | null; navT: number; direct: boolean; forcePlan: number; groundY: number; jumpT: number; jumps: number;
-  goal: { ref: Loot | Case; kind: 'case' | 'loot'; t0: number; arrived: number } | null; scanT: number; skip: Map<number, number>;
+  goal: { ref: Loot | Case | Bench; kind: 'case' | 'loot' | 'bench'; t0: number; arrived: number } | null; scanT: number; skip: Map<number, number>;
   prog: { x: number; z: number; t: number }; gp: { x: number; z: number; best: number; t: number } | null; escape: { yaw: number; until: number } | null; blockT: number;
-  life: number; hitT: number; slotT: number; rot: boolean; away: { x: number; z: number; until: number } | null; car: { t: number; best: number; slow: number; back: number; tries: number } | null;
+  life: number; hitT: number; slotT: number; rot: boolean; car: { t: number; best: number; slow: number; back: number; tries: number } | null;
+  // where the target was when last seen, and when we last traded shots with it (a fight lasts past a lost sight line)
+  seen: { x: number; y: number; z: number } | null; engT: number;
+  cover: { x: number; z: number; until: number; at: boolean } | null; // somewhere they can't see us, to heal at (at: got there)
+  job: Job | null; jobT: number; perch: { x: number; y: number; z: number } | null; // building, the last build, standing on our own pillar
+  chop: { yaw: number; until: number } | null; chopT: number; benches: Set<number>; // gathering material with the axe; benches used
 }
 
 export function newBot(id: number, rand: () => number): Bot {
@@ -31,7 +41,8 @@ export function newBot(id: number, rand: () => number): Bot {
     wp: { x: dropX, z: dropZ }, wpT: 0, carId: 0, carT: 0, seq: 0, dropX, dropZ, landed: false, mode: 'glide', dest: { x: dropX, z: dropZ },
     plan: null, navT: 0, direct: true, forcePlan: 0, groundY: 0, jumpT: -9, jumps: 0,
     goal: null, scanT: (id % 20) * 0.03, skip: new Map(), prog: { x: 0, z: 0, t: 0 }, gp: null, escape: null, blockT: 0,
-    life: 500, hitT: -99, slotT: -99, rot: false, away: null, car: null,
+    life: 500, hitT: -99, slotT: -99, rot: false, car: null,
+    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(),
   };
 }
 
@@ -277,7 +288,9 @@ function gunValue(w: WeaponId, ups: number, mag: number | null, d: number, skill
 const worth = (w: WeaponId, ups: number, skill: number) => 0.3 * gunValue(w, ups, null, 8, skill) + 0.5 * gunValue(w, ups, null, 30, skill) + 0.2 * gunValue(w, ups, null, 70, skill);
 
 // ---------------- the brain ----------------
-// bots: glide to a drop spot, loot, rotate ahead of the storm, fight what they can see, hunt at the end
+// bots: glide to a drop spot, loot, rotate ahead of the storm, fight what they can see (walling up, or breaking
+// off to heal behind cover, when it goes badly; pushing when it goes well), build up to whoever is above, hunt
+// at the end
 export function botInput(b: Bot, sim: Sim): Input {
   const R = b.rand, w = sim.world, t = sim.t;
   const self = sim.players.get(b.id)!, g = sim.ring;
@@ -319,9 +332,9 @@ export function botInput(b: Bot, sim: Sim): Input {
   b.life = life;
   const sr = g.nr * 0.5, safe = dNext > sr ? { x: g.nx + ((self.x - g.nx) / dNext) * sr, z: g.ny + ((self.z - g.ny) / dNext) * sr } : { x: g.nx, z: g.ny };
 
-  if (self.gliding) { glide(b, sim, self, inp, rotate ? safe : null); return inp; }
+  if (self.gliding) { b.job = null; b.perch = null; glide(b, sim, self, inp, rotate ? safe : null); return turn(self, inp, 4, false); }
   b.landed = true;
-  if (self.ride) { drive(b, sim, self, inp, safe); return inp; }
+  if (self.ride) { b.job = null; b.chop = null; drive(b, sim, self, inp, safe); return inp; }
   b.car = null;
 
   const mateNear = (down: boolean, r: number) => {
@@ -331,16 +344,16 @@ export function botInput(b: Bot, sim: Sim): Input {
   };
   // knocked: crawl to the nearest teammate still standing (they come to us too)
   if (self.down > 0) {
-    b.mode = 'crawl';
+    b.mode = 'crawl'; b.job = null; b.perch = null; b.chop = null; b.cover = null;
     const m = mateNear(false, 200);
     if (m && Math.hypot(m.x - self.x, m.z - self.z) > 1.2) { const d = steer(b, sim, self, m.x, m.z, m.y); inp.yaw = Math.atan2(-d.x, -d.z); inp.fwd = 1; }
-    return inp;
+    return turn(self, inp, 5, false);
   }
 
   // ---- what can we see ----
   const late = sim.teamsAlive.size <= 2 || g.phase >= 3 || sim.alive <= 4;
   let tgt = b.target !== null ? sim.players.get(b.target) ?? null : null;
-  if (tgt && (!tgt.alive || tgt.gliding)) { tgt = null; b.target = null; b.los = false; }
+  if (tgt && (!tgt.alive || tgt.gliding)) { tgt = null; b.target = null; b.los = false; b.seen = null; }
   if (t >= b.losT) {
     const busy = !!(tgt && b.los);
     b.losT = t + (busy ? 0.12 + R() * 0.08 : 0.3 + R() * 0.2);
@@ -371,17 +384,20 @@ export function botInput(b: Bot, sim: Sim): Input {
     if (!pick && knocked) { pick = knocked; vis = kv; }
     if (!pick && near.length) pick = near[0].q;
     if (pick && (pick.id !== b.target || (vis && !b.los))) b.acqT = t;
+    if (pick && pick.id !== b.target) b.seen = null;
     b.target = pick ? pick.id : null; b.los = vis > 0; b.vis = vis;
     if (vis) b.seenT = t;
     tgt = pick;
   }
-  const td = tgt ? Math.hypot(tgt.x - self.x, tgt.z - self.z) : Infinity;
+  if (tgt && b.los) b.seen = { x: tgt.x, y: tgt.y, z: tgt.z };
+  const td = tgt ? Math.hypot(tgt.x - self.x, tgt.z - self.z) : Infinity, foe = tgt ? tgt.hp + tgt.shield : 0;
   // who's worth a fight: in reach of what we carry (a pistol doesn't take on a rifle at 100 m; early on a bot
   // would rather loot than trade shots across a field), or shooting at us
   let reach = 0;
   self.slots.forEach((x) => { if (x) reach = Math.max(reach, WEAPONS[x].melee ? 6 : x === 'pistol' ? 25 : WEAPONS[x].pellets > 1 ? 22 : WEAPONS[x].range < 70 ? 40 : WEAPONS[x].zoom >= 2.4 ? 110 : 65); });
   if (g.phase === 0) reach = Math.min(reach, 40);
   const fighting = !!(tgt && b.los && (td < reach || t - b.hitT < 3 || (td < reach * 1.6 && t - b.seenT < 0.5 && b.mode === 'fight')));
+  if (fighting) b.engT = t;
   const alert = t - b.seenT < 2 || t - b.hitT < 2;
   const gun = self.slots[self.cur];
   let moved = false; // movement set below; otherwise walk to `goal`
@@ -392,8 +408,15 @@ export function botInput(b: Bot, sim: Sim): Input {
   for (const q of sim.players.values()) if (q.alive && q.down === 0 && q.team === self.team && q.id !== self.id && q.id < self.id && (!lead || q.id < lead.id)) lead = q;
   const ld = lead ? Math.hypot(lead.x - self.x, lead.z - self.z) : 0;
 
+  // on top of our own pillar: hold it while the fight lasts (off it, the fight over or the storm coming: forget it)
+  const perched = !!b.perch && Math.hypot(self.x - b.perch.x, self.z - b.perch.z) < 0.6 && Math.abs(self.y - b.perch.y) < 0.4;
+  if (b.perch && (!perched || rotate || t - b.engT > 3)) b.perch = null;
+
+  // ---- a build in hand runs to the end (a wall going up, a pillar under us) ----
+  if (b.job) { if (build(b, sim, self, inp)) moved = true; else b.job = null; }
+
   // ---- a knocked teammate and nobody shooting at us up close: go and pick them up ----
-  const hurt = mateNear(true, 60);
+  const hurt = moved ? null : mateNear(true, 60);
   if (hurt && Math.abs(hurt.y - self.y) < 1.4 && !(fighting && td < 25) && !(inStorm && Math.hypot(hurt.x - g.x, hurt.z - g.y) > g.r)) {
     b.mode = 'revive';
     const d = Math.hypot(hurt.x - self.x, hurt.z - self.z);
@@ -401,24 +424,59 @@ export function botInput(b: Bot, sim: Sim): Input {
     else goal = { x: hurt.x, z: hurt.z, y: hurt.y, sprint: d > 5 };
   }
 
-  // ---- hurt, and the fight isn't going our way: break off, get out of sight, heal ----
-  if (!goal && !moved && fighting && tgt && life < 140 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && tgt.hp + tgt.shield > life) {
-    b.mode = 'retreat';
-    if (!b.away || t > b.away.until) { const ux = (self.x - tgt.x) / (td || 1), uz = (self.z - tgt.z) / (td || 1); b.away = { x: self.x + ux * 25, z: self.z + uz * 25, until: t + 2.5 }; }
-    goal = { x: b.away.x, z: b.away.z, y: b.groundY, sprint: true };
+  // ---- shot at in the open and not winning it: wall up between us (an instant fort, if we carry one) ----
+  if (!goal && !moved && fighting && tgt && tgt.down === 0 && t - b.hitT < 0.4 && td > 7 && t - b.jobT > 6 && self.grounded && !self.use && !inStorm && !perched
+    && (life < 160 || life + 40 < foe) && R() < 0.3 + b.skill * 0.6) {
+    b.jobT = t;
+    if (self.perk?.kind === 'fort') { inp.perk = true; b.cover = { x: self.x, z: self.z, until: t + 6, at: true }; b.mode = 'fort'; moved = true; }
+    else if (self.mats >= BUILD.cost * 4 && (b.job = wallJob(w, self, b.groundY, tgt, t))) { b.cover = { x: self.x, z: self.z, until: t + 7, at: true }; moved = build(b, sim, self, inp); }
   }
+
+  // ---- they're up high and close (a roof, a tower floor, their own pillar): build our way up to them ----
+  if (!goal && !moved && tgt && tgt.down === 0 && t - b.jobT > 8 && self.grounded && b.skill > 0.4 && !rotate && td > 2.5 && td < 22 && (fighting || late || t - b.seenT < 1.5)) {
+    const up = tgt.y - b.groundY, n = Math.ceil(up - 0.4);
+    if (up > 2.6 && n <= 6 && self.mats >= BUILD.cost * n && rayT(w, self.x, self.y + 1.85, self.z, 0, 1, 0, n + 0.3) >= n + 0.3 && (b.job = pillarJob(w, self, b.groundY, n, t))) { b.jobT = t; moved = build(b, sim, self, inp); }
+  }
+
+  // ---- hurt, and the fight isn't going our way: break off to somewhere they can't see us, heal there ----
+  if (!goal && !moved && fighting && tgt && !b.cover && life < 140 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && foe > life && spend(coverBudget, sim, 2)) {
+    b.mode = 'retreat';
+    const c = coverFrom(w, self, b.groundY, tgt, R() * Math.PI * 2);
+    if (c) b.cover = { x: c.x, z: c.z, until: t + 1.5 + Math.hypot(c.x - self.x, c.z - self.z) / 6 + 5, at: false }; // time to get there, and to heal
+    else if (self.mats >= BUILD.cost * 4 && t - b.jobT > 3 && (b.job = wallJob(w, self, b.groundY, tgt, t))) { b.jobT = t; b.cover = { x: self.x, z: self.z, until: t + 7, at: true }; moved = build(b, sim, self, inp); }
+    else { const ux = (self.x - tgt.x) / (td || 1), uz = (self.z - tgt.z) / (td || 1); b.cover = { x: self.x + ux * 25, z: self.z + uz * 25, until: t + 2.5, at: false }; } // nowhere to hide: run
+  }
+  // on the way to cover nothing turns us back (a retreat used to flip back to looting, toward them, the
+  // moment they were out of sight, and back again); once there, a fight from it doesn't send us back to it
+  if (b.cover && (t > b.cover.until || rotate)) b.cover = null;
+  if (b.cover && !b.cover.at && Math.hypot(b.cover.x - self.x, b.cover.z - self.z) < 1.2) b.cover.at = true;
+  if (!goal && !moved && b.cover && !b.cover.at) { b.mode = 'retreat'; goal = { x: b.cover.x, z: b.cover.z, y: b.groundY, sprint: true }; }
 
   // ---- fighting ----
   if (!goal && !moved && fighting && tgt) {
     b.mode = 'fight';
-    fight(b, sim, self, tgt, td, inp, rotate ? safe : null);
+    fight(b, sim, self, tgt, td, inp, rotate ? safe : null, perched);
     moved = true;
   }
 
-  // ---- healing: only out of sight, out of the storm and not under fire (damage cancels it) ----
-  if (!moved && !goal && !self.use && !inStorm && !alert && self.reloadT === 0 && !(rotate && waitLeft < 4)) {
-    if (self.shield < 200 && (self.items.big > 0 || (self.items.mini > 0 && self.shield < (ITEMS.mini.shieldCap ?? 125)))) inp.item = 1;
-    else if (self.hp < 190 && self.items.med > 0) inp.item = 2;
+  // ---- behind cover: heal up, reload, look where they were (they come to us) ----
+  if (!goal && !moved && b.cover) {
+    const healthy = (self.hp >= 200 || self.items.med === 0) && (self.shield >= 150 || self.items.big + self.items.mini === 0);
+    if (healthy && !self.use && self.reloadT === 0) b.cover = null;
+    else { b.mode = 'cover'; moved = true; if (b.seen) aimAt(inp, self, b.seen.x, b.seen.y + 1.3, b.seen.z); }
+  }
+
+  // ---- lost sight of who we were trading shots with: after them when they're nearly down (or we're well
+  // ahead), else hold the angle a moment (a fight used to flip to looting and back every time they ducked) ----
+  if (!goal && !moved && tgt && !b.los && b.seen && t - b.engT < 3.5 && !rotate) {
+    if (Math.abs(b.seen.y - b.groundY) < 2.5 && life > 80 && (foe < 110 || tgt.down > 0 || life > foe + 70)) { b.mode = 'push'; goal = { x: b.seen.x, z: b.seen.z, y: b.seen.y, sprint: true }; }
+    else { b.mode = 'hold'; moved = true; aimAt(inp, self, b.seen.x, b.seen.y + 1.3, b.seen.z); }
+  }
+
+  // ---- the axe out for material, or to cut through what we're stuck on ----
+  if (!moved && b.chop) {
+    if (t > b.chop.until || fighting || alert || self.mats >= BUILD.maxMats - 10) b.chop = null;
+    else { b.mode = 'chop'; moved = true; if (!self.axe) inp.slot = SLOTS + 1; inp.yaw = b.chop.yaw; inp.pitch = -0.25; inp.fire = self.axe && self.axeCd <= DT; }
   }
 
   // ---- far from the circle (where the storm will send us): a car, before setting off on foot ----
@@ -454,13 +512,21 @@ export function botInput(b: Bot, sim: Sim): Input {
     if (lg) {
       const ref = lg.ref, d = Math.hypot(ref.x - self.x, ref.z - self.z);
       const full = !self.slots.includes(null);
-      b.mode = lg.kind === 'case' ? 'case' : 'loot';
+      b.mode = lg.kind;
       if (d < 1.2 && !lg.arrived) lg.arrived = t;
       if (t - lg.t0 > 6 + d / 3 || (lg.arrived && t - lg.arrived > 2.5)) { b.skip.set(ref.id, t + 60); b.goal = null; } // can't get it
-      else if (lg.kind === 'case' ? (ref as Case).open : d < 3 && !sim.loot.includes(ref as Loot)) { b.goal = null; b.scanT = t; } // gone: someone was quicker
+      else if (lg.kind === 'case' ? (ref as Case).open : lg.kind === 'bench' ? b.benches.has(-1 - ref.id) : d < 3 && !sim.loot.includes(ref as Loot)) { b.goal = null; b.scanT = t; } // gone: someone was quicker
       else if (lg.kind === 'case') {
         if (d < INTERACT_R - 0.5 && Math.abs(ref.y - self.y) < 1.5) { inp.interact = true; inp.yaw = yawTo(self, ref.x, ref.z); moved = true; }
         else goal = { x: ref.x, z: ref.z, y: ref.y, sprint: d > 6 };
+      } else if (lg.kind === 'bench') {
+        // the best gun in hand, then E at the bench (it improves the gun we hold, once per bench)
+        if (d < UPGRADE.benchReach - 0.5) {
+          const best = bestSlot(self, b.skill);
+          moved = true; inp.yaw = yawTo(self, ref.x, ref.z);
+          if (self.cur !== best || self.axe) { if (t - b.slotT > 0.4) { inp.slot = best + 1; b.slotT = t; } }
+          else if (!caseNear(sim, self) && self.reloadT === 0 && !self.use) { inp.interact = true; b.benches.add(-1 - ref.id); b.goal = null; }
+        } else goal = { x: ref.x, z: ref.z, y: ref.y, sprint: d > 6 };
       } else {
         const l = ref as Loot;
         // a swap: hold the gun we'd give up, stand on the new one, press E
@@ -475,26 +541,42 @@ export function botInput(b: Bot, sim: Sim): Input {
     }
   }
 
-  // ---- hunting: late in the match (or shot at from somewhere) go and find the nearest enemy ----
-  if (!moved && !goal && tgt && !b.los && (late || td < 35 || t - b.hitT < 3)) {
+  // ---- hunting: late in the match (or shot at from somewhere) go and find the nearest enemy; not up a
+  // tower's floors before then (two bots on different floors of The Needle stalked each other for minutes) ----
+  if (!moved && !goal && tgt && !b.los && (late || td < 35 || t - b.hitT < 3) && (late || Math.abs(tgt.y - b.groundY) < 3)) {
     b.mode = 'hunt';
     goal = { x: tgt.x, z: tgt.z, y: tgt.y, sprint: td > 15 };
     // high up and the match is ending: come down and fight
     if (late && b.groundY > 4 && tgt.y < b.groundY - 3) goal.y = 0;
   }
 
-  // ---- otherwise roam inside where the storm is heading ----
+  // ---- otherwise roam inside where the storm is heading (low on material: chop a wall for some first) ----
   if (!moved && !goal) {
     b.mode = 'roam';
+    if (self.mats < 24 && t >= b.chopT && !alert) {
+      b.chopT = t + 5 + R() * 4;
+      for (let k = 0; k < 4 && !b.chop; k++) { const yaw = self.yaw + (k * Math.PI) / 2; if (breakable(w, self, yaw, 2.2)) b.chop = { yaw, until: t + 1.6 + R() * 1.6 }; }
+    }
     if (Math.hypot(b.wp.x - self.x, b.wp.z - self.z) < 4 || t > b.wpT || (lead && Math.hypot(b.wp.x - lead.x, b.wp.z - lead.z) > 30)) newWaypoint(b, sim, lead ?? self, lead ? 6 : 25, lead ? 18 : 45);
     goal = { x: b.wp.x, z: b.wp.z, y: 0, sprint: b.id % 2 === 0 || g.closing };
   }
 
+  // ---- healing: out of sight and not shot at for a moment (damage cancels it), never on the way to cover ----
+  const exposed = b.los || t - b.hitT < 1.2;
+  if (!self.use && !inStorm && !exposed && self.reloadT === 0 && !(rotate && waitLeft < 4) && !b.job && !b.chop && !inp.hold && !inp.interact && b.mode !== 'retreat' && b.mode !== 'push') {
+    if (self.shield < 200 && (self.items.big > 0 || (self.items.mini > 0 && self.shield < (ITEMS.mini.shieldCap ?? 125)))) inp.item = 1;
+    else if (self.hp < 190 && self.items.med > 0) inp.item = 2;
+    else if (self.perk?.kind === 'kit' && gun && !self.axe && self.ups[self.cur] < UPGRADE.max && !alert) inp.perk = true; // a quiet moment: the upgrade kit on the gun in hand
+  }
+
+  // ---- the axe back for the gun once nothing needs it ----
+  if (self.axe && !b.job && !b.chop && !inp.slot) { inp.slot = self.cur + 1; inp.fire = false; }
+
   // ---- reloads: never mid-fight unless empty (then another loaded gun first) ----
-  if (!fighting && !b.los && gun && !self.use && self.reloadT === 0 && !inp.slot) {
+  if (!fighting && !b.los && gun && !self.use && !self.axe && self.reloadT === 0 && !inp.slot) {
     const def = WEAPONS[gun];
     if (self.mags[self.cur] < def.mag * (alert ? 0.35 : 0.7)) inp.reload = true;
-    else if (!alert && t - b.slotT > 2 && self.mags[self.cur] === def.mag && !(b.goal?.kind === 'loot' && (b.goal.ref as Loot).kind === 'weapon')) {
+    else if (!alert && t - b.slotT > 2 && self.mags[self.cur] === def.mag && !(b.goal?.kind === 'loot' && (b.goal.ref as Loot).kind === 'weapon') && b.goal?.kind !== 'bench') {
       // safe: top up the other guns too
       const j = self.slots.findIndex((x, i) => x && i !== self.cur && self.mags[i] < WEAPONS[x].mag * 0.6);
       if (j >= 0) { inp.slot = j + 1; b.slotT = t; }
@@ -510,34 +592,147 @@ export function botInput(b: Bot, sim: Sim): Input {
     np = t - b.gp.t;
     const d = steer(b, sim, self, goal.x, goal.z, goal.y);
     // no way to it from here: forget it (a case up on a ledge, a car behind a fence)
-    if (d.stuck) { if (b.mode === 'case' || b.mode === 'loot') { if (b.goal) b.skip.set(b.goal.ref.id, t + 60); b.goal = null; } else if (b.mode === 'car') b.skip.set(b.carId, t + 60); else if (b.mode === 'roam') b.wpT = 0; }
+    if (d.stuck) { if (b.goal && (b.mode === 'case' || b.mode === 'loot' || b.mode === 'bench')) { b.skip.set(b.goal.ref.id, t + 60); b.goal = null; } else if (b.mode === 'car') b.skip.set(b.carId, t + 60); else if (b.mode === 'roam') b.wpT = 0; }
     inp.yaw = Math.atan2(-d.x, -d.z); inp.fwd = 1; inp.sprint = goal.sprint && !self.use;
     if (Math.hypot(goal.x - self.x, goal.z - self.z) < 0.4) inp.fwd = 0;
     if (d.hop) hop(b, self, inp, t);
   }
-  if (b.jumps === 1 && !self.grounded) hop(b, self, inp, t);
+  if (b.jumps === 1 && !self.grounded && !b.job) hop(b, self, inp, t);
 
-  // ---- stuck: hop it, plan around it, then give up on that goal and step aside ----
+  // ---- stuck: hop it, cut through it, plan around it, then give up on that goal and step aside ----
   const wants = Math.abs(inp.fwd) + Math.abs(inp.strafe) > 0.3;
-  if (!wants || fighting || inp.hold) b.prog = { x: self.x, z: self.z, t };
+  if (!wants || fighting || inp.hold || b.job) b.prog = { x: self.x, z: self.z, t };
   else if (Math.hypot(self.x - b.prog.x, self.z - b.prog.z) > 1.5) b.prog = { x: self.x, z: self.z, t };
   const st = t - b.prog.t;
-  if (b.escape && t < b.escape.until && !fighting && !inp.hold) { inp.yaw = b.escape.yaw; inp.fwd = 1; inp.strafe = 0; inp.sprint = true; if (st > 0.6) hop(b, self, inp, t); }
+  if (b.escape && t < b.escape.until && !fighting && !inp.hold && !b.job) { inp.yaw = b.escape.yaw; inp.fwd = 1; inp.strafe = 0; inp.sprint = true; if (st > 0.6) hop(b, self, inp, t); }
   else {
     b.escape = null;
     if (st > 1 && wants) hop(b, self, inp, t);
-    if ((st > 2.5 || np > 8) && t >= b.forcePlan) { b.forcePlan = t + 6; b.plan = null; b.navT = t; }
+    if ((st > 2.5 || np > 8) && t >= b.forcePlan) {
+      // a wall in the way we can break (a fence, a house with no door this side): cut through it, like a player would
+      if (st > 2.5 && !b.chop && self.mats < BUILD.maxMats - 10 && breakable(w, self, inp.yaw, 1.6)) b.chop = { yaw: inp.yaw, until: t + 2.5 };
+      b.forcePlan = t + 6; b.plan = null; b.navT = t;
+    }
     if (st > 5 || np > 12) {
       if (b.goal) b.skip.set(b.goal.ref.id, t + 60);
       if (b.mode === 'car') b.skip.set(b.carId, t + 60);
-      b.goal = null; b.wpT = 0; b.gp = null;
+      b.goal = null; b.wpT = 0; b.gp = null; b.chop = null;
       b.escape = { yaw: inp.yaw + Math.PI * (0.5 + R()), until: t + 1.2 };
       b.prog = { x: self.x, z: self.z, t };
     }
   }
   if (inp.item) { inp.fire = false; inp.slot = 0; inp.reload = false; }
   if (self.use) { inp.slot = 0; inp.reload = false; inp.sprint = false; }
+  // turn like a player on a mouse, and only fire once the turn gets there
+  const want = inp.yaw;
+  turn(self, inp, b.job ? BUILD_TURN : fighting || b.mode === 'hold' || b.mode === 'cover' ? 7 + b.skill * 8 : 6);
+  if (inp.fire && Math.abs(angDiff(want, inp.yaw)) > 0.1 && !(gun && WEAPONS[gun].spinUp && !self.axe)) inp.fire = false;
   return inp;
+}
+
+// turn like a player on a mouse: quick, never instant (a bot that snapped half a turn in one tick, every time
+// it changed its mind, read as broken). The walk keeps its world direction while the facing catches up
+const BUILD_TURN = 12;
+function turn(self: PlayerState, inp: Input, rate: number, pitch = true): Input {
+  const m = rate * DT, d = angDiff(inp.yaw, self.yaw);
+  if (Math.abs(d) > m) {
+    const s0 = Math.sin(inp.yaw), c0 = Math.cos(inp.yaw), wx = -s0 * inp.fwd + c0 * inp.strafe, wz = -c0 * inp.fwd - s0 * inp.strafe;
+    inp.yaw = self.yaw + Math.sign(d) * m;
+    const s = Math.sin(inp.yaw), c = Math.cos(inp.yaw);
+    inp.fwd = clamp(-wx * s - wz * c, -1, 1); inp.strafe = clamp(wx * c - wz * s, -1, 1);
+  }
+  if (pitch) { const dp = inp.pitch - self.pitch; if (Math.abs(dp) > m) inp.pitch = self.pitch + Math.sign(dp) * m; }
+  return inp;
+}
+function aimAt(inp: Input, self: PlayerState, x: number, y: number, z: number) {
+  inp.yaw = yawTo(self, x, z); inp.pitch = clamp(Math.atan2(y - (self.y + EYE_H), Math.hypot(x - self.x, z - self.z)), -1.5, 1.5);
+}
+
+// ---------------- building: the axe's 1 m blocks, placed the way a player places them ----------------
+// a wall two blocks high and three wide, two cells toward whoever is shooting (square to the axis they're
+// along), on the floor we stand on; null: no room for one here
+function wallJob(w: World, self: PlayerState, y: number, foe: PlayerState, t: number): Job | null {
+  const dx = foe.x - self.x, dz = foe.z - self.z, ew = Math.abs(dx) > Math.abs(dz), fx = Math.floor(self.x), fz = Math.floor(self.z);
+  const cells: Job['cells'] = [];
+  for (let row = 0; row < 2; row++) for (const k of [0, -1, 1]) {
+    const x = ew ? fx + Math.sign(dx) * 2 : fx + k, z = ew ? fz + k : fz + Math.sign(dz) * 2;
+    if (row === 0 && (Math.abs(w.groundAt(x + 0.5, z + 0.5, y + 0.5) - y) > 0.05 || w.hitBox(x + 0.5, y + 0.01, z + 0.5, 0.49, 0.98))) continue;
+    if (row === 1 && !cells.some((c) => c.x === x && c.z === z)) continue;
+    cells.push({ x, y: y + row, z });
+  }
+  return cells.length >= 4 ? { kind: 'wall', cells, until: t + 2.6, cur: -1, curT: t, skip: 0 } : null;
+}
+// a column of n blocks where we stand: jump, and at the top of the jump put a block under our feet
+function pillarJob(w: World, self: PlayerState, y: number, n: number, t: number): Job | null {
+  const x = Math.floor(self.x), z = Math.floor(self.z), cells: Job['cells'] = [];
+  for (let k = 0; k < n; k++) { if (w.hitBox(x + 0.5, y + k + 0.01, z + 0.5, 0.49, 0.98)) return null; cells.push({ x, y: y + k, z }); }
+  return { kind: 'pillar', cells, until: t + 1.5 + n * 1.1, cur: -1, curT: t, skip: 0 };
+}
+// one tick of the job: the axe out, aim at the face the next block goes on, right click when the block would
+// land exactly there (what the sim will do with this aim). false: done, or given up
+function build(b: Bot, sim: Sim, self: PlayerState, inp: Input): boolean {
+  const j = b.job!, w = sim.world, t = sim.t;
+  if (t > j.until || self.mats < BUILD.cost || self.use) { if (j.kind === 'pillar' && j.cur > 0) b.perch = { x: j.cells[0].x + 0.5, y: j.cells[j.cur - 1].y + 1, z: j.cells[0].z + 0.5 }; return false; }
+  const filled = (c: { x: number; y: number; z: number }) => !!w.hitBox(c.x + 0.5, c.y + 0.01, c.z + 0.5, 0.49, 0.98);
+  // the next block: the first one not up yet that has what it stands on
+  let k = -1;
+  for (let i = 0; i < j.cells.length && k < 0; i++) {
+    const c = j.cells[i];
+    if (j.skip & (1 << i) || filled(c)) continue;
+    const under = j.cells.find((u) => u.x === c.x && u.z === c.z && Math.abs(u.y + 1 - c.y) < 0.05);
+    if (!under || filled(under)) k = i;
+  }
+  if (k < 0) { if (j.kind === 'pillar') b.perch = { x: j.cells[0].x + 0.5, y: j.cells[j.cells.length - 1].y + 1, z: j.cells[0].z + 0.5 }; return false; }
+  if (k !== j.cur) { j.cur = k; j.curT = t; }
+  else if (t - j.curT > (j.kind === 'pillar' ? 1.6 : 0.6)) { j.skip |= 1 << k; return true; } // that one won't go in: the next
+  b.mode = 'build';
+  const c = j.cells[k];
+  if (!self.axe) inp.slot = SLOTS + 1;
+  if (j.kind === 'wall') aimAt(inp, self, c.x + 0.5, c.y, c.z + 0.5); // the middle of what it stands on (the floor, the block under it)
+  else {
+    // straight down over the middle of the cell; jump from there once the axe is ready
+    const cx = c.x + 0.5, cz = c.z + 0.5, off = Math.hypot(cx - self.x, cz - self.z);
+    inp.pitch = -1.5;
+    if (self.grounded) {
+      if (off > 0.12) moveDir(inp, cx - self.x, cz - self.z, Math.min(1, off * 2.5));
+      else if (self.axe && self.axeCd < 0.2) inp.jump = true;
+    }
+  }
+  turn(self, inp, BUILD_TURN);
+  // (a pillar block fits under us only once our feet are above it, after this tick's move)
+  const fy = self.y + self.vy * DT - 12 * DT * DT;
+  if (self.axe && self.axeCd <= DT && (j.kind === 'wall' || (!self.grounded && fy >= c.y + 1.02))) {
+    const cp = Math.cos(inp.pitch), dx = -Math.sin(inp.yaw) * cp, dy = Math.sin(inp.pitch), dz = -Math.cos(inp.yaw) * cp;
+    const at = w.placeCell(self.x, (j.kind === 'wall' ? self.y : fy) + EYE_H, self.z, dx, dy, dz, BUILD.reach);
+    if (at && at.x0 === c.x && at.z0 === c.z && Math.abs(at.y0 - c.y) < 0.05) inp.aim = true;
+  }
+  return true;
+}
+// a block within reach along yaw (knee to chest high) that the axe can break: not the ground, a hill, a mountain
+function breakable(w: World, self: PlayerState, yaw: number, reach: number): boolean {
+  const dx = -Math.sin(yaw), dz = -Math.cos(yaw), hit = w.raycastBox(self.x, self.y + 1.1, self.z, dx, 0, dz, reach + 0.4);
+  return hit.i >= 0 && !w.boxes[hit.i].hard;
+}
+
+// a little search per tick, shared by every bot in the match (like the path planner's)
+const coverBudget = new WeakMap<Sim, { tick: number; n: number }>();
+function spend(m: WeakMap<Sim, { tick: number; n: number }>, sim: Sim, max: number) {
+  const bud = m.get(sim) ?? { tick: -1, n: 0 };
+  if (bud.tick !== sim.tick) { bud.tick = sim.tick; bud.n = 0; m.set(sim, bud); }
+  return bud.n < max && ++bud.n > 0;
+}
+// somewhere close the foe can't see (chest high from their eyes), that we can walk straight to, not toward
+// them; nearest first. null: nowhere
+function coverFrom(w: World, self: PlayerState, y: number, foe: PlayerState, rot: number): Pt | null {
+  const ex = foe.x, ey = foe.y + EYE_H, ez = foe.z, fd = Math.hypot(foe.x - self.x, foe.z - self.z) || 1, ux = (foe.x - self.x) / fd, uz = (foe.z - self.z) / fd;
+  for (const r of [3.5, 6.5, 10]) for (let k = 0; k < 10; k++) {
+    const a = rot + (k / 10) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
+    if (cx * ux + cz * uz > 0.3) continue;
+    const x = self.x + cx * r, z = self.z + cz * r, dx = x - ex, dy = y + 1.2 - ey, dz = z - ez, L = Math.hypot(dx, dy, dz);
+    if (rayT(w, ex, ey, ez, dx / L, dy / L, dz / L, L) >= L - 0.6) continue;
+    if (clearWalk(w, self.x, self.z, y, x, z, false)) return { x, z };
+  }
+  return null;
 }
 
 function glide(b: Bot, sim: Sim, self: PlayerState, inp: Input, safe: Pt | null) {
@@ -584,7 +779,8 @@ function drive(b: Bot, sim: Sim, self: PlayerState, inp: Input, safe: Pt) {
   inp.strafe = clamp(-d * 2, -1, 1); inp.fwd = self.spd > 8 && f < 4 + self.spd * 0.6 ? -1 : 1; inp.sprint = false; inp.yaw = self.head;
 }
 
-function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number, inp: Input, safe: Pt | null) {
+// still: on top of our own pillar (one step and we're off it): stand and shoot
+function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number, inp: Input, safe: Pt | null, still: boolean) {
   const R = b.rand, t = sim.t;
   // the gun for the range: switch when another is clearly better (not back and forth), or the mag ran dry
   const air = isAir(tgt.ride) && !tgt.seat;
@@ -604,7 +800,11 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   const ty = tgt.y + (def?.proj ? 0.3 : b.vis === 2 ? HEAD_Y : HEAD_Y - 0.45) - (self.y + EYE_H); // the head when that's all that shows
   inp.yaw = yawTo(self, ax, az) + b.aimErr;
   inp.pitch = Math.atan2(ty, Math.hypot(ax - self.x, az - self.z)) + b.aimErr * 0.5;
-  inp.aim = d > 30;
+  // they're nearly down (or knocked, or reloading while we're fine): close in and finish it
+  const life = self.hp + self.shield, foe = tgt.hp + tgt.shield;
+  const push = life > 80 && (foe < 100 || tgt.down > 0 || (tgt.reloadT > 0 && life > 150));
+  if (push) b.mode = 'push';
+  inp.aim = d > 30 && !push;
   // hold fire: not seen a moment ago, out of range, a teammate in the way, our own blast, or still reacting
   let mate = false;
   for (const q of sim.players.values()) {
@@ -615,19 +815,24 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   const ready = t - b.acqT > 0.15 + (1 - b.skill) * 0.35;
   if (def && !inp.slot && !mate && ready && vals[self.cur] > 0 && self.mags[self.cur] > 0) {
     inp.fire = def.spinUp ? true : R() < 0.25 + b.skill * 0.45 && (def.auto || R() < 0.4);
-    // and only through a sight line checked a moment ago: it may have stepped behind a wall since
-    if (inp.fire && t - b.seenT > 0.1) { const v = sight(sim.world, self, tgt); if (v) { b.seenT = t; b.vis = v; } else { inp.fire = false; b.los = false; b.losT = t; } }
+    // and only through a sight line checked a moment ago: it may have stepped behind a wall since (every shot
+    // while they have the axe out: a wall may be going up between us)
+    if (inp.fire && (t - b.seenT > 0.1 || tgt.axe)) { const v = sight(sim.world, self, tgt); if (v) { b.seenT = t; b.vis = v; } else { inp.fire = false; b.los = false; b.losT = t; } }
   }
   // move: strafe, close in or back off to the gun's range, flip when a wall stops the strafe; the storm comes first
-  const pref = !def ? 20 : def.melee ? 1.5 : def.pellets > 1 ? 6 : def.zoom >= 2.4 ? 55 : def.proj ? 30 : def.range < 70 ? 14 : 24;
+  const pref = !def ? 20 : def.melee ? 1.5 : push ? (def.proj ? 14 : 4) : def.pellets > 1 ? 6 : def.zoom >= 2.4 ? 55 : def.proj ? 30 : def.range < 70 ? 14 : 24;
   const ux = (tgt.x - self.x) / (d || 1), uz = (tgt.z - self.z) / (d || 1);
   let mx = -uz * b.strafe, mz = ux * b.strafe;
-  if (safe) { const s = steer(b, sim, self, safe.x, safe.z, 0); const l = Math.hypot(s.x, s.z) || 1; mx = (s.x / l) * 2 + mx * 0.3; mz = (s.z / l) * 2 + mz * 0.3; if (s.hop) hop(b, self, inp, t); }
-  else if (d > pref + 12 || mate) { const s = steer(b, sim, self, tgt.x, tgt.z, tgt.y); const l = Math.hypot(s.x, s.z) || 1; mx += (s.x / l) * 1.5; mz += (s.z / l) * 1.5; if (s.hop) hop(b, self, inp, t); }
+  if (still) { mx = 0; mz = 0; }
+  else if (safe) { const s = steer(b, sim, self, safe.x, safe.z, 0); const l = Math.hypot(s.x, s.z) || 1; mx = (s.x / l) * 2 + mx * 0.3; mz = (s.z / l) * 2 + mz * 0.3; if (s.hop) hop(b, self, inp, t); }
+  else if (d > pref + (push ? 2 : 12) || mate) { const s = steer(b, sim, self, tgt.x, tgt.z, tgt.y); const l = Math.hypot(s.x, s.z) || 1, k = push ? 3 : 1.5; mx += (s.x / l) * k; mz += (s.z / l) * k; if (s.hop) hop(b, self, inp, t); }
   else if (d < pref * 0.5) { mx -= ux; mz -= uz; }
   moveDir(inp, mx, mz);
-  inp.sprint = !!safe && inp.fwd > 0.3 && !inp.aim;
-  if (Math.hypot(self.vx, self.vz) < 1 && self.grounded) { if ((b.blockT += DT) > 0.35) { b.strafe *= -1; b.blockT = 0; } } else b.blockT = 0;
+  inp.sprint = (!!safe || push) && inp.fwd > 0.3 && !inp.aim;
+  if (still) b.blockT = 0;
+  else if (Math.hypot(self.vx, self.vz) < 1 && self.grounded) { if ((b.blockT += DT) > 0.35) { b.strafe *= -1; b.blockT = 0; } } else b.blockT = 0;
+  // the better ones jump while they strafe, now and then (harder to hit, and over what's in the way)
+  if (!still && !safe && self.grounded && d > 8 && R() < 0.012 * b.skill) inp.jump = true;
   if (self.perk && !inp.slot) {
     const k = self.perk.kind;
     if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && R() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
@@ -647,6 +852,12 @@ function worstSlot(self: PlayerState, skill: number) {
   self.slots.forEach((x, i) => { const v = x ? worth(x, self.ups[i], skill) : -1; if (v < wv) { wv = v; wi = i; } });
   return wi;
 }
+// the gun worth most that a bench can still improve
+function bestSlot(self: PlayerState, skill: number) {
+  let bi = self.cur, bv = -1;
+  self.slots.forEach((x, i) => { const v = x && self.ups[i] < UPGRADE.max ? worth(x, self.ups[i], skill) : -1; if (v > bv) { bv = v; bi = i; } });
+  return bi;
+}
 
 // the nearest thing worth having on this floor: an unopened case, a better gun, shields and heals we have room for
 function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number) => boolean) {
@@ -655,10 +866,10 @@ function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number
   for (const [id, until] of b.skip) if (until < t) b.skip.delete(id);
   if (b.goal) { // still there?
     const r = b.goal.ref;
-    if ((b.goal.kind === 'case' ? (r as Case).open : !sim.loot.includes(r as Loot)) || out(r.x, r.z)) b.goal = null;
+    if ((b.goal.kind === 'case' ? (r as Case).open : b.goal.kind === 'bench' ? b.benches.has(-1 - r.id) : !sim.loot.includes(r as Loot)) || out(r.x, r.z)) b.goal = null;
   }
   const full = !self.slots.includes(null), wi = worstSlot(self, b.skill), wv = full ? worth(self.slots[wi]!, self.ups[wi], b.skill) : 0;
-  let best: Loot | Case | null = null, kind: 'case' | 'loot' = 'loot', bd = 45;
+  let best: Loot | Case | Bench | null = null, kind: 'case' | 'loot' | 'bench' = 'loot', bd = 45;
   for (const c of sim.cases) {
     if (c.open || Math.abs(c.y - self.y) > 1.3 || b.skip.has(c.id) || out(c.x, c.z)) continue;
     const d = Math.hypot(c.x - self.x, c.z - self.z) * 0.85;
@@ -674,8 +885,15 @@ function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number
     else useful = !self.perk || (self.perk.kind === l.what && self.perk.n < PERKS[l.what as PerkId].count * 2);
     if (useful) { bd = d; best = l; kind = 'loot'; }
   }
+  // an upgrade bench for our best gun (each one once), when nothing on the floor is nearer
+  const bi = bestSlot(self, b.skill);
+  if (self.slots[bi] && self.ups[bi] < UPGRADE.max) sim.world.upgrades.forEach((u, i) => {
+    const y = u.y - 0.95, d = Math.hypot(u.x - self.x, u.z - self.z) * 0.9;
+    if (d < bd && Math.abs(y - self.y) < 1.2 && !b.benches.has(i) && !b.skip.has(-1 - i) && !out(u.x, u.z)) { bd = d; best = { id: -1 - i, x: u.x, y, z: u.z }; kind = 'bench'; }
+  });
   if (!best) { b.goal = null; return; }
-  if (!b.goal || b.goal.ref !== best) b.goal = { ref: best, kind, t0: t, arrived: 0 };
+  const pick: Loot | Case | Bench = best;
+  if (!b.goal || b.goal.kind !== kind || b.goal.ref.id !== pick.id) b.goal = { ref: pick, kind, t0: t, arrived: 0 };
 }
 
 // somewhere to walk to: a short way from `at` (new loot to find; near the leader in a team), inside the
