@@ -88,7 +88,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
   if (p.bus) { // aboard the paper plane: carried along at its speed until you jump out
     if (!inp.jump && !inp.interact) { p.x += p.vx * dt; p.z += p.vz * dt; return 0; }
-    p.bus = 0; p.gliding = true; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0; // out: you keep a little of its speed and glide
+    leaveBus(p);
     return 0;
   }
   if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
@@ -101,6 +101,26 @@ export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = fals
   return 0;
 };
 const NO_INPUT: Input = emptyInput();
+
+// out of the paper plane (you jumped, or the far edge threw you out): you keep a little of its speed and
+// free fall, the glider shut until you open it (moveBody)
+export function leaveBus(p: Body) { p.bus = 0; p.gliding = true; p.fall = 1; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0; }
+
+// the paper plane's line for a match: straight across the island near the middle, from a random side, clear
+// of anything that reaches its height (The Needle). A function of the seed alone, so the waiting room draws
+// it before the match starts
+export function busLine(w: World): { x: number; z: number; dx: number; dz: number } {
+  const r = rng(w.seed ^ 0x6b75b05), tall = w.structures.filter((s) => s.y1 > BUS.y - 8);
+  let best = { x: 0, z: 0, dx: 1, dz: 0 }, clear = -1;
+  for (let k = 0; k < 24 && clear < 30; k++) {
+    const a = r() * Math.PI * 2, off = (r() - 0.5) * 2 * BUS.offset, dx = Math.cos(a), dz = Math.sin(a);
+    // the closest any tall thing comes to the line (from its edge)
+    let near = Infinity;
+    for (const s of tall) near = Math.min(near, Math.abs(-dz * ((s.x0 + s.x1) / 2) + dx * ((s.z0 + s.z1) / 2) - off) - Math.hypot(s.x1 - s.x0, s.z1 - s.z0) / 2);
+    if (near > clear) { clear = near; best = { x: -dz * off - dx * BUS.len / 2, z: dx * off - dz * BUS.len / 2, dx, dz }; }
+  }
+  return best;
+}
 
 // accuracy: aiming tightens it, moving and being airborne loosen it
 export function spreadFor(p: Body, w: WeaponId, aim: boolean): number {
@@ -252,10 +272,7 @@ export class Sim {
   // opts.bus: everyone boards the paper plane (a match); without it they start gliding over their team's
   // drop spot (the tests, a training ground)
   spawn(ids: number[], teamOf?: Map<number, number>, opts: { bus?: boolean } = {}) {
-    if (opts.bus) {
-      const a = this.rand() * Math.PI * 2, off = (this.rand() - 0.5) * 2 * BUS.offset, dx = Math.cos(a), dz = Math.sin(a);
-      this.bus = { x: -dz * off - dx * BUS.len / 2, z: dx * off - dz * BUS.len / 2, dx, dz, t: this.t };
-    }
+    if (opts.bus) this.bus = { ...busLine(this.world), t: this.t };
     const drop = new Map<number, { x: number; z: number; n: number }>();
     ids.forEach((id) => {
       const team = teamOf?.get(id) ?? id;
@@ -273,16 +290,12 @@ export class Sim {
       if (this.bus) Object.assign(this.players.get(id)!, { x: this.bus.x, y: BUS.y, z: this.bus.z, vx: this.bus.dx * BUS.speed, vy: 0, vz: this.bus.dz * BUS.speed, gliding: false, bus: 1, yaw: Math.atan2(-this.bus.dx, -this.bus.dz), pitch: -0.3 });
     });
   }
-  // out of the paper plane: you keep a little of its speed and glide from there
-  private leaveBus(p: PlayerState) {
-    p.bus = 0; p.gliding = true; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0;
-  }
   // riders move with their own inputs (moveStep carries them at the plane's speed, so prediction is exact);
   // at the far edge everyone still aboard is thrown out
   private stepBus() {
     if (!this.bus) return;
     const b = this.bus, over = this.busAt().s >= BUS.len; // the plane itself is past the edge: nobody stays (idle players too)
-    for (const p of this.players.values()) if (p.bus && p.alive && (over || (p.x - b.x) * b.dx + (p.z - b.z) * b.dz >= BUS.len)) this.leaveBus(p);
+    for (const p of this.players.values()) if (p.bus && p.alive && (over || (p.x - b.x) * b.dx + (p.z - b.z) * b.dz >= BUS.len)) leaveBus(p);
   }
 
   get alive() { let n = 0; for (const p of this.players.values()) if (p.alive) n++; return n; }
