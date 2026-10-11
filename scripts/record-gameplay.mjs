@@ -5,8 +5,9 @@
 //
 // Builds the demo (skip with --no-build), serves it, joins as a guest, and lets the bots' own brain
 // play your seat (client/src/autopilot.ts) through the normal input path: the paper plane, the drop,
-// looting, fights, all in third person. The page is captured frame by frame over the DevTools
-// screencast at 1280x720 and encoded with ffmpeg into client/public/media/:
+// looting, fights, all in third person. The page runs on a virtual clock the recorder steps one frame
+// at a time (so the clip is smooth however slow the machine), each frame is screenshotted at 1280x720
+// and the frames are encoded with ffmpeg into client/public/media/:
 //   gameplay.mp4 (H.264), gameplay.webm (VP9), gameplay.jpg (poster)
 // Without ffmpeg it stops with a message (the frames need an encoder either way).
 //
@@ -100,62 +101,78 @@ const browser = await pw.chromium.launch({
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 await ctx.addInitScript(() => {
   try { localStorage.setItem('trainingOff', '1'); localStorage.setItem('pr_view', 'tp'); localStorage.setItem('pr_mode', 'solo'); } catch { /* ignore */ }
+  // a virtual clock: the page's time only moves when the recorder steps it, one video frame at a
+  // time, so the clip plays at full speed however slowly this machine renders it
+  let t = 0, seq = 1, rseq = 1;
+  const base = Date.now(), timers = new Map(), rafs = new Map();
+  performance.now = () => t;
+  Date.now = () => base + Math.round(t);
+  window.setTimeout = (fn, ms, ...a) => { const id = seq++; timers.set(id, { at: t + Math.max(0, Number(ms) || 0), fn, a, every: 0 }); return id; };
+  window.setInterval = (fn, ms, ...a) => { const id = seq++, every = Math.max(1, Number(ms) || 0); timers.set(id, { at: t + every, fn, a, every }); return id; };
+  window.clearTimeout = window.clearInterval = (id) => { timers.delete(id); };
+  window.requestAnimationFrame = (fn) => { const id = rseq++; rafs.set(id, fn); return id; };
+  window.cancelAnimationFrame = (id) => { rafs.delete(id); };
+  window.__vt = {
+    now: () => t,
+    step(ms) {
+      const end = t + ms;
+      for (let guard = 0; guard < 20000; guard++) {
+        let id = 0, x = null;
+        for (const [k, v] of timers) if (v.at <= end && (!x || v.at < x.at)) { id = k; x = v; }
+        if (!x) break;
+        t = Math.max(t, x.at);
+        if (x.every) x.at += x.every; else timers.delete(id);
+        try { if (typeof x.fn === 'function') x.fn(...x.a); } catch (e) { console.error(e); }
+      }
+      t = end;
+      const cbs = [...rafs.values()]; rafs.clear();
+      for (const f of cbs) { try { f(t); } catch (e) { console.error(e); } }
+    },
+  };
 });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => log('page error:', e.message));
 await page.goto(URL_);
+// until the match starts, time runs on its own (about real time) while we click through the lobby
+let pumping = true;
+const pump = (async () => { while (pumping) { await page.evaluate(() => window.__vt.step(50)).catch(() => {}); await new Promise((r) => setTimeout(r, 30)); } })();
 await page.waitForSelector('#guestBtn', { state: 'visible' });
 await page.fill('#guestName', 'you');
 await page.click('#guestBtn');
 await page.waitForFunction(() => !document.querySelector('#playBtn')?.hasAttribute('disabled'));
 await page.click('#playBtn');
 log('queued; waiting for the match');
-await page.waitForFunction(() => !!window.__pr?.net?.room?.sim, null, { timeout: 60_000, polling: 100 });
+for (let i = 0; i < 600 && !(await page.evaluate(() => !!window.__pr?.net?.room?.sim)); i++) await new Promise((r) => setTimeout(r, 100));
+pumping = false; await pump;
 await page.evaluate(async () => {
   const m = await window.__pr.autopilot();
   window.__ap = m.autopilot(window.__pr.net, window.__pr.input, { skill: 0.95, smooth: 0.35, tough: 90 });
 });
 log('match on, autopilot flying');
 
-// ---------- capture: DevTools screencast -> constant 30 fps -> ffmpeg ----------
+// ---------- capture: step one frame, screenshot, pipe to ffmpeg ----------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'koth-rec-'));
 const raw = path.join(tmp, 'raw.mp4');
 const enc = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'mjpeg', '-i', '-',
   '-vf', `scale=${W}:${H}:flags=lanczos,format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '12', raw], { stdio: ['pipe', 'inherit', 'inherit'] });
-const cdp = await ctx.newCDPSession(page);
-let t0 = -1, written = 0, last = null, frames = 0;
-const total = SECONDS * FPS;
 const write = (buf) => new Promise((r) => { if (!enc.stdin.write(buf)) enc.stdin.once('drain', r); else r(); });
-let queue = Promise.resolve();
-cdp.on('Page.screencastFrame', (f) => {
-  cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
-  const ts = f.metadata.timestamp ?? Date.now() / 1000;
-  if (t0 < 0) t0 = ts;
-  frames++;
-  const buf = Buffer.from(f.data, 'base64');
-  // hold each picture until the next one arrives: the clip keeps real time whatever the frame rate
-  const due = Math.min(total, Math.floor((ts - t0) * FPS));
-  const prev = last; last = buf;
-  queue = queue.then(async () => { while (written < due) { await write(prev ?? buf); written++; } });
-});
-await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: W, maxHeight: H, everyNthFrame: 1 });
-const started = Date.now();
-const timeline = [];
-while (written < total) {
-  await new Promise((r) => setTimeout(r, 1000));
-  const s = await page.evaluate(() => window.__ap && { ...window.__ap }).catch(() => null);
-  const at = (Date.now() - started) / 1000;
-  if (s) timeline.push({ at, ...s });
-  if (Math.round(at) % 5 === 0) log(`${at.toFixed(0)} s · ${s?.mode} · kills ${s?.kills} · ${s?.alive ? 'alive' : 'out'} · ${(frames / at).toFixed(1)} fps captured`);
-  if (at > SECONDS * 3) { log('capture stalled'); break; }
+const cdp = await ctx.newCDPSession(page);
+const total = SECONDS * FPS, started = Date.now(), timeline = [];
+for (let f = 0; f < total; f++) {
+  await page.evaluate((ms) => window.__vt.step(ms), 1000 / FPS);
+  const shot = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 92 });
+  await write(Buffer.from(shot.data, 'base64'));
+  if (f % FPS === 0) {
+    const st = await page.evaluate(() => window.__ap && { ...window.__ap });
+    timeline.push({ at: f / FPS, ...st });
+    if (f % (FPS * 5) === 0) log(`${f / FPS} s · ${st?.mode} · kills ${st?.kills} · ${st?.alive ? 'alive' : 'out'} · ${((f + 1) / ((Date.now() - started) / 1000)).toFixed(1)} frames/s rendered`);
+  }
 }
-await cdp.send('Page.stopScreencast').catch(() => {});
-await queue;
 enc.stdin.end();
 await new Promise((r) => enc.on('close', r));
 await browser.close();
 server.close();
-log(`captured ${frames} frames in ${((Date.now() - started) / 1000).toFixed(0)} s (${(frames / ((Date.now() - started) / 1000)).toFixed(1)} fps)`);
+log(`captured ${total} frames in ${((Date.now() - started) / 1000).toFixed(0)} s`);
 
 // ---------- encode for the web ----------
 fs.mkdirSync(OUT, { recursive: true });
