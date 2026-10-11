@@ -4,19 +4,19 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { AXE, BUILD, BUS, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_BUS, OTHER_DOWN, OTHER_FALL, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
+import { buildGlider, buildPaperPlane, poseFall, buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
 const LERP_FIELDS = [1, 2, 3, 5]; // x, y, z, pitch (yaw wraps, done apart)
-const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down', 'mantleT', 'mantleX', 'mantleY', 'mantleZ', 'bus'] as const;
+const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down', 'mantleT', 'mantleX', 'mantleY', 'mantleZ', 'bus', 'fall'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
 export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PURPLE, legendary: INK_IDS.ORANGE };
@@ -95,8 +95,16 @@ export class Game3D {
   private falling: { g: THREE.Object3D; t: number; v: number; rx: number; rz: number; land?: number; dust?: boolean }[] = [];
   private debris: { m: THREE.Mesh; vx: number; vy: number; vz: number; t: number }[] = [];
   private corpses: { g: THREE.Group; t: number }[] = [];
-  // your own death: the camera pulls up off your body for a moment before it follows anyone else
-  private deathCam: { x: number; y: number; z: number; yaw: number; t: number } | null = null;
+  // your own death: a few seconds on whoever got you, from beside your body, before you spectate anyone
+  private deathCam: { x: number; y: number; z: number; yaw: number; t: number; by: number | null; lx: number; ly: number; lz: number } | null = null;
+  private specYaw: number | null = null; // the spectator camera's heading, eased after the player it follows
+  // the paper plane: its last snapshot ([x, y, z, dx, dz, aboard]) and when it came, flown on between them;
+  // busNow is where it is this frame (the map and the drop panel read it)
+  private busSnap: { b: number[]; at: number } | null = null;
+  busNow: { x: number; y: number; z: number; dx: number; dz: number; aboard: number } | null = null;
+  private planeModel: THREE.Group | null = null;
+  private airK = 0; // 0 over the shoulder .. 1 the chase camera you glide and fall with
+  private wind: THREE.LineSegments | null = null; private windPts = new Float32Array(0); // speed lines while you fall
   private axeView: THREE.Group | null = null;
   private axeSwing = 0;
   private axeLocal = 0;
@@ -169,7 +177,9 @@ export class Game3D {
     for (const f of this.falling) this.drop(f.g);
     for (const d of this.debris) this.drop(d.m);
     for (const c of this.corpses) this.drop(c.g);
-    this.falling = []; this.debris = []; this.corpses = []; this.deathCam = null; this.shardCache = null;
+    this.falling = []; this.debris = []; this.corpses = []; this.deathCam = null; this.specYaw = null; this.shardCache = null;
+    if (this.planeModel) { this.drop(this.planeModel); this.planeModel = null; }
+    this.busSnap = null; this.busNow = null; this.airK = 0;
     for (const r of this.ownRockets) this.drop(r.g);
     for (const p of this.puffs) this.drop(p.m);
     this.ownRockets = []; this.puffs = [];
@@ -427,7 +437,7 @@ export class Game3D {
   // ---------------- the fallen ----------------
   // a player is out: leave their body on the ground where they fell (where we last saw them; one we
   // never saw leaves nothing). Bodies stay 75 s, the oldest go first past 16 (each is ~20 draw calls)
-  onElim(victim: number) {
+  onElim(victim: number, by: number | null = null) {
     let x: number, y: number, z: number, yaw: number;
     const a = this.avatars.get(victim), o = this.infoOf(victim);
     const b = this.pred ?? this.self;
@@ -445,7 +455,7 @@ export class Game3D {
     this.ink.scene.add(g);
     this.corpses.push({ g, t: 0 });
     if (this.corpses.length > 16) this.drop(this.corpses.shift()!.g);
-    if (victim === this.you) this.deathCam = { x, y, z, yaw, t: 0 };
+    if (victim === this.you) { this.deathCam = { x, y, z, yaw, t: 0, by: by !== this.you ? by : null, lx: x, ly: y + 1, lz: z }; this.specYaw = null; }
   }
   // an elimination goes off like a burst of ink: chunks in the player's colours fly up and out
   private elimBurst(x: number, y: number, z: number, id: number) {
@@ -635,6 +645,7 @@ export class Game3D {
     this.snaps.push({ s, at: performance.now() / 1000 });
     if (this.snaps.length > 30) this.snaps.shift();
     this.ring = s.ring; this.alive = s.alive; this.leader = s.leader; this.board = s.board ?? [];
+    this.busSnap = s.bus ? { b: s.bus, at: performance.now() / 1000 } : null;
     if (s.loot) this.syncLoot(s.loot);
     if (s.cases) this.syncCases(s.cases);
     this.syncFx(s.fx, s.time);
@@ -683,7 +694,8 @@ export class Game3D {
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
     const held = this.weapon, tp = this.thirdPerson && !this.pred.ride && !(c.aim && (held === 'heavy' || held === 'hunting')); // a sniper scope is first person
-    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold, tp };
+    // aboard the plane a click jumps too (CLICK ANYWHERE or SPACE)
+    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump || (!!this.pred.bus && c.fire), sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold, tp };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
     this.lastTickAt = performance.now() / 1000;

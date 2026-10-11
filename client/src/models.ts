@@ -429,17 +429,8 @@ export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.leng
   torso.add(head);
   root.add(legL, legR, torso);
 
-  // parachute for the drop: a dome and four strings
-  const chute = new THREE.Group();
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.9, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2.6), hatInk);
-  dome.position.y = 4.1;
-  chute.add(dome);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    const s = box(0.03, 2.6, 0.03, dark, sx * 0.8, 2.75, sz * 0.8);
-    s.rotation.z = sx * 0.25; s.rotation.x = -sz * 0.25;
-    chute.add(s);
-  }
-  // attached while gliding only
+  // the glider for the drop: a folded paper wing over your head, in your colours (attached while gliding only)
+  const chute = buildGlider(paper, hatInk, dark);
 
   // kill leader's crown
   const crown = new THREE.Group();
@@ -536,4 +527,57 @@ export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | nu
   const arm = drive ? -0.45 : pitch;
   f.armL.rotation.x = arm; f.armR.rotation.x = arm;
   f.head.rotation.x = drive ? 0.2 : pitch * 0.6;
+}
+
+// a flat triangle (or a strip of them) from a flat list of corners: paper is folded, not modelled
+const sheet = (pts: number[], m: Mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.computeVertexNormals(); return new THREE.Mesh(g, m); };
+type V3 = [number, number, number];
+const lerp3 = (a: V3, b: V3, k: number): V3 => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+// a ruled ink line across a paper panel (a, b, c): from the a-b edge to the a-c edge at k, lifted off the paper
+const ruled = (a: V3, b: V3, c: V3, k: number, w: number, lift: number, m: Mat) => {
+  const p0 = lerp3(a, b, k), p1 = lerp3(a, c, k), q0 = lerp3(a, b, k + w), q1 = lerp3(a, c, k + w);
+  return sheet([...p0, ...p1, ...q1, ...p0, ...q1, ...q0].map((v, i) => (i % 3 === 1 ? v + lift : v)), m);
+};
+
+// the hang glider you drop on: a paper dart wing with a fold down the middle and a band of your ink along
+// its leading edges, held up by an A-frame; the bar sits where the hands reach overhead (poseFigure)
+export function buildGlider(paper: Mat, ink: Mat, dark: Mat): THREE.Group {
+  const g = new THREE.Group();
+  const nose: V3 = [0, 2.78, -1.15], tail: V3 = [0, 2.6, 0.75], keel: V3 = [0, 2.4, 0.55], tipL: V3 = [-1.85, 2.95, 0.95], tipR: V3 = [1.85, 2.95, 0.95];
+  g.add(sheet([...nose, ...tipL, ...tail, ...nose, ...tail, ...tipR], paper), sheet([...nose, ...tail, ...keel], paper)); // wings, the keel fold
+  for (const tip of [tipL, tipR]) { // a band of ink along each leading edge, and a doodled stripe behind it
+    const band = lerp3(nose, tail, 0.22);
+    g.add(sheet([...nose, ...tip, ...band].map((v, i) => (i % 3 === 1 ? v + 0.02 : v)), ink));
+    g.add(ruled(nose, tip, tail, 0.62, 0.07, 0.02, ink));
+  }
+  for (const x of [-0.42, 0.42]) { const s = box(0.04, 0.95, 0.04, dark, x * 0.55, 2.32, -0.18); s.rotation.z = x > 0 ? -0.22 : 0.22; g.add(s); } // A-frame
+  g.add(box(0.9, 0.05, 0.05, dark, 0, 1.86, -0.12)); // the bar in your hands
+  return g;
+}
+
+// the drop's paper plane: a giant folded dart of notebook paper, nose toward -z, origin on its fold, with the
+// notebook's blue rules and red margin drawn across the wings
+export function buildPaperPlane(ink: InkRenderer): THREE.Group {
+  const g = new THREE.Group(), paper = ink.material(INK_IDS.PAPER), blue = ink.material(INK_IDS.BLUE), red = ink.material(INK_IDS.RED);
+  const L = 36, nose: V3 = [0, 0, -L / 2], tail: V3 = [0, 0, L / 2];
+  const keelL: V3 = [-0.5, -4.6, L / 2 - 1.5], keelR: V3 = [0.5, -4.6, L / 2 - 1.5];
+  for (const s of [-1, 1]) {
+    const mid: V3 = [s * 6, 0.5, L / 2], tip: V3 = [s * 14, 2.6, L / 2 - 0.5];
+    g.add(sheet([...nose, ...tail, ...mid], paper), sheet([...nose, ...mid, ...tip], paper));        // the wing: two panels, a crease between
+    g.add(sheet([...nose, ...tail, ...(s < 0 ? keelL : keelR)], paper));                              // the keel: two layers, folded down
+    for (let k = 0.3; k < 0.95; k += 0.11) g.add(ruled(nose, mid, tip, k, 0.012, 0.04, blue));       // notebook rules
+    g.add(ruled(nose, tail, mid, 0.82, 0.012, 0.04, red));                                             // the margin
+  }
+  return g;
+}
+
+// free fall out of the plane: flat on your belly, arms and legs spread, a little flutter (after poseFigure)
+export function poseFall(f: Figure, yaw: number, t: number) {
+  attachIf(f.root, f.chute, false);
+  f.root.rotation.set(-1.25, yaw, Math.sin(t * 2.3) * 0.08, 'YXZ');
+  f.root.position.y += 1.0;
+  const w = Math.sin(t * 9) * 0.08;
+  f.armL.rotation.set(0.9 + w, -1.1, 0); f.armR.rotation.set(0.9 - w, 1.1, 0);
+  f.legL.rotation.set(-0.35 - w, 0, -0.35); f.legR.rotation.set(-0.35 + w, 0, 0.35);
+  f.torso.rotation.x = 0; f.head.rotation.x = -0.6;
 }

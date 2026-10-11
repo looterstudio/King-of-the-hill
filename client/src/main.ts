@@ -702,7 +702,7 @@ net.on((m: ServerMsg) => {
       }
       if (m.by === state.you && m.victim !== state.you) eliminated(m.victim, !!m.head);
       state.dead.add(m.victim);
-      if (m.cause !== 'left') game.onElim(m.victim);
+      if (m.cause !== 'left') game.onElim(m.victim, m.by);
       const mine = m.victim === state.you || m.by === state.you || game.mates.has(m.victim) || (m.by !== null && game.mates.has(m.by));
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : m.by === null ? 'a wreck' : label(m.by);
       feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : m.cause === 'ram' ? 'run over by ' : m.cause === 'boom' ? 'blown up by ' : ''}${esc(how)}</span>`, mine);
