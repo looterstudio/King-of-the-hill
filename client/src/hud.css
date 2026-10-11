@@ -64,6 +64,7 @@
 .mn-field .seg button:first-child { border-left: 0; }
 .mn-field .seg button.on { background: var(--ink); color: var(--card); }
 .mn-foot { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.mn-foot b { font-family: var(--f-key); font-size: 12px; color: var(--ink); }
 @media (max-width: 720px) { .mn-settings { grid-template-columns: minmax(0, 1fr); } .mn-nav.small { grid-template-columns: minmax(0, 1fr); } }
 @media (max-height: 640px) { #pause .pause-card { padding: 14px 20px; gap: 8px; } .mn-sub { font-size: 19px; } #pause .btn.play.mn-big { padding: 10px; font-size: 21px; } }
 
@@ -195,7 +196,7 @@ html:not(.has-icons) i.ico { visibility: hidden; }
 @media (max-width: 1260px) { .pick-toasts { bottom: calc(max(12px, 2.4vh) + 190px); } }
 
 /* ---------- the announcer ---------- */
-.announce { position: absolute; left: 50%; top: 17%; transform: translate(-50%, -50%); display: grid; justify-items: center; text-align: center; pointer-events: none; opacity: 0; white-space: nowrap; mix-blend-mode: normal !important; }
+.announce { position: absolute; left: 50%; top: max(17%, 120px); transform: translate(-50%, -50%); display: grid; justify-items: center; text-align: center; pointer-events: none; opacity: 0; white-space: nowrap; mix-blend-mode: normal !important; }
 .announce.show { animation: annIn 2.4s cubic-bezier(.2, .9, .3, 1.15) forwards; }
 .announce b { font-size: clamp(40px, 7vw, 88px); font-weight: 800; line-height: 1; letter-spacing: .01em; text-transform: uppercase; color: #fff; -webkit-text-stroke: 3px var(--graphite); paint-order: stroke; text-shadow: 5px 5px 0 var(--red); }
 .announce small { margin-top: 6px; padding: 2px 14px; font-family: var(--f-note); font-size: clamp(20px, 2.6vw, 30px); font-weight: 700; color: var(--card); background: var(--ink); border-radius: var(--wobble); transform: rotate(-2deg); }
