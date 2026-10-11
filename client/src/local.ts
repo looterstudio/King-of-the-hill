@@ -134,6 +134,7 @@ export class LocalNet {
       case 'spec': this.spectate(m); break;
       case 'leave': this.closeRoom(); break;
       case 'in': this.mine.push(sanitizeInput(m)); break;
+      case 'mark': this.mark(m.at); break;
     }
   }
 
@@ -171,6 +172,8 @@ export class LocalNet {
     teamDrops(r.bots, teams, Math.random);
     this.mine = new InputQueue(emptyInput(), TICK_HZ); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
+    // your bot teammates show where they mean to land, like a squad would
+    for (const b of this.mates()) this.emit({ t: 'mark', from: b.id, at: [Math.round(b.dropX), Math.round(b.dropZ)] });
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
 
@@ -203,6 +206,17 @@ export class LocalNet {
       this.emit(snapFor(frame(sim), 1, watch, this.viewer, { at: this.free, keep }));
     }
     if (sim.teamsAlive.size <= 1) this.finish();
+  }
+
+  // your bot teammates (duos, squads)
+  private mates() { const r = this.room, me = r?.seats.find((s) => s.id === 1); return r && me ? r.bots.filter((b) => r.seats.find((s) => s.id === b.id)?.team === me.team) : []; }
+  // you marked where you want to land: your bot teammates come along (a few meters apart) and say so
+  private mark(at: [number, number] | null) {
+    if (!at || !this.room?.sim) return;
+    this.mates().forEach((b, k) => {
+      b.dropX = Math.max(-MAP_HALF + 5, Math.min(MAP_HALF - 5, at[0] + (k % 2 ? 4 : -4))); b.dropZ = Math.max(-MAP_HALF + 5, Math.min(MAP_HALF - 5, at[1] + k * 3));
+      this.emit({ t: 'mark', from: b.id, at: [Math.round(b.dropX), Math.round(b.dropZ)] });
+    });
   }
 
   private mate(sim: Sim) { const me = sim.players.get(1)!; return [...sim.players.values()].find((p) => p.alive && p.team === me.team && p.id !== 1)?.id; }

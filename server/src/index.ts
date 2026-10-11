@@ -6,7 +6,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
-import { SKINS, playerNumber } from '../../shared/src/constants.ts';
+import { MAP_HALF, SKINS, playerNumber } from '../../shared/src/constants.ts';
 import { loginMessage, type ClientMsg, type PotView, type ProfileView, type ServerMsg } from '../../shared/src/protocol.ts';
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
@@ -215,6 +215,16 @@ async function onMessage(c: Client, msg: ClientMsg) {
       const body = JSON.stringify({ t: 'rtc', from: c.id, data: msg.data });
       if (body.length > 12_000) return;
       return peer.sendRaw(body);
+    }
+    case 'mark': {
+      // a landing marker on the map: relayed to your teammates in the same live match, nobody else
+      const room = c.room;
+      if (!room || room.phase !== 'live' || room.mode === 'solo') return;
+      const at = Array.isArray(msg.at) && Number.isFinite(Number(msg.at[0])) && Number.isFinite(Number(msg.at[1]))
+        ? [Math.round(Math.max(-MAP_HALF, Math.min(MAP_HALF, Number(msg.at[0])))), Math.round(Math.max(-MAP_HALF, Math.min(MAP_HALF, Number(msg.at[1]))))] : null;
+      const body = JSON.stringify({ t: 'mark', from: c.id, at });
+      for (const s of room.seats) if (s !== c && s.room === room && s.team === c.team) s.sendRaw(body);
+      return;
     }
   }
 }

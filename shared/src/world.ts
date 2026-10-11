@@ -269,6 +269,17 @@ export class World {
     return null;
   }
 
+  // every solid box overlapping a player standing at (x, y, z), into out
+  overlapsAll(x: number, y: number, z: number, out: Box[], h = PLAYER_H): Box[] {
+    out.length = 0;
+    for (const i of this.near(x - PLAYER_R, z - PLAYER_R, x + PLAYER_R, z + PLAYER_R, this.allNear)) {
+      const b = this.boxes[i];
+      if (!b.dead && x + PLAYER_R > b.x0 && x - PLAYER_R < b.x1 && z + PLAYER_R > b.z0 && z - PLAYER_R < b.z1 && y + h > b.y0 && y < b.y1) out.push(b);
+    }
+    return out;
+  }
+  private allNear: number[] = [];
+
   overlaps(x: number, y: number, z: number, scratch: number[] = [], h = PLAYER_H): Box | null {
     for (const i of this.near(x - PLAYER_R, z - PLAYER_R, x + PLAYER_R, z + PLAYER_R, scratch)) {
       const b = this.boxes[i];
@@ -352,17 +363,22 @@ export interface Body {
   down: number; // knocked: seconds left before bleeding out (0 = standing)
   mantleT: number; mantleX: number; mantleY: number; mantleZ: number; // climbing over a ledge: time left, where to
   bus: number; // 1: still aboard the paper plane (carried along at vx, vz until you jump)
+  fall: number; // 1: free fall out of the plane, glider still shut (gliding is set too: no shooting, no looting)
 }
 export interface MoveInput { fwd: number; strafe: number; yaw: number; pitch: number; jump: boolean; sprint: boolean; slide: boolean; grapple: boolean; up?: number }
 
 export const newBody = (x: number, y: number, z: number): Body => ({
   x, y, z, vx: 0, vy: 0, vz: 0, grounded: false, gliding: false, airJumps: 1, wallX: 0, wallZ: 0, wallT: 99,
   slideT: 0, dashT: 0, dashX: 0, dashZ: 0, dashReady: true, hook: false, gx: 0, gy: 0, gz: 0, hookCd: 0, launchT: 0,
-  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0, mantleT: 0, mantleX: 0, mantleY: 0, mantleZ: 0, bus: 0,
+  ride: 0, head: 0, vpitch: 0, spd: 0, seat: 0, down: 0, mantleT: 0, mantleX: 0, mantleY: 0, mantleZ: 0, bus: 0, fall: 0,
 });
 
 // gliding: look down to dive (fast fall, fast forward), look up to float and cover distance
 const GLIDE_SPEED = 12, GLIDE_DIVE_SPEED = 22, GLIDE_FALL = -7, GLIDE_DIVE_FALL = -30;
+// free fall out of the paper plane: the glider stays shut, you drop fast and steer a little (head down:
+// faster still) until you open it (Space) or come within FALL.open of whatever is under you, where it opens
+// by itself (nobody hits the ground for not knowing the key)
+export const FALL = { speed: 13, diveSpeed: 19, term: -34, diveTerm: -50, open: 30 };
 const SLIDE_TIME = 0.75, SLIDE_SPEED = 11.5, DASH_TIME = 0.18, DASH_SPEED = 17;
 const WALL_GRACE = 0.2, WALL_PUSH = 7.5;
 export const HOOK_RANGE = 48;
@@ -375,12 +391,17 @@ const UPDRAFT_SPEED = 13;
 // vaults straight over
 const MANTLE = { reach: 2.3, hurdle: 1.5, up: 8.5, fwd: 6, time: 0.75, tuck: 1.0 };
 const scratch: number[] = [];
+const hits: Box[] = [];
 
 // where a mantle in direction (dx, dz) would take you: on top of the ledge in front of you, or through the
 // opening above it and out the far side; null when there is nothing to climb, or no room to climb it
 export function findLedge(w: World, p: Body, dx: number, dz: number, maxRise: number): { x: number; y: number; z: number } | null {
   const reach = PLAYER_R + 0.3, top = w.groundAt(p.x + dx * reach, p.z + dz * reach, p.y + maxRise);
   if (top - p.y < 0.3 || top - p.y > maxRise) return null;
+  // a face to climb: something solid right in front of you from your feet up. Not a floor overhead you are
+  // walking under: going down a flight of stairs, the floor above at its foot came within reach in the air
+  // between two steps and pulled you back up onto it (you could never get downstairs)
+  if (!w.overlaps(p.x + dx * 0.3, p.y + 0.02, p.z + dz * 0.3, scratch, Math.min(1, top - p.y - 0.05))) return null;
   const y = top + 0.02;
   if (w.overlaps(p.x, p.y + 0.01, p.z, scratch, y - p.y + PLAYER_H)) return null; // a ceiling over you (the floor above): no room to pull up
   let last: { x: number; y: number; z: number } | null = null;
@@ -403,6 +424,8 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
   p.wallT += dt;
   p.hookCd = Math.max(0, p.hookCd - dt);
   if (p.launchT > 0) { p.launchT -= dt; if (p.launchT <= 0 && !p.grounded) p.gliding = true; }
+  if (!p.gliding) p.fall = 0;
+  else if (p.fall && (inp.jump || p.y - w.groundAt(p.x, p.z, p.y) < FALL.open)) p.fall = 0; // the glider opens
 
   // ---- one-shot actions ----
   if (inp.slide && !p.gliding) {
@@ -460,11 +483,22 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
     p.slideT -= dt;
     const k = Math.max(0, 1 - dt * 1.4); p.vx *= k; p.vz *= k;
     p.vy -= gravity * dt;
+  } else if (p.fall) { // free fall: drift toward where you steer, gravity up to a terminal speed (eased back to it after a dive)
+    p.slideT = 0;
+    const dive = Math.max(0, Math.min(1, (-inp.pitch - 0.3) / 0.9)), k = Math.min(1, dt * 2);
+    const sp = FALL.speed + (FALL.diveSpeed - FALL.speed) * dive, cap = FALL.term + (FALL.diveTerm - FALL.term) * dive;
+    p.vx += (wx * sp - p.vx) * k; p.vz += (wz * sp - p.vz) * k;
+    p.vy = p.vy > cap ? Math.max(cap, p.vy - gravity * dt) : p.vy + (cap - p.vy) * k;
   } else {
     p.slideT = 0;
     const dive = p.gliding ? Math.max(0, Math.min(1, (-inp.pitch - 0.3) / 0.9)) : 0;
     const speed = p.gliding ? GLIDE_SPEED + (GLIDE_DIVE_SPEED - GLIDE_SPEED) * dive : inp.sprint && inp.fwd > 0 ? sprint : walk;
-    if (p.grounded || p.gliding) { p.vx = wx * speed; p.vz = wz * speed; }
+    if (p.gliding) { // the glider flies on where you look by itself: W faster, S holds it back (straight down), A / D steer
+      const gf = inp.fwd > 0 ? 1 : inp.fwd < 0 ? 0 : 0.6;
+      let gx = -sin * gf + cos * inp.strafe, gz = -cos * gf - sin * inp.strafe;
+      const gl = Math.hypot(gx, gz); if (gl > 1) { gx /= gl; gz /= gl; }
+      p.vx = gx * speed; p.vz = gz * speed;
+    } else if (p.grounded) { p.vx = wx * speed; p.vz = wz * speed; }
     else {
       // air: steer, but never bleed off momentum from a slide jump, dash or swing
       const ax = p.vx + wx * speed * dt * 4, az = p.vz + wz * speed * dt * 4, cur = Math.hypot(p.vx, p.vz), next = Math.hypot(ax, az), cap = Math.max(cur, speed);
@@ -478,7 +512,7 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
   // updrafts: a column of air that carries you up while you stand in it
   for (const u of p.down ? [] : w.updrafts) { // the knocked crawl, they don't float
     if (p.y < u.y0 - 0.5 || p.y > u.y1 || Math.hypot(p.x - u.x, p.z - u.z) > u.r) continue;
-    p.vy = Math.min(UPDRAFT_SPEED, Math.max(p.vy, 0) + gravity * 2.2 * dt); p.gliding = false; p.grounded = false;
+    p.vy = Math.min(UPDRAFT_SPEED, Math.max(p.vy, 0) + gravity * 2.2 * dt); p.gliding = false; p.fall = 0; p.grounded = false;
     break;
   }
 
@@ -488,33 +522,71 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
   else {
     slide(w, p, p.vx * dt, 0, wasGrounded);
     slide(w, p, 0, p.vz * dt, wasGrounded);
+    // up or down: land on the highest top we came down onto, or bump the lowest ceiling we rose into (a box we
+    // were already inside is no floor and no ceiling: unstuck() below gets us out of it)
+    const oy = p.y;
     p.y += p.vy * dt;
-    const hit = w.overlaps(p.x, p.y, p.z, scratch);
-    if (hit) {
-      if (p.vy <= 0) { p.y = hit.y1; p.grounded = true; } else { p.y = hit.y0 - PLAYER_H - 1e-4; p.mantleT = 0; } // a head bump ends a climb
-      p.vy = 0;
+    let to = p.vy <= 0 ? -Infinity : Infinity;
+    for (const b of w.overlapsAll(p.x, p.y, p.z, hits)) {
+      if (p.vy <= 0 ? b.y1 <= oy + 1e-3 && b.y1 > to : b.y0 >= oy + PLAYER_H - 1e-3 && b.y0 < to) to = p.vy <= 0 ? b.y1 : b.y0;
     }
+    if (p.vy <= 0 && to > -Infinity) { p.y = to; p.grounded = true; p.vy = 0; }
+    else if (p.vy > 0 && to < Infinity) { p.y = to - PLAYER_H - 1e-4; p.mantleT = 0; p.vy = 0; } // a head bump ends a climb
+    unstuck(w, p);
   }
   if (p.y <= 0) { p.y = 0; p.vy = 0; p.grounded = true; }
-  if (p.grounded) { p.gliding = false; p.airJumps = 1; p.dashReady = true; }
+  if (p.grounded) { p.gliding = false; p.fall = 0; p.airJumps = 1; p.dashReady = true; }
 
   const lim = MAP_HALF - PLAYER_R;
   if (p.x > lim) p.x = lim; if (p.x < -lim) p.x = -lim;
   if (p.z > lim) p.z = lim; if (p.z < -lim) p.z = -lim;
 }
 
-// move along one axis; climb anything up to STEP_H, otherwise stop flush against it
+// move along one axis; climb anything up to STEP_H, otherwise stop flush against the nearest box in the way.
+// Every box the body ends up in counts: resolving only the first one found used to push you flush against
+// it and leave you inside the next (two walls meeting at a corner, a sill under a window, a parapet on a
+// roof edge), and the next axis then threw you out the far side of that one, through the wall. A box you
+// were already inside on this axis never stops you here (unstuck() deals with it)
 function slide(w: World, p: Body, dx: number, dz: number, grounded: boolean) {
   if (!dx && !dz) return;
+  const ox = p.x, oz = p.z;
   p.x += dx; p.z += dz;
-  const b = w.overlaps(p.x, p.y, p.z, scratch);
-  if (!b) return;
-  const rise = b.y1 - p.y;
-  if (grounded && rise > 0 && rise <= STEP_H && !w.overlaps(p.x, b.y1 + 1e-3, p.z, scratch)) { p.y = b.y1; return; }
-  if (dx > 0) p.x = b.x0 - PLAYER_R - 1e-4; else if (dx < 0) p.x = b.x1 + PLAYER_R + 1e-4;
-  if (dz > 0) p.z = b.z0 - PLAYER_R - 1e-4; else if (dz < 0) p.z = b.z1 + PLAYER_R + 1e-4;
-  if (dx) p.vx = 0; if (dz) p.vz = 0;
+  const list = w.overlapsAll(p.x, p.y, p.z, hits);
+  if (!list.length) return;
+  if (grounded) { // a step: everything in the way is low enough, with room on top of the highest
+    let top = 0;
+    for (const b of list) top = b.y1 - p.y > STEP_H ? Infinity : Math.max(top, b.y1);
+    if (top < Infinity && !w.overlaps(p.x, top + 1e-3, p.z, scratch)) { p.y = top; return; }
+  }
+  const e = 1e-3;
+  let lim = dx ? p.x : p.z, hit = false;
+  for (const b of list) {
+    if (dx > 0 && ox + PLAYER_R <= b.x0 + e) { lim = Math.min(lim, b.x0 - PLAYER_R - 1e-4); hit = true; }
+    else if (dx < 0 && ox - PLAYER_R >= b.x1 - e) { lim = Math.max(lim, b.x1 + PLAYER_R + 1e-4); hit = true; }
+    else if (dz > 0 && oz + PLAYER_R <= b.z0 + e) { lim = Math.min(lim, b.z0 - PLAYER_R - 1e-4); hit = true; }
+    else if (dz < 0 && oz - PLAYER_R >= b.z1 - e) { lim = Math.max(lim, b.z1 + PLAYER_R + 1e-4); hit = true; }
+  }
+  if (!hit) return;
+  if (dx) { p.x = lim; p.vx = 0; } else { p.z = lim; p.vz = 0; }
   // remember the wall for a wall jump (its normal points back at us)
   if (!grounded) { p.wallX = dx > 0 ? -1 : dx < 0 ? 1 : 0; p.wallZ = dz > 0 ? -1 : dz < 0 ? 1 : 0; p.wallT = 0; }
 }
 
+// still inside something after moving (it was built on you, fell on you, you were set down in it): out the
+// shortest way, up or to a side, never down; a couple of passes in case that lands you in the next box
+function unstuck(w: World, p: Body) {
+  for (let pass = 0; pass < 3; pass++) {
+    const list = w.overlapsAll(p.x, p.y, p.z, hits);
+    if (!list.length) return;
+    let px = 0, nx = 0, pz = 0, nz = 0, up = 0; // how far each way clears all of them
+    for (const b of list) {
+      px = Math.max(px, b.x1 + PLAYER_R - p.x); nx = Math.max(nx, p.x - (b.x0 - PLAYER_R));
+      pz = Math.max(pz, b.z1 + PLAYER_R - p.z); nz = Math.max(nz, p.z - (b.z0 - PLAYER_R));
+      up = Math.max(up, b.y1 - p.y);
+    }
+    const m = Math.min(px, nx, pz, nz, up) + 1e-4;
+    if (m > 3) return; // deep inside a big box: nowhere sensible nearby
+    if (up + 1e-4 === m) { p.y += m; p.vy = Math.max(0, p.vy); p.grounded = true; }
+    else if (px + 1e-4 === m) p.x += m; else if (nx + 1e-4 === m) p.x -= m; else if (pz + 1e-4 === m) p.z += m; else p.z -= m;
+  }
+}

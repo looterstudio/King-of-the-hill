@@ -2,7 +2,7 @@
 // recipient (rounding, packing) happens once per tick; each recipient then only gets their own
 // full state plus what is near them. Loot and cases go out at most a few times a second.
 import { BUS, VEHICLES, VEHICLE_KINDS, VIEW_RANGE, WEAPON_IDS } from './constants.ts';
-import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, OTHER_BUS, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HEAL, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, OTHER_BUS, OTHER_FALL, type SnapVehicle, type ServerMsg, type SnapCase, type SnapFx, type SnapLoot, type SnapOther, type SnapRing, type SnapSelf } from './protocol.ts';
 import type { PlayerState, Sim } from './sim.ts';
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -34,7 +34,7 @@ export function frame(sim: Sim): Frame {
   for (const p of sim.players.values()) {
     if (p.kills > 0 && p.alive && (!leader || p.kills > leader[1])) leader = [p.id, p.kills];
     if (!p.alive) continue;
-    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0) | (p.down > 0 ? OTHER_DOWN : 0) | (p.axe ? OTHER_AXE : 0) | ((p.axe ? 0 : (p.ups[p.cur] ?? 0) & 3) << OTHER_UPS) | (p.bus ? OTHER_BUS : 0);
+    const flags = OTHER_ALIVE | (p.slideT > 0 ? OTHER_SLIDE : 0) | (p.hook ? OTHER_HOOK : 0) | (p.gliding ? OTHER_GLIDE : 0) | (p.use ? OTHER_HEAL : 0) | (p.ride ? OTHER_RIDE : 0) | (p.down > 0 ? OTHER_DOWN : 0) | (p.axe ? OTHER_AXE : 0) | ((p.axe ? 0 : (p.ups[p.cur] ?? 0) & 3) << OTHER_UPS) | (p.bus ? OTHER_BUS : 0) | (p.fall ? OTHER_FALL : 0);
     const w = p.axe ? null : p.slots[p.cur];
     const o = [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), Math.ceil(p.hp), flags, w ? WEAPON_IDS.indexOf(w) : -1];
     if (p.hook) o.push(r1(p.gx), r1(p.gy), r1(p.gz));
@@ -74,7 +74,7 @@ function selfOf(p: PlayerState, sim: Sim): SnapSelf {
     x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, grounded: p.grounded, gliding: p.gliding,
     airJumps: p.airJumps, wallX: p.wallX, wallZ: p.wallZ, wallT: Math.min(p.wallT, 9), slideT: p.slideT, dashT: p.dashT, dashX: p.dashX, dashZ: p.dashZ,
     dashReady: p.dashReady, hook: p.hook, gx: p.gx, gy: p.gy, gz: p.gz, hookCd: p.hookCd, launchT: p.launchT,
-    mantleT: r2(p.mantleT), mantleX: p.mantleX, mantleY: p.mantleY, mantleZ: p.mantleZ, bus: p.bus,
+    mantleT: r2(p.mantleT), mantleX: p.mantleX, mantleY: p.mantleY, mantleZ: p.mantleZ, bus: p.bus, fall: p.fall,
     yaw: p.yaw, pitch: p.pitch, hp: Math.max(0, Math.ceil(p.hp)), shield: Math.ceil(p.shield), alive: p.alive,
     slots: [...p.slots], mags: [...p.mags], cur: p.cur, ups: [...p.ups], items: { ...p.items }, perk: p.perk ? { ...p.perk } : null,
     use: p.use ? { item: p.use.item, t: r2(p.use.t) } : null, reloadT: r2(p.reloadT), spin: r2(p.spin), ack: p.ack, kills: p.kills,

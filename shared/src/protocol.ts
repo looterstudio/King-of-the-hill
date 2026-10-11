@@ -65,6 +65,7 @@ export type SnapOther = number[];
 export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64, OTHER_AXE = 128;
 export const OTHER_UPS = 8; // flags >> OTHER_UPS & 3: the upgrade stars on the gun in hand
 export const OTHER_BUS = 1024; // still aboard the paper plane (drawn as the plane, not as a person)
+export const OTHER_FALL = 2048; // free falling out of it, glider shut (OTHER_GLIDE is set too)
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
 // [id, kind, x, y, z, heading, pitch, hp %, driver id (0: none), passengers, ...passenger ids by seat]
 export type SnapVehicle = number[];
@@ -111,6 +112,7 @@ export type ServerMsg =
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { t: 'event'; kind: 'open'; caseId: number; by: number; golden: boolean }
   | { t: 'rtc'; from: number; data: unknown } // squad voice: WebRTC signalling relayed from a teammate
+  | { t: 'mark'; from: number; at: [number, number] | null } // a teammate's landing marker on the map (null: taken off)
   | { t: 'result'; winner: number | null; winners: number[]; points: Record<number, number>; awarded: boolean; epoch: number }; // points: what each player scored
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
@@ -123,6 +125,7 @@ export type ClientMsg =
   | { t: 'leave' }
   | { t: 'me' }                               // ask for your profile again
   | { t: 'rtc'; to: number; data: unknown }   // squad voice signalling, only ever relayed to a teammate in your match
+  | { t: 'mark'; at: [number, number] | null } // where you want to land (the map), shown to your teammates only
   | ({ t: 'in' } & Input);
 
 export const loginMessage = (nonce: string) => `Pot Royale login\nnonce: ${nonce}`;

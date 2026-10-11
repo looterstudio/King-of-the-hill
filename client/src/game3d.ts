@@ -4,13 +4,13 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, BURST_GAP, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TANK, TANK_MG, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { AXE, BUILD, BURST_GAP, BUS, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TANK, TANK_MG, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_BUS, OTHER_DOWN, OTHER_FALL, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { tankAim, tankEye } from '../../shared/src/vehicles.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
-import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
+import { buildGlider, buildPaperPlane, poseFall, buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
 import { gunPose, ViewArms } from './viewarms.ts';
 
@@ -18,7 +18,7 @@ type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
 const INTERP = 0.1;
 const LERP_FIELDS = [1, 2, 3, 5]; // x, y, z, pitch (yaw wraps, done apart)
-const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down', 'mantleT', 'mantleX', 'mantleY', 'mantleZ', 'bus'] as const;
+const BODY_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'gliding', 'airJumps', 'wallX', 'wallZ', 'wallT', 'slideT', 'dashT', 'dashX', 'dashZ', 'dashReady', 'hook', 'gx', 'gy', 'gz', 'hookCd', 'launchT', 'ride', 'head', 'vpitch', 'spd', 'seat', 'down', 'mantleT', 'mantleX', 'mantleY', 'mantleZ', 'bus', 'fall'] as const;
 const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as unknown as Record<string, unknown>)[k] = from[k]; };
 
 export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PURPLE, legendary: INK_IDS.ORANGE };
@@ -105,8 +105,16 @@ export class Game3D {
   private falling: { g: THREE.Object3D; t: number; v: number; rx: number; rz: number; land?: number; dust?: boolean }[] = [];
   private debris: { m: THREE.Mesh; vx: number; vy: number; vz: number; t: number }[] = [];
   private corpses: { g: THREE.Group; t: number }[] = [];
-  // your own death: the camera pulls up off your body for a moment before it follows anyone else
-  private deathCam: { x: number; y: number; z: number; yaw: number; t: number } | null = null;
+  // your own death: a few seconds on whoever got you, from beside your body, before you spectate anyone
+  private deathCam: { x: number; y: number; z: number; yaw: number; t: number; at: number; by: number | null; lx: number; ly: number; lz: number } | null = null;
+  private specYaw: number | null = null; // the spectator camera's heading, eased after the player it follows
+  // the paper plane: its last snapshot ([x, y, z, dx, dz, aboard]) and when it came, flown on between them;
+  // busNow is where it is this frame (the map and the drop panel read it)
+  private busSnap: { b: number[]; at: number } | null = null;
+  busNow: { x: number; y: number; z: number; dx: number; dz: number; aboard: number } | null = null;
+  private planeModel: THREE.Group | null = null;
+  private airK = 0; // 0 over the shoulder .. 1 the chase camera you glide and fall with
+  private wind: THREE.LineSegments | null = null; private windPts = new Float32Array(0); // speed lines while you fall
   private axeView: THREE.Group | null = null;
   private axeSwing = 0;
   private axeLocal = 0;
@@ -180,7 +188,9 @@ export class Game3D {
     for (const f of this.falling) this.drop(f.g);
     for (const d of this.debris) this.drop(d.m);
     for (const c of this.corpses) this.drop(c.g);
-    this.falling = []; this.debris = []; this.corpses = []; this.deathCam = null; this.shardCache = null;
+    this.falling = []; this.debris = []; this.corpses = []; this.deathCam = null; this.specYaw = null; this.shardCache = null;
+    if (this.planeModel) { this.drop(this.planeModel); this.planeModel = null; }
+    this.busSnap = null; this.busNow = null; this.airK = 0;
     for (const r of this.ownRockets) this.drop(r.g);
     for (const p of this.puffs) this.drop(p.m);
     this.ownRockets = []; this.puffs = [];
@@ -438,7 +448,7 @@ export class Game3D {
   // ---------------- the fallen ----------------
   // a player is out: leave their body on the ground where they fell (where we last saw them; one we
   // never saw leaves nothing). Bodies stay 75 s, the oldest go first past 16 (each is ~20 draw calls)
-  onElim(victim: number) {
+  onElim(victim: number, by: number | null = null) {
     let x: number, y: number, z: number, yaw: number;
     const a = this.avatars.get(victim), o = this.infoOf(victim);
     const b = this.pred ?? this.self;
@@ -456,7 +466,7 @@ export class Game3D {
     this.ink.scene.add(g);
     this.corpses.push({ g, t: 0 });
     if (this.corpses.length > 16) this.drop(this.corpses.shift()!.g);
-    if (victim === this.you) this.deathCam = { x, y, z, yaw, t: 0 };
+    if (victim === this.you) { this.deathCam = { x, y, z, yaw, t: 0, at: performance.now() / 1000, by: by !== this.you ? by : null, lx: x, ly: y + 1, lz: z }; this.specYaw = null; }
   }
   // an elimination goes off like a burst of ink: chunks in the player's colours fly up and out
   private elimBurst(x: number, y: number, z: number, id: number) {
@@ -538,10 +548,9 @@ export class Game3D {
     this.crack = new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: 0x2b2f3a, transparent: true, opacity: 0.95, depthTest: false }));
     this.crack.visible = false; this.crack.renderOrder = 11; this.crack.frustumCulled = false;
     this.ink.overlay.add(this.crack);
-    const chute = new THREE.Group();
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2.6), this.ink.material(INK_IDS.RED, true));
-    dome.position.set(0, 1.6, 0);
-    chute.add(dome);
+    // first person under the glider: its bar in your hands and the wing over your head, at the top of the view
+    const chute = buildGlider(this.ink.material(INK_IDS.PAPER, true), this.ink.material(INK_IDS.RED, true), this.ink.material(INK_IDS.GRAPHITE, true));
+    chute.position.set(0, -1.95, -0.25);
     chute.visible = false;
     this.ink.viewScene.add(chute);
     this.viewChute = chute;
@@ -647,6 +656,7 @@ export class Game3D {
     this.snaps.push({ s, at: performance.now() / 1000 });
     if (this.snaps.length > 30) this.snaps.shift();
     this.ring = s.ring; this.alive = s.alive; this.leader = s.leader; this.board = s.board ?? [];
+    this.busSnap = s.bus ? { b: s.bus, at: performance.now() / 1000 } : null;
     if (s.loot) this.syncLoot(s.loot);
     if (s.cases) this.syncCases(s.cases);
     this.syncFx(s.fx, s.time);
@@ -696,9 +706,12 @@ export class Game3D {
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
     const held = this.weapon, tp = this.thirdPerson && !this.pred.ride && !(c.aim && !!held && WEAPONS[held].sight === 'scope'); // a sniper scope is first person
-    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold, tp };
+    // aboard the plane a click jumps too (CLICK ANYWHERE or SPACE)
+    const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump || (!!this.pred.bus && c.fire), sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold, tp };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
+    const shut = this.pred.fall;
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
+    if (shut && !this.pred.fall && this.pred.gliding) sfx.glider(); // the glider snaps open
     this.lastTickAt = performance.now() / 1000;
     this.pending.push(inp);
     if (this.pending.length > 90) this.pending.shift();
@@ -991,9 +1004,16 @@ export class Game3D {
         if (v) pos.set(v[2], v[3], v[4]);
       }
       const held = this.weapon, scoped = look.aim && !!held && WEAPONS[held].sight === 'scope';
-      this.tpNow = this.thirdPerson && !this.pred.ride && !scoped;
+      this.tpNow = this.thirdPerson && !this.pred.ride && !this.pred.bus && !scoped;
       this.selfAt.copy(pos);
-      if (this.pred.ride) {
+      if (this.pred.bus) {
+        // aboard the paper plane: a wide view of it from behind and above, orbiting with the mouse
+        const cp = Math.cos(look.pitch), tgt = pos.clone().add(new THREE.Vector3(0, 3, 0));
+        const eye = tgt.clone().add(new THREE.Vector3(Math.sin(look.yaw) * cp, -Math.sin(look.pitch), Math.cos(look.yaw) * cp).multiplyScalar(36));
+        if (eye.y < tgt.y - 10) eye.y = tgt.y - 10;
+        cam.position.copy(eye);
+        cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
+      } else if (this.pred.ride) {
         // third person chase camera, orbiting with the mouse; pulls back with speed
         const air = isAir(this.pred.ride), dist = (air ? 12 : this.pred.ride === 5 ? 10 : this.pred.ride === 4 ? 5.5 : 7.5) + Math.min(6, Math.abs(this.pred.spd) * 0.08), cp = Math.cos(look.pitch);
         const tgt = pos.clone().add(new THREE.Vector3(0, air ? 2.4 : this.pred.ride === 5 ? 3.2 : 1.8, 0));
@@ -1015,6 +1035,17 @@ export class Game3D {
         this.camB = b < this.camB ? b : this.camB + (b - this.camB) * Math.min(1, dt * 6);
         cam.position.set(sx - fx * this.camB, sy - fy * this.camB, sz - fz * this.camB);
         cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
+        // falling or gliding you can't shoot: the camera eases back and down into a chase view, the glider
+        // over your head and the ground ahead in the middle of the screen (looking down still steers the dive)
+        this.airK += ((this.pred.gliding ? 1 : 0) - this.airK) * Math.min(1, dt * 3);
+        if (this.airK > 0.002) {
+          const cpitch = Math.max(-0.62, look.pitch * 0.55), ccp = Math.cos(cpitch), dist = this.pred.fall ? 7.5 : 6.5;
+          const tgt = pos.clone().add(new THREE.Vector3(0, 1.5, 0)), bx = Math.sin(look.yaw) * ccp, by = -Math.sin(cpitch), bz = Math.cos(look.yaw) * ccp;
+          const reach = Math.max(1, this.world.raycast(tgt.x, tgt.y, tgt.z, bx, by, bz, dist + 0.4) - 0.4);
+          const eye = tgt.add(new THREE.Vector3(bx, by, bz).multiplyScalar(reach));
+          cam.position.lerp(eye, this.airK);
+          cam.quaternion.slerp(new THREE.Quaternion().setFromEuler(new THREE.Euler(cpitch, look.yaw, 0, 'YXZ')), this.airK);
+        }
       } else {
         cam.position.copy(pos.add(new THREE.Vector3(0, (this.pred.down > 0 ? KNOCK.eye : EYE_H + crouch) + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
         cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : this.pred.down > 0 ? 0.12 : 0, 'YXZ');
@@ -1028,28 +1059,45 @@ export class Game3D {
       this.kickT = Math.max(0, this.kickT - dt * 4.5);
       const f = this.fovBase - Math.sin(this.kickT * Math.PI) * 3.5 * this.kickAmp;
       if (Math.abs(cam.fov - f) > 0.02) { cam.fov = f; cam.updateProjectionMatrix(); }
-    } else if (this.deathCam && this.deathCam.t < 3.2 && !this.free) {
-      // eliminated: rise up and back from your own body, looking down at it
-      const d = this.deathCam, k = Math.min(1, d.t / 1.6), ease = k * k * (3 - 2 * k);
-      d.t += dt;
-      // pulled in when a wall or a roof edge is in the way, so the body stays in sight
-      const bx = d.x + Math.sin(d.yaw) * 0.9, bz = d.z + Math.cos(d.yaw) * 0.9, by = d.y + 0.4;
-      let ex = d.x - Math.sin(d.yaw) * (1 + ease * 1.4) - bx, ey = 1.2 + ease * 1.1, ez = d.z - Math.cos(d.yaw) * (1 + ease * 1.4) - bz;
-      const len = Math.hypot(ex, ey, ez), hit = this.world.raycast(bx, by, bz, ex / len, ey / len, ez / len, len);
-      if (hit < len) { const f = Math.max(0.25, (hit - 0.4) / len); ex *= f; ey *= f; ez *= f; }
-      cam.position.set(bx + ex, by + ey, bz + ez);
-      cam.lookAt(bx, d.y + 0.2, bz);
-      if (cam.fov !== 78) { cam.fov = 78; cam.updateProjectionMatrix(); }
+    } else if (this.deathCam && this.deathCam.t < 3.5 && !this.free) {
+      // eliminated: the camera pulls up and back from your body and holds on whoever got you, past your body,
+      // zoomed in when they are far. Timed by the clock, not by frames (a slow machine sat in it for ages)
+      const d = this.deathCam, now = performance.now() / 1000;
+      d.t += Math.min(0.25, Math.max(0, now - d.at)); d.at = now;
+      const o = d.by !== null ? others.get(d.by) : undefined;
+      if (o) { const k = Math.min(1, dt * 6); d.lx += (o[1] - d.lx) * k; d.ly += (o[2] + 1.3 - d.ly) * k; d.lz += (o[3] - d.lz) * k; }
+      const k = Math.min(1, d.t / 0.9), ease = k * k * (3 - 2 * k);
+      let ux = d.x - d.lx, uz = d.z - d.lz;
+      const far = Math.hypot(ux, uz);
+      if (far < 0.5) { ux = Math.sin(d.yaw); uz = Math.cos(d.yaw); } else { ux /= far; uz /= far; }
+      // from your eye, back and up past your body (pulled in by walls, so neither of you is hidden by one)
+      const ax = d.x, ay = d.y + EYE_H, az = d.z;
+      let ex = ux * 3.2 * ease, ey = 1.4 * ease, ez = uz * 3.2 * ease;
+      const len = Math.hypot(ex, ey, ez);
+      if (len > 0.01) { const hit = this.world.raycast(ax, ay, az, ex / len, ey / len, ez / len, len + 0.4); if (hit < len + 0.4) { const f = Math.max(0, (hit - 0.4) / len); ex *= f; ey *= f; ez *= f; } }
+      cam.position.set(ax + ex, ay + ey, az + ez);
+      cam.lookAt(far < 0.5 ? d.x : d.lx, far < 0.5 ? d.y + 0.3 : d.ly, far < 0.5 ? d.z : d.lz);
+      const fov = 78 - ease * Math.max(0, Math.min(40, (far - 12) * 1.2));
+      if (Math.abs(cam.fov - fov) > 0.05) { cam.fov = fov; cam.updateProjectionMatrix(); }
     } else if (this.free) {
       cam.position.copy(this.free);
       cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
       if (cam.fov !== 78) { cam.fov = 78; cam.updateProjectionMatrix(); }
     } else {
-      const target = (this.watch !== null && others.get(this.watch)) || [...others.values()][0];
+      // spectating: behind the player you watch, turning after them smoothly (their every flick of the mouse
+      // used to swing the camera round), pulled in by walls; nobody else stands in while they are out of view
+      const target = this.watch !== null ? others.get(this.watch) : undefined;
       if (target) {
-        const back = new THREE.Vector3(Math.sin(target[4]) * 4.5, 2.4, Math.cos(target[4]) * 4.5);
-        cam.position.lerp(new THREE.Vector3(target[1], target[2], target[3]).add(back), Math.min(1, dt * 6));
-        cam.lookAt(target[1], target[2] + 1.4, target[3]);
+        let dy = target[4] - (this.specYaw ?? target[4]);
+        while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+        this.specYaw = (this.specYaw ?? target[4]) + dy * Math.min(1, dt * 2.5);
+        const hx = target[1], hy = target[2] + 1.6, hz = target[3];
+        let bx = Math.sin(this.specYaw) * 4.5, by = 1.2, bz = Math.cos(this.specYaw) * 4.5;
+        const len = Math.hypot(bx, by, bz), hit = this.world.raycast(hx, hy, hz, bx / len, by / len, bz / len, len + 0.3);
+        if (hit < len + 0.3) { const f = Math.max(0.15, (hit - 0.3) / len); bx *= f; by *= f; bz *= f; }
+        const want = new THREE.Vector3(hx + bx, hy + by, hz + bz);
+        if (cam.position.distanceTo(want) > 40) cam.position.copy(want); else cam.position.lerp(want, Math.min(1, dt * 6));
+        cam.lookAt(hx, target[2] + 1.3, hz);
       }
       if (cam.fov !== 78) { cam.fov = 78; cam.updateProjectionMatrix(); }
     }
@@ -1060,10 +1108,13 @@ export class Game3D {
     for (const o of others.values()) {
       if (!(o[7] & OTHER_ALIVE)) continue;
       if (o[7] & OTHER_RIDE) { riders.push(o); continue; } // sat in their seats once the vehicles are placed
+      if (o[7] & OTHER_BUS) continue; // aboard the paper plane: the plane is all you see of them
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
       poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt, !!(o[7] & OTHER_DOWN), !!(o[7] & OTHER_AXE), (o[7] >> OTHER_UPS) & 3);
+      if (o[7] & OTHER_FALL) poseFall(a, o[4], this.time + o[0]);
+      this.unfold(a.chute, dt);
       const d = a.root.position.distanceTo(cam.position);
       v.set(o[1], o[2] + 2.5, o[3]).project(cam);
       const mate = this.mates.has(o[0]);
@@ -1202,12 +1253,12 @@ export class Game3D {
     this.tracerGeo.setDrawRange(0, tn * 2);
 
     // first-person gun: sway, bob, recoil, reload dip; hidden while scoped with a sniper, gliding or healing
-    const gliding = (!!this.pred?.gliding || !!this.pred?.ride) && !!me?.alive;
+    const gliding = (!!this.pred?.gliding || !!this.pred?.ride || !!this.pred?.bus) && !!me?.alive;
     const w = this.weapon;
     const scoped = look.aim && !!w && WEAPONS[w].sight === 'scope';
     const fp = !this.tpNow; // the hands-and-gun view is first person only: over the shoulder you see your figure hold it
     for (const [id, g] of this.guns) g.visible = fp && !!me?.alive && w === id && !scoped && !gliding && !me.use && !((this.pred?.down ?? 0) > 0);
-    if (this.viewChute) { this.viewChute.visible = fp && gliding && !this.pred?.ride; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
+    if (this.viewChute) { this.viewChute.visible = fp && gliding && !this.pred?.ride && !this.pred?.bus && !this.pred?.fall; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
     const axeOut = !!me?.alive && !!me.axe && !gliding && !me.use && !((this.pred?.down ?? 0) > 0);
     if (this.axeView) {
       this.axeView.visible = axeOut && fp;
@@ -1284,6 +1335,8 @@ export class Game3D {
     } else this.arms?.hide();
 
     this.drawVehicles(dt);
+    this.drawPlane(dt);
+    this.drawWind(dt, !!me?.alive);
     this.drawRiders(dt, riders, look);
     this.stepCorpses(dt);
 
@@ -1294,6 +1347,72 @@ export class Game3D {
     this.ink.setDanger(n ? n.x : 0, n ? n.z : 0, n ? NUKE.radius : 0, n ? 0.6 + 0.4 * Math.sin(this.time * 12) : 0);
     this.ink.setStorm(this.ring.x, this.ring.y, this.ring.r, this.ring.nx, this.ring.ny, this.ring.nr);
     this.ink.render(this.time);
+  }
+
+  // the paper plane over the island: on you while you ride it (your prediction is where it is), flown on from
+  // its last snapshot otherwise; gone a little after it leaves the island
+  private drawPlane(dt: number) {
+    this.busNow = null;
+    const b = this.busSnap;
+    if (!b) { if (this.planeModel) { this.drop(this.planeModel); this.planeModel = null; } return; }
+    const e = Math.min(1, performance.now() / 1000 - b.at), p = this.pred;
+    const at = p?.bus && this.self?.alive ? this.selfAt : new THREE.Vector3(b.b[0] + b.b[3] * BUS.speed * e, b.b[1], b.b[2] + b.b[4] * BUS.speed * e);
+    this.busNow = { x: at.x, y: at.y, z: at.z, dx: b.b[3], dz: b.b[4], aboard: b.b[5] };
+    if (!this.planeModel) { this.planeModel = intern(buildPaperPlane(this.ink)); this.ink.scene.add(this.planeModel); }
+    const m = this.planeModel;
+    m.position.set(at.x, at.y - 1.2 + Math.sin(this.time * 0.9) * 0.4, at.z);
+    m.rotation.set(Math.sin(this.time * 0.7) * 0.03, Math.atan2(-b.b[3], -b.b[4]), Math.sin(this.time * 0.5) * 0.06, 'YXZ');
+    void dt;
+  }
+
+  // the glider unfolds when it opens: from a folded sliver to its full span in a third of a second
+  private unfold(g: THREE.Object3D, dt: number) {
+    if (!g.parent) { g.userData.k = 0; return; }
+    const k = g.userData.k = Math.min(1, (g.userData.k ?? 0) + dt * 3.2), e = 1 - (1 - k) ** 3;
+    g.scale.set(0.15 + 0.85 * e, 0.6 + 0.4 * e, 0.5 + 0.5 * e);
+  }
+
+  // speed lines while you fall, glide or ride the plane: strokes of ink streaming past the camera along the
+  // way you move, more and longer the faster you go (the wind's whoosh follows the same speed)
+  private drawWind(dt: number, alive: boolean) {
+    const p = this.pred, cam = this.ink.camera.position, N = 70;
+    let vx = 0, vy = 0, vz = 0;
+    if (alive && p && !p.ride) {
+      if (p.bus) { vx = (this.busNow?.dx ?? 0) * BUS.speed; vz = (this.busNow?.dz ?? 0) * BUS.speed; }
+      else if (!p.grounded) { vx = p.vx; vy = p.vy; vz = p.vz; }
+    }
+    const sp = Math.hypot(vx, vy, vz), k = Math.max(0, Math.min(1, (sp - 14) / 36));
+    sfx.wind(k);
+    if (!this.wind) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 6), 3));
+      this.wind = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x2b2f3a, transparent: true, opacity: 0, depthTest: false }));
+      this.wind.frustumCulled = false;
+      this.ink.overlay.add(this.wind);
+      this.windPts = new Float32Array(N * 3).map(() => 1e9);
+    }
+    const mat = this.wind.material as THREE.LineBasicMaterial;
+    mat.opacity += (k * 0.55 - mat.opacity) * Math.min(1, dt * 4);
+    this.wind.visible = mat.opacity > 0.01;
+    if (!this.wind.visible) return;
+    const ux = sp ? vx / sp : 0, uy = sp ? vy / sp : -1, uz = sp ? vz / sp : 0, len = 0.6 + sp * 0.05, R = 16;
+    const pos = (this.wind.geometry.getAttribute('position') as THREE.BufferAttribute), P = this.windPts;
+    for (let i = 0; i < N; i++) {
+      let x = P[i * 3] - vx * dt, y = P[i * 3 + 1] - vy * dt, z = P[i * 3 + 2] - vz * dt;
+      const rx = x - cam.x, ry = y - cam.y, rz = z - cam.z, along = rx * ux + ry * uy + rz * uz;
+      if (along < -R || Math.abs(rx) > R * 1.5 || Math.abs(ry) > R * 1.5 || Math.abs(rz) > R * 1.5) {
+        // a new stroke ahead, off to the side (never across the middle of the screen)
+        const a = Math.random() * Math.PI * 2, r = 2.5 + Math.random() * 9, d = R * (0.3 + Math.random() * 0.7);
+        const px = Math.abs(uy) > 0.9 ? 1 : -uz, pz = Math.abs(uy) > 0.9 ? 0 : ux, pl = Math.hypot(px, pz) || 1; // one side axis, and the other
+        const qx = uy * pz / pl, qy = (uz * px - ux * pz) / pl, qz = -uy * px / pl;
+        x = cam.x + ux * d + (px / pl) * Math.cos(a) * r + qx * Math.sin(a) * r;
+        y = cam.y + uy * d + qy * Math.sin(a) * r;
+        z = cam.z + uz * d + (pz / pl) * Math.cos(a) * r + qz * Math.sin(a) * r;
+      }
+      P[i * 3] = x; P[i * 3 + 1] = y; P[i * 3 + 2] = z;
+      pos.setXYZ(i * 2, x, y, z); pos.setXYZ(i * 2 + 1, x + ux * len, y + uy * len, z + uz * len);
+    }
+    pos.needsUpdate = true;
   }
 
   // a puff of rocket smoke left behind (vx..: the way it flies), a few per frame per rocket
@@ -1348,9 +1467,11 @@ export class Game3D {
       if (!v || !m || !at) return;
       f.root.visible = true;
       poseRider(f, at.pos, at.driver ? m.root.quaternion : null, look.yaw, look.pitch, SEATS[v[1]].legs, at.driver, this.weapon, leader, dt, me.ups[me.cur] ?? 0);
-    } else if (this.tpNow && this.camB > 0.6) { // (with a wall at your back the camera is in your head: no figure)
+    } else if (this.tpNow && !p.bus && (this.camB > 0.6 || this.airK > 0.5)) { // (with a wall at your back the camera is in your head: no figure)
       f.root.visible = true;
       poseFigure(f, this.selfAt.x, this.selfAt.y, this.selfAt.z, look.yaw, look.pitch, this.weapon, p.slideT > 0 || p.mantleT > 0, p.gliding, leader, dt, p.down > 0, me.axe, me.ups[me.cur] ?? 0); // tucked going over a ledge
+      if (p.fall) poseFall(f, look.yaw, this.time);
+      this.unfold(f.chute, dt);
     }
   }
 
