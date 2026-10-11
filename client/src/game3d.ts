@@ -4,7 +4,7 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { AXE, BUILD, BURST_GAP, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
 import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
@@ -86,6 +86,8 @@ export class Game3D {
   private fx = new Map<number, { g: THREE.Group; kind: string }>();
   private builds = new Map<number, { idx: number[]; meshes: THREE.Mesh[] }>();
   private booms: Boom[] = [];
+  private flashes: { m: THREE.Mesh; t: number }[] = []; // muzzle flashes: a star of orange ink for a few frames
+  private burstLocal = 0; private burstGap = 0;           // our own burst rifle: rounds still to come, and when
   private gunKick = 0;
   // the island's boxes as one instanced mesh, one instance per world box (same index), with room for
   // everything a match can break off or build; dead boxes are scaled to nothing
@@ -642,6 +644,7 @@ export class Game3D {
     for (const sh of s.shots) {
       if (sh[6] === this.you && !((this.pred?.ride ?? 0) >= 2)) continue; // our own gunshots were drawn when we pulled the trigger
       this.tracers.push({ start: new THREE.Vector3(sh[0], sh[1] - 0.15, sh[2]), end: new THREE.Vector3(sh[3], sh[4], sh[5]), life: 0.12, mine: false });
+      if (!heard.has(sh[6])) this.flash(sh[0], sh[1] - 0.15, sh[2], 0.32);
       if (!heard.has(sh[6])) { // one bang per shooter per snapshot (shotgun pellets are one shot)
         heard.add(sh[6]);
         const o = s.others.find((p) => p[0] === sh[6]);
@@ -705,40 +708,67 @@ export class Game3D {
     sfx.spin(spinUp && ready ? this.spinLocal / spinUp : 0); // quiet while reloading or healing
     if (c.fire && !this.fireHeld && w && mag === 0 && this.self.reloadT === 0) sfx.dry(); // click: empty (the sim starts the reload)
     this.fireHeld = c.fire;
+    // a burst rifle fires its rounds one after another like the sim does (BURST_GAP apart), each with its
+    // own bang, kick, tracer and flash; it used to be one bang and one tracer per trigger pull
+    this.burstGap = Math.max(0, this.burstGap - DT);
+    if (this.burstLocal > 0 && (!w || !WEAPONS[w].burst || !ready)) this.burstLocal = 0;
+    if (this.burstLocal > 0 && this.burstGap === 0 && w) { this.burstLocal--; this.burstGap = BURST_GAP; this.fireLocal(w, c, tp); }
     if (w && c.fire && this.localCd === 0 && mag > 0 && ready) {
       const def = WEAPONS[w];
       if (!def.spinUp || this.spinLocal >= def.spinUp - 0.05) {
-        this.localCd = def.burst ? def.cd + 0.15 : def.cd;
-        this.gunKick = 1;
-        sfx.shot(w);
-        const spread = spreadFor(this.pred, w, c.aim);
-        // the same ray the sim fires down (aimFrom); the tracer starts at the gun: in your hands on screen,
-        // or in your figure's hands over the shoulder
-        const [ox, oy, oz] = aimFrom(this.world, this.pred.x, this.pred.y, this.pred.z, c.yaw, c.pitch, tp);
-        const ex = this.pred.x, ey = this.pred.y + EYE_H, ez = this.pred.z;
-        const view = new THREE.Euler(c.pitch, c.yaw, 0, 'YXZ');
-        const muzzle = (tp ? new THREE.Vector3(0.3, -0.3, -0.75) : new THREE.Vector3(0.22, -0.18, -0.6)).applyEuler(view).add(new THREE.Vector3(ex, ey, ez));
-        if (def.melee) this.slashT = 1; // a blade: the swing is all there is to draw
-        else if (def.proj) { // a rocket (or a spell): drawn now, flying out of the launcher onto its line
-          const cp = Math.cos(c.pitch), dx = -Math.sin(c.yaw) * cp, dy = Math.sin(c.pitch), dz = -Math.cos(c.yaw) * cp, drop = tp ? 0 : 0.1;
-          const spell = def.proj === 'spell', g = intern(buildItem(spell ? 'spell' : 'rocket', this.ink));
-          this.ink.scene.add(g);
-          this.ownRockets.push({ g, spell, ox: ox + dx * 0.9, oy: oy - drop + dy * 0.9, oz: oz + dz * 0.9, mx: muzzle.x, my: muzzle.y, mz: muzzle.z, dx, dy, dz, sp: def.proj === 'rocket' ? ROCKET.speed : def.proj === 'guided' ? GUIDED.speed : spell ? SPELL.speed : MISSILE.speed, t: 0 });
-        } else for (let i = 0; i < Math.min(def.pellets, 5); i++) {
-          const yaw = c.yaw + (Math.random() - 0.5) * 2 * spread, pitch = c.pitch + (Math.random() - 0.5) * 2 * spread;
-          const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
-          const t = this.world.raycast(ox, oy, oz, dx, dy, dz, def.range);
-          const end = new THREE.Vector3(ox + dx * t, oy + dy * t, oz + dz * t);
-          if (tp) { // as in the sim: a wall between the gun and the crosshair's target takes the bullet
-            const hx = end.x - ex, hy = end.y - ey, hz = end.z - ez, L = Math.hypot(hx, hy, hz);
-            const tb = L > 0.1 ? this.world.raycast(ex, ey, ez, hx / L, hy / L, hz / L, L) : L;
-            if (tb < L - 0.1) end.set(ex + (hx / L) * tb, ey + (hy / L) * tb, ez + (hz / L) * tb);
-          }
-          this.tracers.push({ start: muzzle.clone(), end, life: 0.08, mine: true });
-        }
+        if (def.burst) {
+          const n = Math.min(def.burst, mag);
+          this.localCd = (n - 1) * Math.ceil(BURST_GAP / DT - 1e-9) * DT + def.cd;
+          this.burstLocal = n - 1; this.burstGap = BURST_GAP;
+        } else this.localCd = def.cd;
+        this.fireLocal(w, c, tp);
       }
     }
     return inp;
+  }
+
+  // one round of ours, drawn and heard the moment it leaves: the kick, the bang, the flash, its tracer
+  // (or the rocket, or the blade's swing)
+  private fireLocal(w: WeaponId, c: { yaw: number; pitch: number; aim: boolean }, tp: boolean) {
+    if (!this.world || !this.pred) return;
+    const def = WEAPONS[w];
+    this.gunKick = 1;
+    sfx.shot(w);
+    const spread = spreadFor(this.pred, w, c.aim);
+    // the same ray the sim fires down (aimFrom); the tracer starts at the gun: in your hands on screen,
+    // or in your figure's hands over the shoulder
+    const [ox, oy, oz] = aimFrom(this.world, this.pred.x, this.pred.y, this.pred.z, c.yaw, c.pitch, tp);
+    const ex = this.pred.x, ey = this.pred.y + EYE_H, ez = this.pred.z;
+    const view = new THREE.Euler(c.pitch, c.yaw, 0, 'YXZ');
+    const muzzle = (tp ? new THREE.Vector3(0.3, -0.3, -0.75) : new THREE.Vector3(0.22, -0.18, -0.6)).applyEuler(view).add(new THREE.Vector3(ex, ey, ez));
+    if (def.melee) this.slashT = 1; // a blade: the swing is all there is to draw
+    else if (def.proj) { // a rocket (or a spell): drawn now, flying out of the launcher onto its line
+      const cp = Math.cos(c.pitch), dx = -Math.sin(c.yaw) * cp, dy = Math.sin(c.pitch), dz = -Math.cos(c.yaw) * cp, drop = tp ? 0 : 0.1;
+      const spell = def.proj === 'spell', g = intern(buildItem(spell ? 'spell' : 'rocket', this.ink));
+      this.ink.scene.add(g);
+      this.ownRockets.push({ g, spell, ox: ox + dx * 0.9, oy: oy - drop + dy * 0.9, oz: oz + dz * 0.9, mx: muzzle.x, my: muzzle.y, mz: muzzle.z, dx, dy, dz, sp: def.proj === 'rocket' ? ROCKET.speed : def.proj === 'guided' ? GUIDED.speed : spell ? SPELL.speed : MISSILE.speed, t: 0 });
+    } else for (let i = 0; i < Math.min(def.pellets, 5); i++) {
+      const yaw = c.yaw + (Math.random() - 0.5) * 2 * spread, pitch = c.pitch + (Math.random() - 0.5) * 2 * spread;
+      const cp = Math.cos(pitch), dx = -Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = -Math.cos(yaw) * cp;
+      const t = this.world.raycast(ox, oy, oz, dx, dy, dz, def.range);
+      const end = new THREE.Vector3(ox + dx * t, oy + dy * t, oz + dz * t);
+      if (tp) { // as in the sim: a wall between the gun and the crosshair's target takes the bullet
+        const hx = end.x - ex, hy = end.y - ey, hz = end.z - ez, L = Math.hypot(hx, hy, hz);
+        const tb = L > 0.1 ? this.world.raycast(ex, ey, ez, hx / L, hy / L, hz / L, L) : L;
+        if (tb < L - 0.1) end.set(ex + (hx / L) * tb, ey + (hy / L) * tb, ez + (hz / L) * tb);
+      }
+      this.tracers.push({ start: muzzle.clone(), end, life: 0.08, mine: true });
+    }
+    if (!def.melee) this.flash(muzzle.x, muzzle.y, muzzle.z, tp ? 0.3 : 0.18);
+  }
+
+  // a muzzle flash: a little orange star, turned at random, gone in a few frames
+  private flash(x: number, y: number, z: number, s: number) {
+    if (this.flashes.length > 40) return;
+    const m = new THREE.Mesh(Game3D.STAR, this.ink.material(INK_IDS.ORANGE));
+    m.position.set(x, y, z); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3); m.scale.setScalar(s / 0.16);
+    this.ink.scene.add(m);
+    this.flashes.push({ m, t: 0.06 });
   }
 
   private interpolated(): { others: Map<number, SnapOther>; tick: number } {
@@ -1105,6 +1135,7 @@ export class Game3D {
       if (d.t > 1.6) { this.drop(d.m); return false; }
       return true;
     });
+    this.flashes = this.flashes.filter((f) => { if ((f.t -= dt) > 0) return true; f.m.parent?.remove(f.m); return false; });
     this.booms = this.booms.filter((b) => {
       b.t += dt;
       const k = b.t / b.life;

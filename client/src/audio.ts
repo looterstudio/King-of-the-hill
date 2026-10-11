@@ -96,6 +96,7 @@ class Sfx {
     if (w === 'heavy' || w === 'hunting') { this.burst(900, 0.7, 0.9 * v, w === 'heavy' ? 0.8 : 0.5); this.tone(w === 'heavy' ? 80 : 120, 35, 0.55 * v, 0.45, 'triangle'); }
     else if (w === 'tac' || w === 'pump') { this.burst(1400, 0.5, 0.85 * v, 0.35); this.tone(90, 45, 0.35 * v, 0.25, 'triangle'); }
     else if (w === 'minigun') { this.burst(1900, 0.8, 0.5 * v, 0.07); this.tone(150, 70, 0.16 * v, 0.05, 'square'); }
+    else if (w === 'burst') { this.burst(2900, 1.2, 0.5 * v, 0.06); this.tone(260, 120, 0.2 * v, 0.045, 'square'); this.tone(1200, 600, 0.06 * v, 0.03, 'triangle'); } // short and clipped: three of them read as a burst
     else if (w === 'pistol') { this.burst(2600, 0.9, 0.45 * v, 0.1); this.tone(220, 90, 0.15 * v, 0.07, 'square'); }
     else { this.burst(w === 'scar' ? 1900 : 2200, 0.8, 0.5 * v, 0.12); this.tone(w === 'scar' ? 130 : 160, 70, 0.22 * v, 0.08, 'square'); }
   }

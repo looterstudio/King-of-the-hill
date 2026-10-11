@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_HURRY, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AIR_CRASH, AXE, BOMB, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AIR_CRASH, AXE, BOMB, BURST_GAP, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle, tankAim } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -1384,7 +1384,7 @@ export class Sim {
       if (def.burst) {
         if (inp.fire && p.fireCd === 0 && p.burstLeft === 0 && p.mags[p.cur] > 0) p.burstLeft = Math.min(def.burst, p.mags[p.cur]);
         if (p.burstLeft > 0 && p.burstT === 0) {
-          this.shoot(p, w, inp, ev); p.burstLeft--; p.burstT = 0.075;
+          this.shoot(p, w, inp, ev); p.burstLeft--; p.burstT = BURST_GAP;
           if (p.burstLeft === 0) p.fireCd = def.cd;
         }
       } else if (inp.fire && spunUp && p.fireCd === 0 && p.mags[p.cur] > 0) { p.fireCd = def.cd; this.shoot(p, w, inp, ev); }

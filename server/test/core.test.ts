@@ -208,6 +208,12 @@ test('burst rifle fires three; minigun has to spin up', () => {
   for (let i = 0; i < 10; i++) sim.step(DT, new Map([[1, inp({ fire: i === 0 })]]));
   assert.equal(sim.shots.length, 3);
   sim.shots.length = 0;
+  // held down: three quick rounds, a clear pause, three more (rounds 0.1 s apart, bursts ~0.67 s apart)
+  give(p, 'burst');
+  const at: number[] = [];
+  for (let i = 0; i < 30; i++) { const n = sim.shots.length; sim.step(DT, new Map([[1, inp({ fire: true, seq: 100 + i })]])); if (sim.shots.length > n) at.push(i); }
+  assert.deepEqual(at.slice(0, 6).map((t) => t - at[0]), [0, 3, 6, 20, 23, 26]);
+  sim.shots.length = 0;
   give(p, 'minigun');
   for (let i = 0; i < Math.floor(TICK_HZ * 0.5); i++) sim.step(DT, new Map([[1, inp({ fire: true })]]));
   assert.equal(sim.shots.length, 0, 'still spinning');

@@ -90,6 +90,8 @@ export interface WeaponDef {
   proj?: 'rocket' | 'missile' | 'guided' | 'spell'; // fires a projectile instead of a bullet
   melee?: { reach: number; arc: number; block: number }; // swung, not fired: everyone in the arc in front of you (no ammo)
 }
+// a burst gun fires its rounds this far apart (3 ticks: 0.1 s), then waits its cd before the next burst
+export const BURST_GAP = 0.075;
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
   pistol: { name: 'Pistol', rarity: 'common', dmg: 16, cd: 0.25, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.2, auto: false },
   smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.25, auto: true },
