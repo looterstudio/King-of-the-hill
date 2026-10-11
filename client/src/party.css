@@ -44,7 +44,9 @@
 .pty-rd.away { color: #c98a00; border-style: dashed; }
 .pty-rd.busy { color: var(--ink); }
 
-.pty-skins { width: min(560px, 100%); text-align: left; }
+.pty-skins { width: min(760px, 100%); text-align: left; }
+.pty-skinlist { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+@media (max-width: 640px) { .pty-skinlist { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .pty-actions { display: grid; justify-items: center; gap: 8px; width: min(420px, 100%); }
 .pty-actions .btn.play { margin-top: 0; }
 .pty-go.ready { background: rgba(19, 137, 127, .14); border-color: var(--teal); color: var(--teal); box-shadow: 4px 5px 0 var(--teal); }
