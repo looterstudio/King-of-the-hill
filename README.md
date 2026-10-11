@@ -68,6 +68,12 @@ top-10 finish, kills), and the token's trading fees fill one shared pot: **every
   are filled. No friendly fire; teammates are marked through walls and always on the minimap.
 - **Rooms.** The lobby lists every room filling or live, with a join button. Up to 5 rooms fill at
   once (`OPEN_ROOMS`), 10 full matches run per process (`MAX_ROOMS`), spread over worker threads.
+- **Menus and HUD.** Before a match: the controls as keycaps, your name, one button in. `Esc` opens
+  Resume, Inventory, Settings (sensitivity, aiming sensitivity, invert, camera, field of view, master /
+  music / effects volume, announcer voice, graphics quality, resolution; saved per device, applied live),
+  Controls and Back to menu. The hotbar sits bottom centre (gun silhouettes in their rarity colour, stars,
+  ammo); hold `Tab` (or `I`) for the inventory with what everything does, hold `Z` for the item wheel.
+  First Blood, multi-kills (10 s apart) and streaks get a synthesized sting and a spoken line.
 - **Spectating.** Out? Click / right-click to switch players. While a teammate lives you can only
   watch your team (no ghosting); once your team is out, `F` gives you a free flying camera.
 - **Anti-cheat.** The server is the authority for movement, fire rate, damage and loot. On top:
