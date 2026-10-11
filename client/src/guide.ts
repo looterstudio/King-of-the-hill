@@ -106,8 +106,9 @@ const KEYS: [string, string][] = [
   ['Right click', 'aim down sights · with the pickaxe: build'], ['R', 'reload'], ['1 – 4 / wheel', 'switch gun'], ['X', 'diamond pickaxe'],
   ['B', 'build a block (pickaxe out)'], ['E / F', 'open cases · pick up · swap · get in and out of vehicles · upgrade at a bench'],
   ['E (hold)', 'pick up a knocked teammate'], ['5', 'drink a shield'], ['6', 'use a medkit'], ['G', 'use your perk / throw'],
+  ['Z (hold)', 'item wheel: point at a shield, medkit or perk, let go'], ['Tab / I', 'inventory: everything you carry and what it does'],
   ['V (hold)', 'talk to your squad'], ['U', 'mute your squad'], ['N / M', 'next radio station / radio off'], ['H', 'controls card in a match'],
-  ['P', 'third person (over the shoulder) / first person'], ['T', 'hide the training list'], ['F (out)', 'free camera when your team is out'], ['Esc', 'pause'],
+  ['P', 'third person (over the shoulder) / first person'], ['T', 'hide the training list'], ['F (out)', 'free camera when your team is out'], ['Esc', 'menu: settings, controls, leave'],
 ];
 // the lobby's manual: every card and every key, by topic
 export function manualHTML() {

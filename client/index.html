@@ -273,12 +273,13 @@
     <div class="hp-row"><span>HP</span><div class="bar hp"><div id="hpFill"></div></div><b id="hpNum">100</b></div>
     <div class="ammo-row"><b id="ammo">16</b><span id="ammoMax">/16</span><em id="reloading" class="hidden">reloading…</em></div>
     <div id="magTally" class="tally"></div>
-    <div id="items" class="items"></div>
   </div>
-  <div class="hud-br">
-    <ol id="weapons" class="weapons"></ol>
-    <div id="weapon" class="weapon">Pistol</div>
-  </div>
+  <div id="hotbar" class="hotbar"></div>
+  <div id="pickToasts" class="pick-toasts"></div>
+  <div id="inventory" class="inventory hidden"></div>
+  <div id="wheel" class="wheel hidden"></div>
+  <div id="announce" class="announce"></div>
+  <div id="armorLost" class="armor-lost"></div>
   <div id="prompt" class="prompt"></div>
   <div id="axeHint" class="axe-hint hidden"></div>
   <div id="ammoTip" class="ammo-tip"></div>
@@ -294,6 +295,7 @@
       <div><kbd>Shift</kbd>+<kbd>C</kbd><span>slide (sprint, then C)</span></div><div><kbd>Space</kbd><span>jump · double · wall jump</span></div>
       <div><kbd>1-4</kbd><span>guns</span></div><div><kbd>5</kbd> <kbd>6</kbd><span>shield · medkit</span></div>
       <div><kbd>G</kbd><span>perk / grenade</span></div><div><kbd>Q</kbd><span>grapple (hold)</span></div>
+      <div><kbd>Z</kbd><span>item wheel (hold)</span></div><div><kbd>Tab</kbd><span>inventory: what everything does</span></div>
       <div><kbd>P</kbd><span>third / first person</span></div><div><kbd>Space</kbd><span>at a ledge or window: climb over</span></div>
     </div>
     <p>Minigun: hold left click, it spins up first. The storm closes on the King's Tower. <small>H shows this again</small></p>
@@ -317,36 +319,8 @@
   <div id="vehHud" class="veh-hud hidden"></div>
 </section>
 
-<section id="pause" class="pause hidden">
-  <div class="pause-card">
-    <h2 id="pauseTitle">Click to drop in</h2>
-    <p class="pause-sub">You glide down first. Steer with the mouse, land anywhere, then fight.</p>
-    <button id="resumeBtn" class="btn play">Play</button>
-    <div class="controls">
-      <div><h4>Mouse + keyboard</h4>
-        <p><kbd>WASD</kbd> move · <kbd>Mouse</kbd> look · <kbd>Shift</kbd> sprint</p>
-        <p><kbd>LMB</kbd> fire · <kbd>RMB</kbd> aim down sights</p>
-        <p><kbd>Space</kbd> jump · again in the air = double jump · on a wall = wall jump</p>
-        <p><kbd>C</kbd>/<kbd>Ctrl</kbd> while sprinting = slide · in the air = air dash</p>
-        <p><kbd>Q</kbd> hold to grapple and reel in</p>
-        <p><kbd>E</kbd>/<kbd>F</kbd> open pencil cases · pick up or swap guns · get in and out of cars, helicopters, planes</p>
-        <p><kbd>5</kbd> drink a shield · <kbd>6</kbd> use a medkit · <kbd>G</kbd> use your perk</p>
-        <p><kbd>R</kbd> reload: do it between fights; an empty gun reloads when you click · <kbd>1-4</kbd>/<kbd>wheel</kbd> switch weapon</p>
-        <p><kbd>X</kbd> diamond pickaxe · <kbd>left click</kbd> break walls, cars, people (every block gives ▦ material) · <kbd>right click</kbd> or <kbd>B</kbd> build a block where the blue cube is</p>
-        <p>Minigun: hold <kbd>LMB</kbd>, the barrels spin up for a moment, then it shreds · big drum, slow reload</p>
-        <p><kbd>H</kbd> controls card · training checklist on the left while you learn</p>
-        <p>Teammate knocked? Stand next to them and hold <kbd>E</kbd> for 5 s</p>
-        <p><kbd>V</kbd> hold to talk to your squad · <kbd>U</kbd> mute them · in a vehicle: <kbd>N</kbd> next radio station · <kbd>M</kbd> radio off</p>
-        <p>The Needle: step into the blue updraft in the core to fly up 80 floors; jump out of a window and your glider opens</p>
-        <p>Out? <kbd>LMB</kbd>/<kbd>RMB</kbd> switch who you watch · <kbd>F</kbd> free camera once your team is out</p>
-        <p><kbd>Esc</kbd> pause</p>
-      </div>
-    </div>
-    <label class="setting">look sensitivity <input id="sens" type="range" min="0.3" max="2.5" step="0.05" /> <b id="sensVal">100%</b></label>
-    <label class="setting"><input id="invert" type="checkbox" /> invert vertical look</label>
-    <button id="quitBtn" class="btn ghost">Leave match</button>
-  </div>
-</section>
+<section id="pause" class="pause hidden"><div id="menuCard" class="pause-card"></div></section>
+<section id="prematch" class="prematch hidden"></section>
 
 <script type="module" src="./src/main.ts"></script>
 </body>

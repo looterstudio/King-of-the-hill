@@ -176,9 +176,13 @@ async function onMessage(c: Client, msg: ClientMsg) {
       try { return await signIn(c, msg); } finally { c.authing = false; }
     }
     case 'guest': {
-      if (c.authed) return;
+      if (c.authed) { // a guest renaming from the pre-match screen, between matches only
+        if (!c.guest || c.room || c.queued || !c.lobbyAction()) return;
+        c.name = cleanName(msg.name);
+        return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });
+      }
       if (!config.allowGuests) return c.send({ t: 'error', msg: 'connect a wallet to play' });
-      c.name = cleanName(msg.name); c.authed = true;
+      c.name = cleanName(msg.name); c.authed = true; c.guest = true;
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);
       return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });

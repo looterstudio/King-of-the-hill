@@ -31,6 +31,7 @@ export class Client {
   team = 0;
   skin = 0;            // character picked in the lobby (looks only)
   authing = false;     // a sign-in is waiting on the balance read
+  guest = false;       // signed in as a guest (may change name between matches)
   private lastLobbyAction = 0;
   private lobbyTokens = 5;
   constructor(public id: number, public ws: WebSocket, public num: string, public nonce: string, private rate: number) { this.tokens = rate; }

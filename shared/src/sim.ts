@@ -37,7 +37,7 @@ export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
   jump: boolean; sprint: boolean; slide: boolean; grapple: boolean;
   fire: boolean; aim: boolean; reload: boolean; slot: number; view: number;
-  interact: boolean; item: number; perk: boolean; // item: 1 = best shield, 2 = medkit
+  interact: boolean; item: number; perk: boolean; // item: 1 = best shield, 2 = medkit, 3 = mini shield, 4 = shield potion (the item wheel)
   up: number; // helicopter climb (+1) / descend (-1)
   hold: boolean; // E held down: reviving a knocked teammate
   tp?: boolean; // third-person camera (aimFrom); bots and old clients aim from the eye
@@ -79,7 +79,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
     jump: raw?.jump === true, sprint: raw?.sprint === true, slide: raw?.slide === true, grapple: raw?.grapple === true,
     fire: raw?.fire === true, aim: raw?.aim === true, reload: raw?.reload === true,
     slot: clamp(Math.floor(finite(raw?.slot)), 0, SLOTS + 1), view: Math.floor(finite(raw?.view)), // slot SLOTS + 1 = the axe
-    interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 2), perk: raw?.perk === true,
+    interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 4), perk: raw?.perk === true,
     up: clamp(finite(raw?.up), -1, 1), hold: raw?.hold === true, tp: raw?.tp === true,
   };
 }
@@ -1314,8 +1314,10 @@ export class Sim {
 
     // healing / shielding takes time and you walk slowly while doing it
     if (inp.item && !p.use && !p.gliding && !p.ride) {
+      const big = p.items.big > 0 && p.shield < SHIELD_MAX, mini = p.items.mini > 0 && p.shield < (ITEMS.mini.shieldCap ?? 50);
       const it: ItemId | null = inp.item === 2 ? (p.items.med > 0 && p.hp < PLAYER_HP ? 'med' : null)
-        : p.items.big > 0 && p.shield < SHIELD_MAX ? 'big' : p.items.mini > 0 && p.shield < (ITEMS.mini.shieldCap ?? 50) ? 'mini' : null;
+        : inp.item === 3 ? (mini ? 'mini' : null) : inp.item === 4 ? (big ? 'big' : null)
+        : big ? 'big' : mini ? 'mini' : null;
       if (it) { p.use = { item: it, t: ITEMS[it].use }; p.reloadT = 0; }
     }
     if (p.use) {

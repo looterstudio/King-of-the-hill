@@ -5,19 +5,36 @@ import type { WeaponId } from '../../shared/src/constants.ts';
 class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private musicBus: GainNode | null = null;
   private noise: AudioBuffer | null = null;
+  private vol = { master: 1, effects: 1, music: 1 };
   enabled = true;
   get context() { return this.ctx; }
+  // where music (the radio) plays into, so the music slider reaches it
+  get music(): AudioNode | null { return this.musicBus; }
+  // effects level 0..1 for things that don't go through WebAudio (the spoken announcer)
+  get effectsLevel() { return this.vol.master * this.vol.effects; }
+  get musicLevel() { return this.vol.master * this.vol.music; }
 
   unlock() {
     if (this.ctx) { void this.ctx.resume(); return; }
     try {
       this.ctx = new AudioContext();
-      this.master = this.ctx.createGain(); this.master.gain.value = 0.5; this.master.connect(this.ctx.destination);
+      this.master = this.ctx.createGain(); this.master.connect(this.ctx.destination);
+      this.musicBus = this.ctx.createGain(); this.musicBus.connect(this.ctx.destination);
+      this.applyVolume();
       const len = this.ctx.sampleRate * 0.6, buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate), d = buf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
       this.noise = buf;
     } catch { this.ctx = null; }
+  }
+  // the settings sliders, 0..1 each
+  setVolume(master: number, effects: number, music: number) { this.vol = { master, effects, music }; this.applyVolume(); }
+  private applyVolume() {
+    const c = this.ctx;
+    if (!c || !this.master || !this.musicBus) return;
+    this.master.gain.setTargetAtTime(0.5 * this.vol.master * this.vol.effects, c.currentTime, 0.03);
+    this.musicBus.gain.setTargetAtTime(this.vol.master * this.vol.music, c.currentTime, 0.03);
   }
 
   // a continuous engine for whatever you drive: pitch follows speed, off when on foot (ride 0)
@@ -140,7 +157,56 @@ class Sfx {
   }
   siren() { if (!this.ctx || !this.enabled) return; for (let i = 0; i < 3; i++) this.tone(660, 880, 0.18, 0.5, 'sawtooth', i * 0.6); }
   open(golden: boolean) { if (!this.ctx || !this.enabled) return; this.burst(3000, 2, 0.2, 0.15, 'bandpass'); this.tone(golden ? 880 : 660, golden ? 1760 : 990, 0.2, 0.35, 'triangle', 0.05); }
-  shieldBreak() { if (this.ctx && this.enabled) { this.burst(4000, 1.5, 0.35, 0.18, 'highpass'); this.tone(1400, 500, 0.2, 0.2, 'triangle'); } }
+  // you broke an enemy's shield: glass shattering, bright shards falling, a satisfying low thud under it
+  shieldBreak() {
+    if (!this.ctx || !this.enabled) return;
+    this.burst(5200, 1.2, 0.42, 0.22, 'highpass'); this.burst(2600, 4, 0.25, 0.12, 'bandpass');
+    this.tone(180, 70, 0.32, 0.22, 'triangle');
+    [2900, 3700, 2300, 4400, 3300].forEach((f, i) => this.tone(f, f * 0.82, 0.09, 0.14, 'sine', 0.03 + i * 0.035));
+  }
+  // your own shield broke: a heavy crunch and a falling, hollow tone, so you know without looking
+  armorLost() {
+    if (!this.ctx || !this.enabled) return;
+    this.burst(900, 1.5, 0.5, 0.3, 'bandpass'); this.burst(3800, 1, 0.22, 0.18, 'highpass');
+    this.tone(620, 140, 0.3, 0.45, 'sawtooth'); this.tone(310, 70, 0.32, 0.55, 'triangle', 0.02);
+    this.tone(1240, 1180, 0.08, 0.6, 'sine', 0.05);
+  }
+  // a long noise swell (reverse-cymbal feel) that rises into what follows it
+  private swell(from: number, to: number, peak: number, dur: number) {
+    const c = this.ctx!, t = c.currentTime;
+    const src = c.createBufferSource(); src.buffer = this.noise; src.loop = true;
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.4;
+    f.frequency.setValueAtTime(from, t); f.frequency.exponentialRampToValueAtTime(to, t + dur);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + dur * 0.95); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.06);
+    src.connect(f).connect(g).connect(this.master!);
+    src.start(t); src.stop(t + dur + 0.1);
+  }
+  // a brass-like stab: detuned saws through a filter that opens and closes, held for `hold` seconds
+  private brass(freq: number, peak: number, hold: number, delay = 0) {
+    const c = this.ctx!, t = c.currentTime + delay;
+    const f = c.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 3;
+    f.frequency.setValueAtTime(300, t); f.frequency.exponentialRampToValueAtTime(2600, t + 0.06); f.frequency.exponentialRampToValueAtTime(700, t + hold);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.025); g.gain.exponentialRampToValueAtTime(peak * 0.5, t + hold * 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t + hold);
+    f.connect(g).connect(this.master!);
+    for (const det of [-9, 0, 8]) {
+      const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq; o.detune.value = det;
+      o.connect(f); o.start(t); o.stop(t + hold + 0.05);
+    }
+  }
+  // the announcer's sting: a swell, then a sub hit and a minor brass chord that climbs with the
+  // streak (level 1 first blood / double kill ... 5 rampage and up), a bell on top
+  sting(level = 1) {
+    if (!this.ctx || !this.enabled) return;
+    const k = Math.max(1, Math.min(6, level)), root = 98 * Math.pow(1.122, k - 1), at = 0.32; // G2, a whole step higher each level
+    this.swell(500, 5200, 0.16, at);
+    setTimeout(() => {
+      if (!this.ctx) return;
+      this.tone(70, 30, 0.75, 0.9, 'sine'); this.burst(260, 0.8, 0.6, 0.5); this.burst(6500, 1, 0.18, 0.35, 'highpass');
+      for (const r of [1, 1.189, 1.498, 2]) this.brass(root * r, 0.07, 1.1 + k * 0.12); // minor triad and the octave
+      if (k >= 3) this.brass(root * 2.997, 0.04, 1.2, 0.18); // a high fifth answers on the big ones
+      this.tone(root * 8, root * 8, 0.08, 1.4, 'sine', 0.05); this.tone(root * 12, root * 12.05, 0.05, 1.1, 'triangle', 0.08);
+    }, at * 1000);
+  }
   jump() { if (this.ctx && this.enabled) this.tone(300, 520, 0.08, 0.12, 'sine'); }
   swing() { if (this.ctx && this.enabled) this.burst(900, 0.8, 0.12, 0.12, 'bandpass'); }
   chop(broke: boolean) { if (!this.ctx || !this.enabled) return; this.burst(broke ? 500 : 1800, 2, broke ? 0.35 : 0.25, broke ? 0.3 : 0.08); if (broke) this.tone(160, 60, 0.18, 0.3, 'triangle'); }

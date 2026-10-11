@@ -9,7 +9,9 @@ export class FpsInput {
   fire = false;
   aim = false;
   sens = 1;
+  adsSens = 0.55;   // look speed while aiming down sights, relative to sens
   invert = false;
+  capture: ((dx: number, dy: number) => void) | null = null; // the item wheel takes the mouse while it is open
   locked = false;   // playing: mouse captured, or free mode below
   free = false;     // pointer lock refused (some embeds/apps): look with the mouse and arrow keys, cursor stays visible
   onLockChange: ((locked: boolean) => void) | null = null;
@@ -53,7 +55,8 @@ export class FpsInput {
     }, { passive: true });
     addEventListener('mousemove', (e) => {
       if (!this.locked) return;
-      const k = 0.0022 * this.sens * (this.aim ? 0.55 : 1);
+      if (this.capture) { this.capture(e.movementX, e.movementY); return; }
+      const k = 0.0022 * this.sens * (this.aim ? this.adsSens : 1);
       this.yaw -= e.movementX * k;
       this.pitch -= e.movementY * k * (this.invert ? -1 : 1);
       this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
@@ -81,6 +84,8 @@ export class FpsInput {
     setTimeout(fallback, 500);
   }
   isDown(code: string) { return this.keys.has(code); }
+  // a one-shot action from the UI (the item wheel): item 2 medkit, 3 mini shield, 4 shield potion
+  press(a: { item?: number; perk?: boolean }) { if (a.item) this.latched.item = a.item; if (a.perk) this.latched.perk = true; }
   private stop() { this.free = false; this.locked = false; this.keys.clear(); this.fire = false; this.aim = false; this.el.style.cursor = ''; this.onLockChange?.(false); }
   unlock() { if (this.free) this.stop(); else if (document.pointerLockElement) document.exitPointerLock(); }
   setSens(v: number) { this.sens = v; try { localStorage.setItem('pr_sens', String(v)); } catch { /* storage blocked */ } }

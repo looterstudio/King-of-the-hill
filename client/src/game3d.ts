@@ -66,6 +66,7 @@ export class Game3D {
   private boom: number = TP.back;   // ... where it wants to be (closer while aiming)
   private selfAt = new THREE.Vector3(); // where we're drawn this frame
   private fovBase = 78;
+  fov = 78;                         // the player's field of view (settings); zoom and speed work from it
   private kickT = 0; private kickAmp = 0; // a punch of the lens when you land a headshot or a kill
   kick(amp: number) { this.kickAmp = Math.max(amp, this.kickT > 0.3 ? this.kickAmp : 0); this.kickT = 1; }
   // our own rockets, drawn the moment we fire: out of the launcher onto the true line, until the
@@ -957,7 +958,7 @@ export class Game3D {
       const zoom = look.aim && w ? (this.tpNow ? Math.min(1.3, WEAPONS[w].zoom) : WEAPONS[w].zoom) : 1; // over the shoulder, aiming only leans in
       // speed reads as a wider view: sprinting, sliding, dashing and swinging all open the lens
       const sprinting = this.pred.grounded && speed > 7.4 && this.pred.slideT <= 0;
-      const fov = 78 / zoom + (this.pred.dashT > 0 || this.pred.hook ? 8 : sprinting || this.pred.slideT > 0 ? 7 : 0);
+      const fov = this.fov / zoom + (this.pred.dashT > 0 || this.pred.hook ? 8 : sprinting || this.pred.slideT > 0 ? 7 : 0);
       this.fovBase += (fov - this.fovBase) * Math.min(1, dt * 14);
       this.kickT = Math.max(0, this.kickT - dt * 4.5);
       const f = this.fovBase - Math.sin(this.kickT * Math.PI) * 3.5 * this.kickAmp;
