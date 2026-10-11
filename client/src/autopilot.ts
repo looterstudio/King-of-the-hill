@@ -14,13 +14,18 @@ export interface AutopilotOpts {
 
 const angDiff = (a: number, b: number) => { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 
-// the busiest drop: where most bots plan to land, so the fight comes to us early
-function busiestDrop(bots: Bot[]): { x: number; z: number } {
-  let best = { x: 0, z: 0 }, most = -1;
+// the busiest drop early on the plane's line: where most bots plan to land, so the fight comes to us
+// soon, and not so far along that the clip spends its first half on the plane
+function busiestDrop(bots: Bot[], sim: Sim): { x: number; z: number } {
+  const B = sim.bus;
+  let best = { x: 0, z: 0 }, most = -Infinity;
   for (const b of bots) {
+    const along = B ? (b.dropX - B.x) * B.dx + (b.dropZ - B.z) * B.dz : 0, side = B ? Math.abs(-(b.dropX - B.x) * B.dz + (b.dropZ - B.z) * B.dx) : 0;
+    if (B && (along < 60 || side > 140)) continue;
     let n = 0;
     for (const o of bots) if (Math.hypot(o.dropX - b.dropX, o.dropZ - b.dropZ) < 70) n++;
-    if (n > most) { most = n; best = { x: b.dropX, z: b.dropZ }; }
+    const score = n - Math.max(0, along - 250) / 40;
+    if (score > most) { most = score; best = { x: b.dropX, z: b.dropZ }; }
   }
   return best;
 }
@@ -31,7 +36,7 @@ export function autopilot(net: LocalNet, input: FpsInput, opts: AutopilotOpts = 
   const me = room.seats.find((s) => !s.bot)?.id ?? 1;
   const bot = newBot(me, Math.random);
   bot.skill = opts.skill ?? 0.95;
-  const drop = busiestDrop(room.bots);
+  const drop = busiestDrop(room.bots, sim);
   bot.dropX = drop.x + 6; bot.dropZ = drop.z + 6; bot.wp = { x: bot.dropX, z: bot.dropZ }; bot.dest = { ...bot.wp };
   const smooth = opts.smooth ?? 0.4, tough = opts.tough ?? 0;
   const status = { mode: 'plane', kills: 0, alive: true, x: 0, z: 0 };

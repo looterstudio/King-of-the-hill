@@ -179,14 +179,16 @@ fs.mkdirSync(OUT, { recursive: true });
 const mb = (p) => fs.statSync(p).size / 1e6;
 const ff = (a) => { const r = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', ...a], { stdio: 'inherit' }); if (r.status !== 0) throw new Error('ffmpeg failed: ' + a.join(' ')); };
 const mp4 = path.join(OUT, 'gameplay.mp4'), webm = path.join(OUT, 'gameplay.webm'), jpg = path.join(OUT, 'gameplay.jpg');
-for (const crf of [27, 30, 33, 36]) {
-  ff(['-i', raw, '-an', '-c:v', 'libx264', '-preset', 'slow', '-crf', String(crf), '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
-  log(`mp4 crf ${crf}: ${mb(mp4).toFixed(2)} MB`);
+// a detailed, busy picture (every line is ink): step down quality, then size, until the file fits
+const LADDER = [[1280, 30], [1280, 33], [1280, 36], [1280, 39], [960, 37], [960, 41], [854, 44]];
+for (const [w, crf] of LADDER) {
+  ff(['-i', raw, '-an', '-vf', `scale=${w}:-2:flags=lanczos`, '-c:v', 'libx264', '-preset', 'medium', '-crf', String(crf), '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
+  log(`mp4 ${w}px crf ${crf}: ${mb(mp4).toFixed(2)} MB`);
   if (mb(mp4) <= MAX_MB) break;
 }
-for (const crf of [38, 42, 46, 50]) {
-  ff(['-i', raw, '-an', '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(crf), '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', webm]);
-  log(`webm crf ${crf}: ${mb(webm).toFixed(2)} MB`);
+for (const [w, crf] of LADDER.map(([w, c]) => [w, c + 10])) {
+  ff(['-i', raw, '-an', '-vf', `scale=${w}:-2:flags=lanczos`, '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(crf), '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', webm]);
+  log(`webm ${w}px crf ${crf}: ${mb(webm).toFixed(2)} MB`);
   if (mb(webm) <= MAX_MB) break;
 }
 // the poster: the first moment the pilot was fighting, else a third of the way in
