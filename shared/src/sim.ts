@@ -106,7 +106,7 @@ const NO_INPUT: Input = emptyInput();
 // the gun you fire on the move, at someone in your face)
 export function spreadFor(p: Body, w: WeaponId, aim: boolean): number {
   const base = WEAPONS[w].spread, speed = Math.hypot(p.vx, p.vz), shotgun = WEAPONS[w].pellets > 1;
-  const scoped = w === 'heavy' || w === 'hunting';
+  const scoped = WEAPONS[w].sight === 'scope';
   let s = base * (aim ? (scoped ? 0.02 : shotgun ? 0.8 : 0.5) : 1) * (1 + speed / (shotgun ? 30 : 8));
   if (!p.grounded) s *= shotgun ? 1.25 : 2;
   return s;

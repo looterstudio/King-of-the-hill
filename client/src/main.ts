@@ -966,11 +966,15 @@ function frame(now: number) {
       setHTML($('prompt'), game.prompt);
       setText($('killCount'), String(me.kills));
       const body = game.me;
-      const scoped = input.aim && (w === 'heavy' || w === 'hunting') && me.alive;
+      const scoped = input.aim && !!w && WEAPONS[w].sight === 'scope' && me.alive;
+      // aiming down sights in first person: the gun's own sight over the middle of the screen (irons and red
+      // dots replace the crosshair; a launcher's ring sits around it and hides nothing)
+      const sight = me.alive && w && !scoped && game.aimK > 0.7 ? WEAPONS[w].sight : null, overlay = sight === 'iron' || sight === 'dot' || sight === 'ring';
+      $('sight').className = `sight ${overlay ? sight : 'hidden'}`;
       const tank = body?.ride === 5 && !body.seat; // a tank's gunner sight: a steady crosshair (the cannon has no spread)
       const spread = tank ? 0.006 : body && w ? spreadFor(body, w, input.aim) : 0.02;
       $('crosshair').style.setProperty('--s', `${Math.round(6 + spread * 900)}px`);
-      $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
+      $('crosshair').style.visibility = me.alive && !scoped && sight !== 'iron' && sight !== 'dot' ? 'visible' : 'hidden';
       $('scope').classList.toggle('hidden', !scoped);
       if (body?.gliding && me.alive) tipOnce('glide', 'gliding · look down to dive, look up to float · land anywhere', 5000, 5);
     }

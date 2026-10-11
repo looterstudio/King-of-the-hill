@@ -84,30 +84,35 @@ export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'le
 
 export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy' | 'rocket' | 'stinger' | 'guided' | 'blade' | 'wand';
 export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy', 'rocket', 'stinger', 'guided', 'blade', 'wand'];
+// aiming down sights, by kind of gun: iron sights (a notch and a post), a red dot in a little frame, a
+// real scope (snipers only: the screen goes dark around the lens), a launcher's open ring that never
+// hides the view, or none (hip-fired: the minigun, the wand, the blade). zoom is how far it magnifies
+export type Sight = 'iron' | 'dot' | 'scope' | 'ring' | 'hip';
 export interface WeaponDef {
   name: string; rarity: Rarity; dmg: number; cd: number; range: number; pellets: number; spread: number;
   mag: number; reload: number; zoom: number; auto: boolean; burst?: number; spinUp?: number; headMult?: number;
+  sight: Sight; // what aiming down sights (right click) shows: see SIGHTS
   proj?: 'rocket' | 'missile' | 'guided' | 'spell'; // fires a projectile instead of a bullet
   melee?: { reach: number; arc: number; block: number }; // swung, not fired: everyone in the arc in front of you (no ammo)
 }
 // a burst gun fires its rounds this far apart (3 ticks: 0.1 s), then waits its cd before the next burst
 export const BURST_GAP = 0.075;
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
-  pistol: { name: 'Pistol', rarity: 'common', dmg: 16, cd: 0.25, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.2, auto: false },
-  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.25, auto: true },
-  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 12, cd: 0.6, range: 24, pellets: 9, spread: 0.06, mag: 8, reload: 2.6, zoom: 1.1, auto: false },
-  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 15, cd: 0.9, range: 28, pellets: 10, spread: 0.048, mag: 5, reload: 2.8, zoom: 1.1, auto: false },
-  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.6, auto: true },
-  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.7, auto: false, burst: 3 },
-  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, auto: false, headMult: 2 },
-  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.2, auto: true, spinUp: 0.7 },
-  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.75, auto: true },
-  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 150, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
-  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.4, auto: false, proj: 'rocket' },
-  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.8, auto: false, proj: 'missile' },
-  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 120, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.4, auto: false, proj: 'guided' },
-  blade: { name: 'Plasma Blade', rarity: 'epic', dmg: 40, cd: 0.42, range: 3.6, pellets: 1, spread: 0, mag: 1, reload: 0, zoom: 1, auto: true, melee: { reach: 3.4, arc: 0.8, block: 75 } },
-  wand: { name: 'Magic Wand', rarity: 'rare', dmg: 30, cd: 0.55, range: 220, pellets: 1, spread: 0.006, mag: 6, reload: 2.4, zoom: 1.3, auto: false, proj: 'spell' },
+  pistol: { name: 'Pistol', rarity: 'common', dmg: 16, cd: 0.25, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.15, sight: 'iron', auto: false },
+  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.2, sight: 'iron', auto: true },
+  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 12, cd: 0.6, range: 24, pellets: 9, spread: 0.06, mag: 8, reload: 2.6, zoom: 1.08, sight: 'iron', auto: false },
+  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 15, cd: 0.9, range: 28, pellets: 10, spread: 0.048, mag: 5, reload: 2.8, zoom: 1.08, sight: 'iron', auto: false },
+  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.35, sight: 'dot', auto: true },
+  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.45, sight: 'dot', auto: false, burst: 3 },
+  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, sight: 'scope', auto: false, headMult: 2 },
+  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.05, sight: 'hip', auto: true, spinUp: 0.7 },
+  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.45, sight: 'dot', auto: true },
+  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 150, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, sight: 'scope', auto: false },
+  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.12, sight: 'ring', auto: false, proj: 'rocket' },
+  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.15, sight: 'ring', auto: false, proj: 'missile' },
+  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 120, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.12, sight: 'ring', auto: false, proj: 'guided' },
+  blade: { name: 'Plasma Blade', rarity: 'epic', dmg: 40, cd: 0.42, range: 3.6, pellets: 1, spread: 0, mag: 1, reload: 0, zoom: 1, sight: 'hip', auto: true, melee: { reach: 3.4, arc: 0.8, block: 75 } },
+  wand: { name: 'Magic Wand', rarity: 'rare', dmg: 30, cd: 0.55, range: 220, pellets: 1, spread: 0.006, mag: 6, reload: 2.4, zoom: 1.15, sight: 'hip', auto: false, proj: 'spell' },
 };
 // rockets fly straight and blow up on whatever they touch; Stinger missiles lock onto the nearest
 // helicopter or plane in front of you and chase it

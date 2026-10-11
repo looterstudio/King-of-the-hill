@@ -12,6 +12,7 @@ import { tankAim, tankEye } from '../../shared/src/vehicles.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
 import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
+import { gunPose, ViewArms } from './viewarms.ts';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const DT = 1 / TICK_HZ;
@@ -91,6 +92,10 @@ export class Game3D {
   private burstLocal = 0; private burstGap = 0;           // our own burst rifle: rounds still to come, and when
   tankCd = 0; private tankMgCd = 0; private turretKick = 0; // driving a tank: the cannon's reload (for the HUD), the machine gun's
   private gunKick = 0;
+  private arms: ViewArms | null = null; // your hands on the gun, first person
+  private adsK = 0;                      // aiming down sights, eased in and out (0 hip, 1 aimed)
+  get aimK() { return this.tpNow ? 0 : this.adsK; } // the sight to draw over the screen (first person only)
+  private swapW: WeaponId | null = null; private swapT = 0; // a new gun comes up from below
   // the island's boxes as one instanced mesh, one instance per world box (same index), with room for
   // everything a match can break off or build; dead boxes are scaled to nothing
   private boxMesh: THREE.InstancedMesh | null = null;
@@ -505,6 +510,7 @@ export class Game3D {
     const axe = new THREE.Group(); axe.add(tilt);
     axe.scale.setScalar(0.55); axe.position.set(0.36, -0.36, -0.5); axe.visible = false;
     this.ink.viewScene.add(axe); this.axeView = axe;
+    this.arms = new ViewArms(this.ink, this.ink.viewScene);
     // where a block would go: a wire cube, shown while the axe is out
     this.ghost = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02)), new THREE.LineBasicMaterial({ color: 0x2f7fd6, transparent: true, opacity: 0.9, depthTest: false }));
     this.ghost.visible = false;
@@ -688,7 +694,7 @@ export class Game3D {
       slot = filled[(at + (slot === -1 ? 1 : -1) + n) % n] + 1;
     }
     if (c.jump && (this.pred.grounded || this.pred.airJumps > 0)) sfx.jump();
-    const held = this.weapon, tp = this.thirdPerson && !this.pred.ride && !(c.aim && (held === 'heavy' || held === 'hunting')); // a sniper scope is first person
+    const held = this.weapon, tp = this.thirdPerson && !this.pred.ride && !(c.aim && !!held && WEAPONS[held].sight === 'scope'); // a sniper scope is first person
     const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump, sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold, tp };
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
@@ -983,7 +989,7 @@ export class Game3D {
         const v = this.vehiclesNow.find((x) => x[0] === me.rideV);
         if (v) pos.set(v[2], v[3], v[4]);
       }
-      const held = this.weapon, scoped = look.aim && (held === 'heavy' || held === 'hunting');
+      const held = this.weapon, scoped = look.aim && !!held && WEAPONS[held].sight === 'scope';
       this.tpNow = this.thirdPerson && !this.pred.ride && !scoped;
       this.selfAt.copy(pos);
       if (this.pred.ride) {
@@ -1197,7 +1203,7 @@ export class Game3D {
     // first-person gun: sway, bob, recoil, reload dip; hidden while scoped with a sniper, gliding or healing
     const gliding = (!!this.pred?.gliding || !!this.pred?.ride) && !!me?.alive;
     const w = this.weapon;
-    const scoped = look.aim && (w === 'heavy' || w === 'hunting');
+    const scoped = look.aim && !!w && WEAPONS[w].sight === 'scope';
     const fp = !this.tpNow; // the hands-and-gun view is first person only: over the shoulder you see your figure hold it
     for (const [id, g] of this.guns) g.visible = fp && !!me?.alive && w === id && !scoped && !gliding && !me.use && !((this.pred?.down ?? 0) > 0);
     if (this.viewChute) { this.viewChute.visible = fp && gliding && !this.pred?.ride; this.viewChute.rotation.z = Math.sin(this.time * 1.3) * 0.04; }
@@ -1253,20 +1259,28 @@ export class Game3D {
       }
     }
     const g = w ? this.guns.get(w) : null;
+    // a new gun comes up from below; aiming eases the gun up to its sight (hip guns stay where they are)
+    if (w !== this.swapW) { this.swapW = w; this.swapT = 1; }
+    this.swapT = Math.max(0, this.swapT - dt * 4);
+    this.adsK += ((look.aim && !!w && WEAPONS[w].sight !== 'hip' && !me?.reloadT ? 1 : 0) - this.adsK) * Math.min(1, dt * 16);
     if (g && me && w) {
       upgradeGun(g, me.ups[me.cur] ?? 0, this.ink.material(INK_IDS.ORANGE, true), this.ink.material(INK_IDS.DIAMOND, true)); // your stars, on the gun in your hands
       this.gunKick = Math.max(0, this.gunKick - dt * 9);
       const reload = me.reloadT > 0 ? Math.sin(Math.min(1, me.reloadT / WEAPONS[w].reload) * Math.PI) : 0;
-      const ads = look.aim ? 1 : 0;
-      g.position.set(0.2 * (1 - ads), -0.2 + ads * 0.1 - reload * 0.22 + Math.sin(this.bob) * 0.012, -0.5 + this.gunKick * 0.06 + ads * 0.08);
-      g.rotation.set(this.gunKick * 0.12 - reload * 0.6, 0, w === 'minigun' ? 0 : 0);
+      const pose = gunPose(w, (g.userData.max as number[])[1], this.adsK), swap = Math.sin(this.swapT * Math.PI / 2), steady = 1 - this.adsK * 0.75;
+      g.position.set(pose.x, pose.y - reload * 0.22 + Math.sin(this.bob) * 0.012 * steady - swap * 0.35, pose.z + this.gunKick * 0.06 * steady);
+      g.rotation.set(this.gunKick * 0.12 * steady - reload * 0.6 - swap * 0.9, pose.ry, 0);
       if (WEAPONS[w].melee) { // the blade: held up and out, a sweep from right to left on every swing
         this.slashT = Math.max(0, this.slashT - dt * 3.6);
         const k = Math.sin((1 - this.slashT) * Math.PI) * (this.slashT > 0 ? 1 : 0);
         g.position.set(0.28 - k * 0.32, -0.26 + k * 0.08, -0.55);
         g.rotation.set(0.35 - k * 0.25, 0.25 + k * 1.3, -0.5 + k * 0.9);
       }
-    }
+      if (g.visible && this.arms) {
+        this.arms.setSkin(this.seats.get(this.you)?.skin ?? this.you % SKINS.length, this.you);
+        this.arms.update(g, w, me.reloadT > 0 ? 1 - me.reloadT / WEAPONS[w].reload : 0);
+      } else this.arms?.hide();
+    } else this.arms?.hide();
 
     this.drawVehicles(dt);
     this.drawRiders(dt, riders, look);
