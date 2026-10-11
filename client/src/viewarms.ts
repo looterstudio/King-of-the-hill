@@ -27,7 +27,7 @@ const GRIPS: Record<WeaponId, { r: V3; l: V3 | null }> = {
   wand: { r: [0, 0, 0.1], l: null },
 };
 // the shoulders, off the bottom corners of the screen (camera space)
-const SHOULDER_R = new THREE.Vector3(0.36, -0.62, 0.12), SHOULDER_L = new THREE.Vector3(-0.34, -0.62, 0.06);
+const SHOULDER_R = new THREE.Vector3(0.42, -0.6, 0.15), SHOULDER_L = new THREE.Vector3(-0.42, -0.6, 0.1);
 const SCALE = 0.62; // the view guns' scale
 
 // where the gun sits: at the hip, or aimed. Irons and red dots come up to the middle of the screen with
@@ -54,14 +54,14 @@ export class ViewArms {
   }
   private arm(): Arm {
     const front = (i: number) => this.ink.material(i, true);
-    const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.075, 1), front(INK_IDS.BLUE));
-    const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.082, 0.035), front(INK_IDS.GRAPHITE));
+    const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.052, 1), front(INK_IDS.BLUE));
+    const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.058, 0.03), front(INK_IDS.GRAPHITE));
     // a mitten of a hand: palm, the fingers wrapped round the grip, a thumb on top
     const hand = new THREE.Group(), paper = front(INK_IDS.PAPER);
     const palm = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.07), paper);
     const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.03, 0.065), paper); fingers.position.set(0, -0.035, -0.012);
     const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.018, 0.05), paper); thumb.position.set(-0.03, 0.02, -0.03);
-    hand.add(palm, fingers, thumb);
+    hand.add(palm, fingers, thumb); hand.scale.setScalar(0.8);
     this.group.add(sleeve, cuff, hand);
     return { sleeve, cuff, hand };
   }
