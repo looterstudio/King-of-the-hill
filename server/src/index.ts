@@ -10,7 +10,7 @@ import { SKINS, playerNumber } from '../../shared/src/constants.ts';
 import { loginMessage, type ClientMsg, type PotView, type ProfileView, type ServerMsg } from '../../shared/src/protocol.ts';
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
-import { fromRaw, makePot } from './pot.ts';
+import { WalletPot, fromRaw, makePot } from './pot.ts';
 import { PriceFeed } from './price.ts';
 import { CANDLE_MS, Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
@@ -91,11 +91,27 @@ function serveHttp(req: IncomingMessage, res: ServerResponse) {
     if (!config.adminToken || req.headers.authorization !== `Bearer ${config.adminToken}`) return json(res, 401, { error: 'unauthorized' });
     return json(res, 200, flags);
   }
+  // team wallet pot: who the team still has to pay, and marking an hour paid once the transfer is sent
+  if (url.pathname === '/api/admin/payouts' || url.pathname === '/api/admin/paid') {
+    if (!config.adminToken || req.headers.authorization !== `Bearer ${config.adminToken}`) return json(res, 401, { error: 'unauthorized' });
+    if (!(pot instanceof WalletPot)) return json(res, 400, { error: 'POT_SOURCE is not wallet' });
+    if (url.pathname === '/api/admin/payouts') {
+      return json(res, 200, pot.unpaid().map(({ epoch, lamports }) => {
+        const rec = JSON.parse(readFileSync(join(config.dataDir, 'epochs', `${epoch}.json`), 'utf8')) as { claims: { wallet: string; lamports: string }[] };
+        return { epoch, totalSol: Number(lamports) / 1e9, pay: rec.claims.map((c) => ({ wallet: c.wallet, sol: Number(c.lamports) / 1e9 })) };
+      }));
+    }
+    const epoch = Number(url.searchParams.get('epoch')), tx = url.searchParams.get('tx') ?? '';
+    if (req.method !== 'POST' || !Number.isInteger(epoch) || !/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(tx)) return json(res, 400, { error: 'POST /api/admin/paid?epoch=N&tx=<transfer signature>' });
+    return pot.settlePaid(epoch, tx) ? json(res, 200, { ok: true, epoch, tx }) : json(res, 404, { error: 'nothing owed for that epoch' });
+  }
   const m = /^\/api\/epochs\/(\d+)$/.exec(url.pathname);
   if (m) {
     // public audit trail: anyone can recompute the root from the claims list
     const f = join(config.dataDir, 'epochs', `${Number(m[1])}.json`);
     if (!existsSync(f)) return json(res, 404, { error: 'not settled' });
+    // with the team wallet, the transfer that paid it (null until the team sends it)
+    if (pot instanceof WalletPot) return json(res, 200, { ...JSON.parse(readFileSync(f, 'utf8')), paidTx: pot.paidTx(Number(m[1])) });
     res.writeHead(200, { 'content-type': 'application/json' }); return res.end(readFileSync(f));
   }
   let path = normalize(join(staticRoot, url.pathname === '/' ? 'index.html' : url.pathname));

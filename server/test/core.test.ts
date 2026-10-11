@@ -1171,3 +1171,40 @@ test('the live pot is exactly what the vault program will accept', async () => {
     assert.throws(() => new SolanaPot({ ...cfg, configAddress: '' }), /CONFIG_ADDRESS/);
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('the team wallet pot never counts what the team still owes, and remembers what it paid', async () => {
+  const { WalletPot } = await import('../src/pot.ts');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'pr-wallet-'));
+  const cfg = { ...config, dataDir: dir, potSource: 'wallet' as const, potWallet: 'W', holdMinUsd: 0, vaultReserveLamports: 1_000_000n };
+  const SOL = 1_000_000_000n;
+  let wallet = 10n * SOL;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ json: async () => ({ result: { value: Number(wallet) } }) } as Response)) as typeof fetch;
+  try {
+    const pot = new WalletPot(cfg);
+    const inflows: bigint[] = []; pot.on('inflow', (f: { lamports: bigint }) => inflows.push(f.lamports));
+    assert.equal(pot.balance(), 0n, 'nothing before the wallet was read');
+    await pot.poll();
+    assert.equal(pot.balance(), 10n * SOL - 1_000_000n);
+    wallet += 2n * SOL; await pot.poll();
+    assert.deepEqual(inflows, [2n * SOL], 'claimed fees show up as an inflow');
+    // hour 7 settles: 9 SOL owed; the next pot is only what is left
+    pot.markPaid(7, 9n * SOL);
+    mkdirSync(join(dir, 'epochs'), { recursive: true }); writeFileSync(join(dir, 'epochs', '7.json'), JSON.stringify({ paid: (9n * SOL).toString() }));
+    assert.equal(pot.balance(), 3n * SOL - 1_000_000n);
+    assert.deepEqual(pot.unpaid(), [{ epoch: 7, lamports: 9n * SOL }]);
+    // a restart before the team pays still holds it
+    const again = new WalletPot(cfg); await again.poll();
+    assert.equal(again.balance(), 3n * SOL - 1_000_000n, 'owed survives a restart');
+    // the team sends it and marks it paid
+    wallet -= 9n * SOL; await again.poll();
+    assert.equal(again.settlePaid(7, 'sig'), true);
+    assert.equal(again.balance(), 3n * SOL - 1_000_000n, 'paid once: the transfer and the reservation do not both count');
+    assert.equal(again.settlePaid(7, 'sig'), false, 'and only once');
+    const third = new WalletPot(cfg); await third.poll();
+    assert.deepEqual(third.unpaid(), [], 'paid survives a restart');
+    assert.equal(third.paidTx(7), 'sig');
+    assert.throws(() => new WalletPot({ ...cfg, potWallet: '' }), /POT_WALLET/);
+  } finally { globalThis.fetch = realFetch; }
+});

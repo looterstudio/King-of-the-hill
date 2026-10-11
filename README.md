@@ -121,7 +121,23 @@ Measured on the production bundle, one process with 3 match workers (4 vCPU cont
 line-of-sight culling and vehicles on: **1000 bots in ten full 100-player matches (solo, duos and
 squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors.**
 
-## Launch checklist (the day the token goes live)
+## Launch with the team wallet (no vault program yet)
+
+The quick way to go live: the pot is a wallet the team holds, and the team sends each hour's prize.
+
+1. Paste the CA into `shared/src/token.ts` (`mint`), commit, redeploy the page (Vercel) and the server (`railway up`).
+2. On the server set `POT_SOURCE=wallet`, `POT_WALLET=<pot wallet address>`, `TOKEN_MINT=<CA>`, a paid
+   `SOLANA_RPC_URL` (Helius or similar), and `ADMIN_TOKEN`.
+3. Claim the pump.fun creator fees into the pot wallet as often as you like: each claim shows up in the pig.
+4. Every hour the server settles the winner and keeps that amount reserved. To pay:
+   `curl -H "authorization: Bearer $ADMIN_TOKEN" https://<server>/api/admin/payouts` lists who is owed what;
+   send it from the pot wallet, then
+   `curl -X POST -H "authorization: Bearer $ADMIN_TOKEN" "https://<server>/api/admin/paid?epoch=N&tx=<signature>"`.
+   The transfer signature goes on the public record at `/api/epochs/N`.
+
+Players trust the team to pay in this mode. The vault program below removes that trust once it is deployed.
+
+## Launch checklist with the vault program
 
 1. **Paste the contract address (CA)** into `shared/src/token.ts` (`mint`). That one line puts it in the lobby
    with copy / pump.fun / Jupiter / chart links, in the demo build, and on the server (where `TOKEN_MINT` in
@@ -164,7 +180,8 @@ squads), 3–8 ms per tick against a 33 ms budget, ~14 000 snapshots/s, 0 errors
 
 | var | default | meaning |
 | --- | --- | --- |
-| `POT_SOURCE` | `mock` | `solana` polls the real vault; `off` runs real matches with no pot (before the token launches) |
+| `POT_SOURCE` | `mock` | `solana` polls the vault program; `wallet` uses the team's wallet as the pot (prizes sent by hand); `off` runs real matches with no pot |
+| `POT_WALLET` | | `POT_SOURCE=wallet`: the address the creator fees are claimed into |
 | `SOLANA_RPC_URL` | mainnet | use a paid RPC in production |
 | `VAULT_ADDRESS` / `CONFIG_ADDRESS` | | PDAs of the vault program |
 | `TOKEN_MINT` | `shared/src/token.ts` | the game's coin (the CA); required when `HOLD_MIN_USD` > 0 |

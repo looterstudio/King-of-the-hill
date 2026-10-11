@@ -26,9 +26,10 @@ export const config = {
   allowGuests: bool(env.ALLOW_GUESTS, true),
 
   // pot
-  potSource: (env.POT_SOURCE ?? 'mock') as 'mock' | 'solana' | 'off', // off: real players, no pot until the token launches
+  potSource: (env.POT_SOURCE ?? 'mock') as 'mock' | 'solana' | 'wallet' | 'off', // wallet: the team's wallet is the pot; off: no pot yet
   rpcUrl: env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com',
   vaultAddress: env.VAULT_ADDRESS ?? '',   // vault PDA: seeds ["vault"]
+  potWallet: env.POT_WALLET ?? '',         // POT_SOURCE=wallet: the address the creator fees are claimed into
   configAddress: env.CONFIG_ADDRESS ?? '', // config PDA: seeds ["config"]
   tokenMint: env.TOKEN_MINT || TOKEN.mint,
   // to score points a wallet must hold min(HOLD_TOKENS, $HOLD_MIN_USD worth), fixed per epoch
