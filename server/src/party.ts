@@ -57,9 +57,11 @@ export class Parties {
     const p = this.byCode.get(cleanCode(code));
     if (!p) return this.out(c, 'No party with that code');
     if (this.of.get(c) === p) return this.sync(p);
-    // a reconnect: the slot this token held is yours again, full party or not
-    const back = typeof token === 'string' && token ? p.seats.find((s) => !s.c && s.token === token) : undefined;
+    // a reconnect: the slot this token held is yours again, full party or not, even when the
+    // server hasn't seen the old socket close yet (the new one often arrives first)
+    const back = typeof token === 'string' && token ? p.seats.find((s) => s.token === token) : undefined;
     if (!back && p.seats.length >= MODES[p.mode].size) return this.out(c, 'That party is full');
+    if (back?.c && back.c !== c) { this.of.delete(back.c); p.sent.delete(back); }
     if (this.of.has(c)) this.leave(c, 'left');
     c.skin = cleanSkin(skin ?? c.skin);
     if (back) Object.assign(back, { c, id: c.id, name: c.name, num: c.num, skin: c.skin, ready: false, goneAt: 0 });

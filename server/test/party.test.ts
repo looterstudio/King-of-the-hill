@@ -151,8 +151,15 @@ test('a dropped member keeps the slot for a reconnect, then loses it', () => {
   parties.handle(b2.c, { t: 'party', op: 'join', code, token });
   v = lastParty(a.sent)!.party!;
   assert.deepEqual(v.members.map((m) => [m.id, !!m.away]), [[1, false], [7, false]]);
+  // the new socket can arrive before the server sees the old one close: the token still wins
+  const b3 = fakeClient(8, 'bob');
+  parties.handle(b3.c, { t: 'party', op: 'join', code, token });
+  assert.deepEqual(lastParty(a.sent)!.party!.members.map((m) => m.id), [1, 8]);
+  assert.equal(parties.partyOf(b2.c), null, 'the stale socket is out');
+  parties.leave(b2.c, 'gone');                                 // its close arriving late changes nothing
+  assert.equal(lastParty(a.sent)!.party!.members[1].away, undefined);
   // dropped again, and this time nobody comes back
-  parties.leave(b2.c, 'gone');
+  parties.leave(b3.c, 'gone');
   advance(PARTY_GRACE_MS + 1); parties.tick();
   assert.equal(lastParty(a.sent)!.party!.members.length, 1);
   // the leader drops too: the party waits for them, then goes
