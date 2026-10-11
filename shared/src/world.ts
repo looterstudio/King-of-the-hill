@@ -493,7 +493,12 @@ export function moveBody(w: World, p: Body, inp: MoveInput, dt: number, gravity:
     p.slideT = 0;
     const dive = p.gliding ? Math.max(0, Math.min(1, (-inp.pitch - 0.3) / 0.9)) : 0;
     const speed = p.gliding ? GLIDE_SPEED + (GLIDE_DIVE_SPEED - GLIDE_SPEED) * dive : inp.sprint && inp.fwd > 0 ? sprint : walk;
-    if (p.grounded || p.gliding) { p.vx = wx * speed; p.vz = wz * speed; }
+    if (p.gliding) { // the glider flies on where you look by itself: W faster, S holds it back (straight down), A / D steer
+      const gf = inp.fwd > 0 ? 1 : inp.fwd < 0 ? 0 : 0.6;
+      let gx = -sin * gf + cos * inp.strafe, gz = -cos * gf - sin * inp.strafe;
+      const gl = Math.hypot(gx, gz); if (gl > 1) { gx /= gl; gz /= gl; }
+      p.vx = gx * speed; p.vz = gz * speed;
+    } else if (p.grounded) { p.vx = wx * speed; p.vz = wz * speed; }
     else {
       // air: steer, but never bleed off momentum from a slide jump, dash or swing
       const ax = p.vx + wx * speed * dt * 4, az = p.vz + wz * speed * dt * 4, cur = Math.hypot(p.vx, p.vz), next = Math.hypot(ax, az), cap = Math.max(cur, speed);

@@ -112,6 +112,7 @@ export type ServerMsg =
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { t: 'event'; kind: 'open'; caseId: number; by: number; golden: boolean }
   | { t: 'rtc'; from: number; data: unknown } // squad voice: WebRTC signalling relayed from a teammate
+  | { t: 'mark'; from: number; at: [number, number] | null } // a teammate's landing marker on the map (null: taken off)
   | { t: 'result'; winner: number | null; winners: number[]; points: Record<number, number>; awarded: boolean; epoch: number }; // points: what each player scored
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
@@ -124,6 +125,7 @@ export type ClientMsg =
   | { t: 'leave' }
   | { t: 'me' }                               // ask for your profile again
   | { t: 'rtc'; to: number; data: unknown }   // squad voice signalling, only ever relayed to a teammate in your match
+  | { t: 'mark'; at: [number, number] | null } // where you want to land (the map), shown to your teammates only
   | ({ t: 'in' } & Input);
 
 export const loginMessage = (nonce: string) => `Pot Royale login\nnonce: ${nonce}`;

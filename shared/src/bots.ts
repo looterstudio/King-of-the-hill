@@ -549,7 +549,7 @@ function glide(b: Bot, sim: Sim, self: PlayerState, inp: Input, safe: Pt | null)
   // out of the paper plane, glider shut: stay shut while the spot is close to under us (the fastest way
   // down), open it to cover distance (free fall drifts ~0.4 m per meter of drop, the glider 1.7)
   if (self.fall && d > h * 0.45) inp.jump = true;
-  if (d < 4) { inp.fwd = 0; inp.pitch = -1.2; return; } // straight down, diving
+  if (d < 4) { inp.fwd = -1; inp.pitch = -1.2; return; } // straight down, diving (S holds the glider back)
   // dive just enough to come down on it (no dive covers 12 m per 7 m of fall, a full dive 22 per 30), and
   // never float: a far spot isn't worth half a minute in the air
   const r = d / h, k = r >= 1.7 ? 0 : r <= 0.75 ? 1 : clamp((12 - 7 * r) / (23 * r - 10), 0, 1);

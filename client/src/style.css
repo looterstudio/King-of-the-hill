@@ -789,3 +789,16 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .rar-row b { grid-row: span 2; color: #fff; text-align: center; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; padding: 6px 4px; border: 2px solid var(--graphite); border-radius: var(--wobble); }
 .rar-row span { font-weight: 700; font-size: 14px; }
 .rar-row small { color: var(--ink-soft); font-size: 12px; }
+
+/* ---------- the drop: the plane panel, the flight map, your landing marker ---------- */
+.preview-note { margin: 6px 0 0; font-size: 13px; color: var(--ink); opacity: .8; max-width: 340px; }
+#mapPreview { cursor: crosshair; }
+.drop-hud { position: absolute; left: 0; right: 0; top: 22%; text-align: center; pointer-events: none; }
+.drop-hud .big { display: inline-block; font-size: 30px; font-weight: 900; color: var(--red, #d32336); background: rgba(255,253,245,.9); border: 3px solid var(--ink); border-radius: var(--wobble); padding: 6px 18px; animation: pop .25s ease-out; }
+.drop-hud .big kbd { font-size: 22px; }
+.drop-hud .sub { margin-top: 8px; font-size: 18px; font-weight: 800; color: var(--ink); text-shadow: 0 0 6px #fffdf5, 0 0 3px #fffdf5; }
+.drop-hud .sub b { color: var(--red, #d32336); font-size: 22px; }
+.drop-hud .alt { margin-top: 4px; font-family: var(--f-note); font-size: 26px; color: var(--ink); text-shadow: 0 0 6px #fffdf5; }
+.drop-map { position: absolute; left: 18px; top: 50%; width: 260px; height: 260px; transform: translateY(-50%); border: 2.5px solid var(--ink); border-radius: var(--wobble); background: rgba(246,242,228,.92); pointer-events: none; }
+.drop-map.open { left: 50%; width: min(560px, 80vh); height: min(560px, 80vh); transform: translate(-50%, -50%); cursor: crosshair; pointer-events: auto; z-index: 30; box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+.mark-tag { position: absolute; left: 0; top: 0; pointer-events: none; font-weight: 900; font-size: 15px; color: var(--red, #d32336); text-shadow: 0 0 4px #fffdf5, 0 0 2px #fffdf5; white-space: nowrap; }

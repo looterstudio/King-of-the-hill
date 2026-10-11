@@ -227,6 +227,7 @@
       <div id="seats" class="seats"></div>
       <div class="intro">
         <canvas id="mapPreview" width="340" height="340" aria-label="map of the island"></canvas>
+        <p id="previewNote" class="preview-note">The red line is the paper plane's flight. Click the map to mark where you want to land.</p>
         <ul class="tips">
           <li><b>Golden pencil cases</b> (★ on the map) hold the legendaries.</li>
           <li><b>The last circle</b> always closes on the King's Tower.</li>
@@ -313,6 +314,9 @@
       <div id="vStats" class="v-stats"></div>
     </div>
   </div>
+  <div id="dropHud" class="drop-hud hidden" aria-live="polite"></div>
+  <canvas id="dropMap" class="drop-map hidden" width="560" height="560" aria-label="map with the plane's flight line: click to mark where you want to land"></canvas>
+  <div id="markTag" class="mark-tag hidden"></div>
   <div id="specBar" class="spec-bar hidden"></div>
   <div id="vehHud" class="veh-hud hidden"></div>
 </section>

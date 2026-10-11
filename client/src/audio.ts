@@ -57,6 +57,25 @@ class Sfx {
     this.whirr.bp.frequency.setTargetAtTime(500 + k * 1600, t, 0.05);
     this.whirr.gain.gain.setTargetAtTime(0.025 + k * 0.05, t, 0.04);
   }
+  // wind past your ears while you fall, glide or ride the paper plane: a looped hiss, louder and brighter
+  // the faster you go (k = 0 still, 1 a dive in free fall)
+  private gust: { gain: GainNode; bp: BiquadFilterNode } | null = null;
+  wind(k: number) {
+    const c = this.ctx;
+    if (!c || !this.master || !this.noise) return;
+    if (k <= 0.001 || !this.enabled) { if (this.gust) this.gust.gain.gain.setTargetAtTime(0, c.currentTime, 0.25); return; }
+    if (!this.gust) {
+      const src = c.createBufferSource(), bp = c.createBiquadFilter(), gain = c.createGain();
+      src.buffer = this.noise; src.loop = true; bp.type = 'bandpass'; bp.Q.value = 0.7; gain.gain.value = 0;
+      src.connect(bp).connect(gain).connect(this.master); src.start();
+      this.gust = { gain, bp };
+    }
+    const t = c.currentTime;
+    this.gust.bp.frequency.setTargetAtTime(280 + k * 1100 + Math.sin(t * 1.7) * 60 * k, t, 0.15);
+    this.gust.gain.gain.setTargetAtTime(0.04 + k * 0.16, t, 0.2);
+  }
+  // the glider snapping open: a paper flap and a short rush
+  glider() { if (this.ctx && this.enabled) { this.burst(900, 1.2, 0.35, 0.22, 'bandpass'); this.burst(2600, 3, 0.12, 0.08, 'bandpass'); } }
   // full speed reached: a click as the bolt engages
   spunUp() { if (this.ctx && this.enabled) { this.burst(4200, 4, 0.18, 0.03, 'bandpass'); this.tone(900, 1400, 0.06, 0.06, 'square'); } }
   // pulling the trigger on an empty gun
