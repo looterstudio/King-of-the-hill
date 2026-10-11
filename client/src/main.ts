@@ -15,6 +15,9 @@ import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
 import { Training, bindManual, guideHTML, manualHTML, tipCardHTML } from './guide.ts';
 import { TOKEN, buyLinks } from '../../shared/src/token.ts';
+import { initLanding } from './landing.ts';
+
+initLanding(); // the landing page over the lobby, until Play
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
@@ -106,7 +109,7 @@ let flyVisible = true;
 try { new IntersectionObserver((e) => { flyVisible = e[0].isIntersecting; }).observe(flyCanvas); } catch { /* old browser: always draw */ }
 const input = new FpsInput(canvas);
 // headless test runs can't take pointer lock; #autotest pretends it was granted (demo build only)
-if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input }; }
+if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input, autopilot: () => import('./autopilot.ts') }; }
 
 type Screen = 'lobby' | 'waiting' | 'game';
 const state = {
