@@ -924,7 +924,7 @@ function frame(now: number) {
       setText($('hpNum'), String(me.hp));
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
       setText($('shNum'), String(me.shield));
-      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 75);
+      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= PLAYER_HP * 0.3);
       for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
       setText($('ammo'), def ? (def.melee ? '∞' : String(mag)) : '–'); // a blade has no ammo
       setText($('ammoMax'), def && !def.melee ? `/${def.mag}` : '');
@@ -967,7 +967,8 @@ function frame(now: number) {
       setText($('killCount'), String(me.kills));
       const body = game.me;
       const scoped = input.aim && (w === 'heavy' || w === 'hunting') && me.alive;
-      const spread = body && w ? spreadFor(body, w, input.aim) : 0.02;
+      const tank = body?.ride === 5 && !body.seat; // a tank's gunner sight: a steady crosshair (the cannon has no spread)
+      const spread = tank ? 0.006 : body && w ? spreadFor(body, w, input.aim) : 0.02;
       $('crosshair').style.setProperty('--s', `${Math.round(6 + spread * 900)}px`);
       $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
       $('scope').classList.toggle('hidden', !scoped);
@@ -1001,7 +1002,7 @@ function frame(now: number) {
       const kmh = Math.round(Math.hypot(game.me!.vx, game.me!.vy, game.me!.vz) * 3.6);
       setHTML($('vehHud'), `<div class="veh-name">${def.name}<b>${kmh}<small> km/h</small></b></div><div class="bar veh"><div style="width:${hpPct}%" class="${hpPct < 30 ? 'low' : ''}"></div></div>`
         + `<div class="veh-keys">${game.me!.seat ? '<b>passenger</b> · <kbd>LMB</kbd> shoot out of it · <kbd>G</kbd> throw · <kbd>E</kbd> hop off' : kind === 'car' || kind === 'moto' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
-          : kind === 'tank' ? '<kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · drive through walls'
+          : kind === 'tank' ? `<span class="cannon ${game.tankCd > 0 ? 'wait' : 'ready'}">${game.tankCd > 0 ? `cannon reloading ${game.tankCd.toFixed(1)}s` : 'cannon ready'}</span> · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · <kbd>RMB</kbd> machine gun · <kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn`
           : kind === 'heli' ? '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up / down · <kbd>Shift</kbd> fast · <kbd>LMB</kbd> nose gun'
           : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'}${game.me!.seat ? '' : ' · <kbd>E</kbd> get out'}</div>`);
     }

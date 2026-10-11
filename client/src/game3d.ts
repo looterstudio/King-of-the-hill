@@ -4,10 +4,11 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, BURST_GAP, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { AXE, BUILD, BURST_GAP, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TANK, TANK_MG, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
 import { OTHER_ALIVE, OTHER_AXE, OTHER_DOWN, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
+import { tankAim, tankEye } from '../../shared/src/vehicles.ts';
 import { INK_IDS, InkRenderer } from './ink.ts';
 import { buildPickaxe, buildCase, buildFigure, poseCorpse, buildFire, buildGun, buildItem, buildNukeMarker, buildPad, buildSmoke, buildSupply, buildVehicle, disposeTree, intern, poseFigure, poseRider, SEATS, upgradeGun, type Figure, type VehicleModel } from './models.ts';
 import { sfx } from './audio.ts';
@@ -88,6 +89,7 @@ export class Game3D {
   private booms: Boom[] = [];
   private flashes: { m: THREE.Mesh; t: number }[] = []; // muzzle flashes: a star of orange ink for a few frames
   private burstLocal = 0; private burstGap = 0;           // our own burst rifle: rounds still to come, and when
+  tankCd = 0; private tankMgCd = 0; private turretKick = 0; // driving a tank: the cannon's reload (for the HUD), the machine gun's
   private gunKick = 0;
   // the island's boxes as one instanced mesh, one instance per world box (same index), with room for
   // everything a match can break off or build; dead boxes are scaled to nothing
@@ -118,6 +120,7 @@ export class Game3D {
     if (this.damaged.size > 400) this.damaged.delete(this.damaged.keys().next().value!);
   }
   private lookYaw = 0;
+  private lookPitch = 0;
   private gableMesh: THREE.InstancedMesh | null = null;
   caption = ''; // the lobby flyover: the place on screen
   private bob = 0;
@@ -708,6 +711,22 @@ export class Game3D {
     sfx.spin(spinUp && ready ? this.spinLocal / spinUp : 0); // quiet while reloading or healing
     if (c.fire && !this.fireHeld && w && mag === 0 && this.self.reloadT === 0) sfx.dry(); // click: empty (the sim starts the reload)
     this.fireHeld = c.fire;
+    // driving a tank: the cannon (left click) and the machine gun (right click) fire at the crosshair, as in
+    // the sim (tankAim); shown and heard now, the shell itself comes in the next snapshots
+    this.tankCd = Math.max(0, this.tankCd - DT); this.tankMgCd = Math.max(0, this.tankMgCd - DT);
+    if (this.pred.ride === 5 && !this.pred.seat && this.pred.down === 0) {
+      const fire = c.fire && this.tankCd === 0, mg = c.aim && this.tankMgCd === 0;
+      if (fire || mg) {
+        const a = tankAim(this.world, this.pred.x, this.pred.y, this.pred.z, c.yaw, c.pitch, this.pred.spd);
+        if (fire) { this.tankCd = TANK.cd; this.turretKick = 1; this.kick(1.4); sfx.shot('rocket'); this.flash(a.mx + a.dx * 0.3, a.my + a.dy * 0.3, a.mz + a.dz * 0.3, 0.9); }
+        if (mg) {
+          this.tankMgCd = TANK_MG.cd; sfx.shot('minigun');
+          const t = this.world.raycast(a.mx, a.my + 0.35, a.mz, a.dx, a.dy, a.dz, TANK_MG.range);
+          this.tracers.push({ start: new THREE.Vector3(a.mx, a.my + 0.35, a.mz), end: new THREE.Vector3(a.mx + a.dx * t, a.my + 0.35 + a.dy * t, a.mz + a.dz * t), life: 0.07, mine: true });
+          this.flash(a.mx, a.my + 0.35, a.mz, 0.35);
+        }
+      }
+    }
     // a burst rifle fires its rounds one after another like the sim does (BURST_GAP apart), each with its
     // own bang, kick, tracer and flash; it used to be one bang and one tracer per trigger pull
     this.burstGap = Math.max(0, this.burstGap - DT);
@@ -888,6 +907,14 @@ export class Game3D {
         else if (s.name === 'turret' && v[8]) { // the driver's aim, relative to the hull
           const aim = v[8] === this.you ? this.lookYaw : this.infoOf(v[8])?.[4];
           if (aim !== undefined) { let d = aim - v[5]; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; s.rotation.y += (d - s.rotation.y) * Math.min(1, dt * 8); }
+          // the barrel (the turret's long box) follows the aim's pitch and kicks back when the cannon fires
+          const barrel = (s.userData.barrel ??= s.children.find((c) => (((c as THREE.Mesh).geometry as THREE.BoxGeometry | undefined)?.parameters?.depth ?? 0) > 3)) as THREE.Object3D | undefined;
+          const pitch = v[8] === this.you ? this.lookPitch : this.infoOf(v[8])?.[5];
+          if (barrel && pitch !== undefined) {
+            barrel.userData.z0 ??= barrel.position.z;
+            barrel.rotation.x += (Math.max(-0.15, Math.min(0.45, pitch + 0.12)) - barrel.rotation.x) * Math.min(1, dt * 8);
+            barrel.position.z = barrel.userData.z0 + (v[8] === this.you ? this.turretKick * 0.5 : 0);
+          }
         }
       }
     }
@@ -935,7 +962,8 @@ export class Game3D {
 
   // ---------------- frame ----------------
   frame(dt: number, look: { yaw: number; pitch: number; aim: boolean }) {
-    this.lookYaw = look.yaw;
+    this.lookYaw = look.yaw; this.lookPitch = look.pitch;
+    this.turretKick = Math.max(0, this.turretKick - dt * 3);
     if (!this.self?.alive && this.spinLocal) { this.spinLocal = 0; sfx.spin(0); }
     if (!this.world) return;
     this.time += dt;
@@ -966,6 +994,7 @@ export class Game3D {
         const eye = tgt.clone().add(back);
         if (eye.y < tgt.y - 1) eye.y = tgt.y - 1;
         if (eye.y < 0.5) eye.y = 0.5;
+        if (this.pred.ride === 5 && !this.pred.seat) { const [tx, ty, tz] = tankEye(pos.x, pos.y, pos.z, look.yaw, look.pitch, this.pred.spd); eye.set(tx, ty, tz); } // the sight the cannon aims down
         cam.position.copy(eye);
         cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
       } else if (this.tpNow) {

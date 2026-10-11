@@ -789,3 +789,8 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .rar-row b { grid-row: span 2; color: #fff; text-align: center; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; padding: 6px 4px; border: 2px solid var(--graphite); border-radius: var(--wobble); }
 .rar-row span { font-weight: 700; font-size: 14px; }
 .rar-row small { color: var(--ink-soft); font-size: 12px; }
+
+/* ---------- tank: the cannon's reload, in the vehicle panel ---------- */
+.veh-keys .cannon { font-weight: 800; padding: 0 6px; border-radius: 4px; }
+.veh-keys .cannon.ready { color: #fff; background: var(--green, #2f9e44); }
+.veh-keys .cannon.wait { color: var(--red); border: 1.5px dashed var(--red); }

@@ -54,7 +54,7 @@ export function renderArsenal(el: HTMLElement) {
   const perks = (Object.keys(PERKS) as PerkId[]).map((k) => card(picture(renderer, buildItem(k, fakeInk), 0.6, 0.5), PERKS[k].name, RARITY_CSS[PERKS[k].rarity], `×${PERKS[k].count}`, PERK_TEXT[k]));
   const veh = VEHICLE_KINDS.map((k, i) => {
     const d = VEHICLES[k];
-    return card(picture(renderer, buildVehicle(fakeInk, i, 1).root, 0.9, 0.45), d.name, '#2b2f3a', `${d.hp} hp`, `${Math.round(d.boost * 3.6)} km/h · ${d.seats + 1} seat${d.seats ? 's' : ''}${k === 'tank' ? ' · cannon · drives through walls' : k === 'heli' ? ' · nose gun' : k === 'plane' ? ' · guns + bombs' : k === 'moto' ? ' · fastest on wheels' : ' · drive-by'}`);
+    return card(picture(renderer, buildVehicle(fakeInk, i, 1).root, 0.9, 0.45), d.name, '#2b2f3a', `${d.hp} hp`, `${Math.round(d.boost * 3.6)} km/h · ${d.seats + 1} seat${d.seats ? 's' : ''}${k === 'tank' ? ' · cannon + machine gun · drives through walls' : k === 'heli' ? ' · nose gun' : k === 'plane' ? ' · guns + bombs' : k === 'moto' ? ' · fastest on wheels' : ' · drive-by'}`);
   });
   // what upgrade stars do to a gun, and what each rarity looks like on the floor
   const UPS = ['as you find it', 'a gold band', 'a second band and a scope with a diamond lens', 'the whole gun in gold'];
