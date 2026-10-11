@@ -7,7 +7,8 @@ import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { Sim, TP, aimFrom, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
-import { EPOCH_MS, KNOCK, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
+import { tankEye } from '../../shared/src/vehicles.ts';
+import { EPOCH_MS, KNOCK, PLAYER_HP, RING_PHASES, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 const SLOTS_AXE = SLOTS + 1;
 import { computePayouts } from '../src/payout.ts';
 import { buildTree, leafHash, verify } from '../src/merkle.ts';
@@ -115,6 +116,21 @@ test('the storm eventually kills anyone outside it', () => {
   assert.equal(p.alive, false);
 });
 
+// the storm keeps its pace while the field is full, and hurries once most teams are out: with 2 of 20
+// left it reaches the last circles in well under the time it takes with everyone still in
+test('the storm hurries as the field thins out', () => {
+  const lastCircle = (left: number) => {
+    const sim = arena(Array.from({ length: 20 }, (_, i) => i + 1));
+    for (let id = left + 1; id <= 20; id++) sim.players.get(id)!.alive = false;
+    while (sim.ring.phase < RING_PHASES.length - 2 && sim.t < 600) { for (const p of sim.players.values()) p.hp = PLAYER_HP; sim.step(DT, new Map()); } // nobody dies of the storm here
+    return sim.t;
+  };
+  const full = lastCircle(20), few = lastCircle(2);
+  const plan = RING_PHASES.slice(0, -2).reduce((s, p) => s + p.wait + p.shrink, 0);
+  assert.ok(Math.abs(full - plan) < 0.5, `a full field keeps the schedule (${full.toFixed(1)} s, planned ${plan} s)`);
+  assert.ok(few < full * 0.4, `2 of 20 left: ${few.toFixed(1)} s against ${full.toFixed(1)} s`);
+});
+
 test('each storm circle sits inside the previous one', () => {
   for (let seed = 1; seed < 20; seed++) {
     const sim = new Sim(seed, World.custom([]));
@@ -175,11 +191,11 @@ test('shields soak bullets first; the storm goes straight to health', () => {
 test('a shield potion takes 3 s and caps at full; damage interrupts it', () => {
   const sim = arena([1]);
   const p = sim.players.get(1)!;
-  p.items.big = 2; p.shield = 200;
+  p.items.big = 2; p.shield = SHIELD_MAX - 50;
   sim.step(DT, new Map([[1, inp({ item: 1 })]]));
   assert.equal(p.use?.item, 'big');
   for (let i = 0; i < TICK_HZ * 2; i++) sim.step(DT, new Map());
-  assert.equal(p.shield, 200, 'not done yet');
+  assert.equal(p.shield, SHIELD_MAX - 50, 'not done yet');
   for (let i = 0; i < TICK_HZ * 1.2; i++) sim.step(DT, new Map());
   assert.equal(p.shield, SHIELD_MAX);
   assert.equal(p.items.big, 1);
@@ -192,11 +208,42 @@ test('burst rifle fires three; minigun has to spin up', () => {
   for (let i = 0; i < 10; i++) sim.step(DT, new Map([[1, inp({ fire: i === 0 })]]));
   assert.equal(sim.shots.length, 3);
   sim.shots.length = 0;
+  // held down: three quick rounds, a clear pause, three more (rounds 0.1 s apart, bursts ~0.67 s apart)
+  give(p, 'burst');
+  const at: number[] = [];
+  for (let i = 0; i < 30; i++) { const n = sim.shots.length; sim.step(DT, new Map([[1, inp({ fire: true, seq: 100 + i })]])); if (sim.shots.length > n) at.push(i); }
+  assert.deepEqual(at.slice(0, 6).map((t) => t - at[0]), [0, 3, 6, 20, 23, 26]);
+  sim.shots.length = 0;
   give(p, 'minigun');
   for (let i = 0; i < Math.floor(TICK_HZ * 0.5); i++) sim.step(DT, new Map([[1, inp({ fire: true })]]));
   assert.equal(sim.shots.length, 0, 'still spinning');
   for (let i = 0; i < TICK_HZ; i++) sim.step(DT, new Map([[1, inp({ fire: true })]]));
   assert.ok(sim.shots.length > 5);
+});
+
+// 100 health + 100 shield: a pump shotgun up close is two shots on a full-shield player (one on a fresh
+// one), an assault rifle about a dozen hits
+test('time to kill: a pump shotgun up close kills in two, an assault rifle in about a dozen hits', () => {
+  for (const [w, d, hits] of [['pump', 4, 2], ['pump', 7, 2], ['ar', 15, 12]] as const) {
+    const sim = arena([1, 2]);
+    const a = sim.players.get(1)!, b = sim.players.get(2)!;
+    a.x = 0; a.z = 0; b.x = 0; b.z = -d; b.shield = SHIELD_MAX;
+    give(a, w);
+    let shots = 0;
+    for (let i = 0; i < TICK_HZ * 5 && b.alive; i++) {
+      const before = sim.shots.length;
+      sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: Math.atan2(1.1 - 1.62, d), fire: true, seq: i + 1, view: sim.tick + 1 })]]));
+      if (sim.shots.length > before) shots++;
+    }
+    assert.equal(b.alive, false, `${w} at ${d} m: still standing after ${shots} shots`);
+    assert.ok(shots <= hits, `${w} at ${d} m took ${shots} shots`);
+  }
+  const sim = arena([1, 2]); // no shield: one pump blast to the chest is the end
+  const a = sim.players.get(1)!, b = sim.players.get(2)!;
+  a.x = 0; a.z = 0; b.x = 0; b.z = -3;
+  give(a, 'pump');
+  sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: Math.atan2(1.1 - 1.62, 3), fire: true, seq: 1, view: sim.tick + 1 })]]));
+  assert.equal(b.alive, false, `one blast left ${b.hp} health`);
 });
 
 test('a heavy sniper headshot one-shots full shield and health; a body shot does not', () => {
@@ -1078,6 +1125,31 @@ test('a motorbike rides fast; a tank drives through a wall and its cannon blows 
   for (let i = 0; i < TICK_HZ * 3 && s2.vehicles.some((v) => v.id === 951); i++) s2.step(DT, new Map([[1, inp({ fire: true, yaw: Math.PI, pitch: -0.03, seq: 500 + i })]]));
   const c = s2.vehicles.find((v) => v.id === 951);
   assert.ok(!c || c.hp < 500, 'the shell hit the car');
+});
+
+// the tank fires at the crosshair: the chase camera's ray (tankEye) picks the point, cannon and machine gun
+// both go there (fired parallel to the camera from the hull, shots passed under the crosshair)
+test('the tank cannon and machine gun hit what is under the crosshair', () => {
+  for (const gun of ['fire', 'aim'] as const) {
+    const sim = garage('car');
+    sim.vehicles = [];
+    const tb = { ...newBody(0, 0, 0), ride: 5, grounded: true };
+    sim.vehicles.push({ id: 950, kind: 'tank', hp: 2200, driver: 0, last: 0, body: tb, gunCd: 0, bombCd: 0, seats: [] });
+    sim.spawn([2]);
+    const t = sim.players.get(1)!, foe = sim.players.get(2)!;
+    t.x = 0; t.z = 0; t.y = 0;
+    Object.assign(foe, { x: 12, y: 0, z: -45, gliding: false, grounded: true, hp: PLAYER_HP, shield: 0 });
+    tickN(sim, 1, { interact: true });
+    assert.equal(t.ride, 5);
+    // put the crosshair on the foe's chest: the camera's eye moves with the aim, so settle it
+    let yaw = 0, pitch = 0;
+    for (let k = 0; k < 8; k++) {
+      const [ex, ey, ez] = tankEye(t.x, t.y, t.z, yaw, pitch, t.spd), dx = foe.x - ex, dy = foe.y + 1.1 - ey, dz = foe.z - ez;
+      yaw = Math.atan2(-dx, -dz); pitch = Math.atan2(dy, Math.hypot(dx, dz));
+    }
+    for (let i = 0; i < TICK_HZ * 2 && foe.hp === PLAYER_HP; i++) sim.step(DT, new Map([[1, inp({ [gun]: true, yaw, pitch, seq: 10 + i })], [2, inp({ seq: 10 + i })]]));
+    assert.ok(foe.hp < PLAYER_HP || !foe.alive, `${gun === 'fire' ? 'the cannon' : 'the machine gun'} missed what the crosshair was on`);
+  }
 });
 
 test('loose pieces fall: blow out the bottom of a wall and the top comes down; a held piece stays', () => {

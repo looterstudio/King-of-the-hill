@@ -48,13 +48,13 @@ export function renderArsenal(el: HTMLElement) {
     return card(picture(renderer, buildGun(id, gm), -Math.PI / 2 + 0.25), d.name, RARITY_CSS[d.rarity], d.rarity,
       d.melee ? `${d.dmg} a slash · ${rps.toFixed(1)}/s · no ammo · cuts everyone in front of you, and walls`
         : d.proj === 'spell' ? `${d.dmg} dmg + throws them back · ${rps.toFixed(1)}/s · ${d.mag} charges`
-        : `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : d.proj === 'guided' ? ' · steer it with your crosshair' : ''}${id === 'heavy' ? ' · headshot kills' : ''}`);
+        : `${d.proj ? `${d.dmg} blast` : `${d.pellets > 1 ? `${d.pellets}×${d.dmg}` : d.dmg} dmg`} · ${rps.toFixed(1)}/s · mag ${d.mag}${d.proj === 'missile' ? ' · locks on aircraft' : d.proj === 'guided' ? ' · steer it with your crosshair' : ''}${id === 'heavy' ? ' · headshot kills' : id === 'pump' ? ' · two blasts up close' : ''}`);
   });
   guns.push(card(picture(renderer, buildPickaxe(mats[6], mats[8]), -Math.PI / 2 + 0.25), 'Diamond Pickaxe', '#0fa3c4', 'always yours', 'X · left click breaks walls, cars, people (gives ▦) · right click builds a block'));
   const perks = (Object.keys(PERKS) as PerkId[]).map((k) => card(picture(renderer, buildItem(k, fakeInk), 0.6, 0.5), PERKS[k].name, RARITY_CSS[PERKS[k].rarity], `×${PERKS[k].count}`, PERK_TEXT[k]));
   const veh = VEHICLE_KINDS.map((k, i) => {
     const d = VEHICLES[k];
-    return card(picture(renderer, buildVehicle(fakeInk, i, 1).root, 0.9, 0.45), d.name, '#2b2f3a', `${d.hp} hp`, `${Math.round(d.boost * 3.6)} km/h · ${d.seats + 1} seat${d.seats ? 's' : ''}${k === 'tank' ? ' · cannon · drives through walls' : k === 'heli' ? ' · nose gun' : k === 'plane' ? ' · guns + bombs' : k === 'moto' ? ' · fastest on wheels' : ' · drive-by'}`);
+    return card(picture(renderer, buildVehicle(fakeInk, i, 1).root, 0.9, 0.45), d.name, '#2b2f3a', `${d.hp} hp`, `${Math.round(d.boost * 3.6)} km/h · ${d.seats + 1} seat${d.seats ? 's' : ''}${k === 'tank' ? ' · cannon + machine gun · drives through walls' : k === 'heli' ? ' · nose gun' : k === 'plane' ? ' · guns + bombs' : k === 'moto' ? ' · fastest on wheels' : ' · drive-by'}`);
   });
   // what upgrade stars do to a gun, and what each rarity looks like on the floor
   const UPS = ['as you find it', 'a gold band', 'a second band and a scope with a diamond lens', 'the whole gun in gold'];

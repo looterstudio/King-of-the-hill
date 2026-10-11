@@ -1,7 +1,7 @@
 // The offline demo's bots: a pure function of the bot's memory and the simulation (no DOM), so the
 // same brain runs in the browser and in headless tests (server/test/bots.test.ts); the server fills its rooms with them too.
-import { AXE, BUILD, EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, SLOTS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
-import { emptyInput, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
+import { AXE, BUILD, EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
+import { emptyInput, pelletFall, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
 import { rayBox, type World } from './world.ts';
 
 const DT = 1 / TICK_HZ;
@@ -278,7 +278,7 @@ function gunValue(w: WeaponId, ups: number, mag: number | null, d: number, skill
   const scoped = w === 'heavy' || w === 'hunting', aim = d > 30;
   const spread = def.spread * (aim ? (scoped ? 0.02 : 0.5) : 1) * 1.3 + (1 - skill) * 0.03;
   const hit = def.proj ? 0.55 : Math.min(1, 0.4 / Math.max(0.01, d * spread));
-  const fall = def.pellets > 1 ? clamp(1.2 - d / def.range, 0.35, 1) : 1;
+  const fall = def.pellets > 1 ? pelletFall(d, def.range) : 1;
   const burst = def.burst ?? 1, shot = def.dmg * (1 + UPGRADE.perLevel * ups) * def.pellets * hit * fall * burst;
   const cycle = def.burst ? def.cd + 0.15 : def.cd, m = def.mag / burst;
   const sustained = (shot * m) / (m * cycle + def.reload);
@@ -426,7 +426,7 @@ export function botInput(b: Bot, sim: Sim): Input {
 
   // ---- shot at in the open and not winning it: wall up between us (an instant fort, if we carry one) ----
   if (!goal && !moved && fighting && tgt && tgt.down === 0 && t - b.hitT < 0.4 && td > 7 && t - b.jobT > 6 && self.grounded && !self.use && !inStorm && !perched
-    && (life < 160 || life + 40 < foe) && R() < 0.3 + b.skill * 0.6) {
+    && (life < (PLAYER_HP + SHIELD_MAX) * 0.32 || life + (PLAYER_HP + SHIELD_MAX) * 0.08 < foe) && R() < 0.3 + b.skill * 0.6) {
     b.jobT = t;
     if (self.perk?.kind === 'fort') { inp.perk = true; b.cover = { x: self.x, z: self.z, until: t + 6, at: true }; b.mode = 'fort'; moved = true; }
     else if (self.mats >= BUILD.cost * 4 && (b.job = wallJob(w, self, b.groundY, tgt, t))) { b.cover = { x: self.x, z: self.z, until: t + 7, at: true }; moved = build(b, sim, self, inp); }
@@ -439,7 +439,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   }
 
   // ---- hurt, and the fight isn't going our way: break off to somewhere they can't see us, heal there ----
-  if (!goal && !moved && fighting && tgt && !b.cover && life < 140 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && foe > life && spend(coverBudget, sim, 2)) {
+  if (!goal && !moved && fighting && tgt && !b.cover && life < (PLAYER_HP + SHIELD_MAX) * 0.28 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && foe > life && spend(coverBudget, sim, 2)) {
     b.mode = 'retreat';
     const c = coverFrom(w, self, b.groundY, tgt, R() * Math.PI * 2);
     if (c) b.cover = { x: c.x, z: c.z, until: t + 1.5 + Math.hypot(c.x - self.x, c.z - self.z) / 6 + 5, at: false }; // time to get there, and to heal
@@ -461,7 +461,7 @@ export function botInput(b: Bot, sim: Sim): Input {
 
   // ---- behind cover: heal up, reload, look where they were (they come to us) ----
   if (!goal && !moved && b.cover) {
-    const healthy = (self.hp >= 200 || self.items.med === 0) && (self.shield >= 150 || self.items.big + self.items.mini === 0);
+    const healthy = (self.hp >= PLAYER_HP * 0.8 || self.items.med === 0) && (self.shield >= SHIELD_MAX * 0.6 || self.items.big + self.items.mini === 0);
     if (healthy && !self.use && self.reloadT === 0) b.cover = null;
     else { b.mode = 'cover'; moved = true; if (b.seen) aimAt(inp, self, b.seen.x, b.seen.y + 1.3, b.seen.z); }
   }
@@ -469,7 +469,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   // ---- lost sight of who we were trading shots with: after them when they're nearly down (or we're well
   // ahead), else hold the angle a moment (a fight used to flip to looting and back every time they ducked) ----
   if (!goal && !moved && tgt && !b.los && b.seen && t - b.engT < 3.5 && !rotate) {
-    if (Math.abs(b.seen.y - b.groundY) < 2.5 && life > 80 && (foe < 110 || tgt.down > 0 || life > foe + 70)) { b.mode = 'push'; goal = { x: b.seen.x, z: b.seen.z, y: b.seen.y, sprint: true }; }
+    if (Math.abs(b.seen.y - b.groundY) < 2.5 && life > (PLAYER_HP + SHIELD_MAX) * 0.16 && (foe < (PLAYER_HP + SHIELD_MAX) * 0.22 || tgt.down > 0 || life > foe + (PLAYER_HP + SHIELD_MAX) * 0.14)) { b.mode = 'push'; goal = { x: b.seen.x, z: b.seen.z, y: b.seen.y, sprint: true }; }
     else { b.mode = 'hold'; moved = true; aimAt(inp, self, b.seen.x, b.seen.y + 1.3, b.seen.z); }
   }
 
@@ -564,8 +564,8 @@ export function botInput(b: Bot, sim: Sim): Input {
   // ---- healing: out of sight and not shot at for a moment (damage cancels it), never on the way to cover ----
   const exposed = b.los || t - b.hitT < 1.2;
   if (!self.use && !inStorm && !exposed && self.reloadT === 0 && !(rotate && waitLeft < 4) && !b.job && !b.chop && !inp.hold && !inp.interact && b.mode !== 'retreat' && b.mode !== 'push') {
-    if (self.shield < 200 && (self.items.big > 0 || (self.items.mini > 0 && self.shield < (ITEMS.mini.shieldCap ?? 125)))) inp.item = 1;
-    else if (self.hp < 190 && self.items.med > 0) inp.item = 2;
+    if (self.shield < SHIELD_MAX * 0.8 && (self.items.big > 0 || (self.items.mini > 0 && self.shield < (ITEMS.mini.shieldCap ?? 50)))) inp.item = 1;
+    else if (self.hp < PLAYER_HP * 0.76 && self.items.med > 0) inp.item = 2;
     else if (self.perk?.kind === 'kit' && gun && !self.axe && self.ups[self.cur] < UPGRADE.max && !alert) inp.perk = true; // a quiet moment: the upgrade kit on the gun in hand
   }
 
@@ -802,7 +802,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   inp.pitch = Math.atan2(ty, Math.hypot(ax - self.x, az - self.z)) + b.aimErr * 0.5;
   // they're nearly down (or knocked, or reloading while we're fine): close in and finish it
   const life = self.hp + self.shield, foe = tgt.hp + tgt.shield;
-  const push = life > 80 && (foe < 100 || tgt.down > 0 || (tgt.reloadT > 0 && life > 150));
+  const push = life > (PLAYER_HP + SHIELD_MAX) * 0.16 && (foe < (PLAYER_HP + SHIELD_MAX) * 0.2 || tgt.down > 0 || (tgt.reloadT > 0 && life > (PLAYER_HP + SHIELD_MAX) * 0.3));
   if (push) b.mode = 'push';
   inp.aim = d > 30 && !push;
   // hold fire: not seen a moment ago, out of range, a teammate in the way, our own blast, or still reacting
@@ -837,7 +837,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
     const k = self.perk.kind;
     if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && R() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
     if (k === 'kit' && cur && self.ups[self.cur] < UPGRADE.max) inp.perk = true;
-    if (k === 'smoke' && self.hp < 110 && R() < 0.08) inp.perk = true;
+    if (k === 'smoke' && self.hp < PLAYER_HP * 0.44 && R() < 0.08) inp.perk = true;
     if (k === 'nuke' && d > 40 && R() < 0.05) inp.perk = true;
   }
 }

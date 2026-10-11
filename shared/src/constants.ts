@@ -43,31 +43,40 @@ export const WALK_SPEED = 6.2;
 export const SPRINT_SPEED = 8.6;
 export const JUMP_V = 7.6;
 export const STEP_H = 0.55;             // stairs and curbs are climbed without jumping
-// 250 health + 250 shield: guns keep their damage, so fights last ~2.5x longer than at 100/100
-// (an assault rifle needs a full mag, about 3 s); explosives, fire, rams and the storm scale up
-// with health so they keep their bite
-export const PLAYER_HP = 250;
-export const LIFE_SCALE = 2.5;
+// 100 health + 100 shield: an assault rifle takes a full-shield player down in about 1.2 s, a pump
+// shotgun in two shots up close, a Heavy Sniper headshot in one. (It was 250 + 250 and fights
+// dragged on: playtesters called the shotgun useless.) Blast damage below is what a player takes;
+// walls take BLAST_WORLD times as much, so buildings break exactly as they did at 250
+export const PLAYER_HP = 100;
+export const BLAST_WORLD = 2.5;
 export const HEADSHOT_MULT = 1.8;
 // duos and squads: at 0 health you are knocked, not out, while a teammate is still standing.
 // You crawl, bleed out in 30 s, and a teammate holding E next to you for 5 s brings you back.
 // If nobody on your team is left standing, everyone knocked is out.
-export const KNOCK = { hp: 100, bleed: 30, revive: 5, reach: 2.2, reviveHp: 75, crawl: 1.9, eye: 0.55 };
+export const KNOCK = { hp: 40, bleed: 30, revive: 5, reach: 2.2, reviveHp: 30, crawl: 1.9, eye: 0.55 };
 export const REWIND_MAX_TICKS = 9;      // lag compensation looks back at most 300 ms
 export const VIEW_RANGE = 170;          // players farther than this are not sent to you
 
-// battle royale storm: each phase waits, then shrinks toward a new circle inside the current one
+// battle royale storm: each phase waits, then shrinks toward a new circle inside the current one.
+// It moves early and never stops for long: the first close starts while the last players are still
+// gliding, and the circle keeps coming in every half minute, so fights are pushed together and a
+// match is decided in the last circles (about 4 minutes in), not by whoever lands next to whom.
+// dps applies once the phase's circle is reached; the storm hits health only.
 export interface RingPhase { wait: number; shrink: number; radius: number; dps: number }
 export const RING_START_R = 580;        // covers the corners of the island
 export const RING_PHASES: RingPhase[] = [
-  { wait: 60, shrink: 70, radius: 330, dps: 5 },
-  { wait: 45, shrink: 55, radius: 190, dps: 10 },
-  { wait: 35, shrink: 40, radius: 105, dps: 18 },
-  { wait: 25, shrink: 30, radius: 55, dps: 28 },
-  { wait: 20, shrink: 25, radius: 25, dps: 40 },
-  { wait: 12, shrink: 18, radius: 0, dps: 70 },
+  { wait: 30, shrink: 40, radius: 280, dps: 2 },
+  { wait: 15, shrink: 30, radius: 170, dps: 3 },
+  { wait: 12, shrink: 25, radius: 100, dps: 5 },
+  { wait: 10, shrink: 22, radius: 55, dps: 8 },
+  { wait: 10, shrink: 18, radius: 28, dps: 12 },
+  { wait: 8, shrink: 15, radius: 12, dps: 18 },
+  { wait: 6, shrink: 15, radius: 0, dps: 30 },
 ];
-export const RING_DPS_START = 2.5;
+export const RING_DPS_START = 1;
+// the storm hurries as the field thins out: its clock runs at normal pace while half the teams are
+// still in, then faster and faster, up to max times as fast with a tenth of them left
+export const RING_HURRY = { from: 0.6, to: 0.1, max: 4 };
 
 // ---- loot ----
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
@@ -75,28 +84,35 @@ export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'le
 
 export type WeaponId = 'pistol' | 'smg' | 'tac' | 'pump' | 'ar' | 'burst' | 'hunting' | 'minigun' | 'scar' | 'heavy' | 'rocket' | 'stinger' | 'guided' | 'blade' | 'wand';
 export const WEAPON_IDS: WeaponId[] = ['pistol', 'smg', 'tac', 'pump', 'ar', 'burst', 'hunting', 'minigun', 'scar', 'heavy', 'rocket', 'stinger', 'guided', 'blade', 'wand'];
+// aiming down sights, by kind of gun: iron sights (a notch and a post), a red dot in a little frame, a
+// real scope (snipers only: the screen goes dark around the lens), a launcher's open ring that never
+// hides the view, or none (hip-fired: the minigun, the wand, the blade). zoom is how far it magnifies
+export type Sight = 'iron' | 'dot' | 'scope' | 'ring' | 'hip';
 export interface WeaponDef {
   name: string; rarity: Rarity; dmg: number; cd: number; range: number; pellets: number; spread: number;
   mag: number; reload: number; zoom: number; auto: boolean; burst?: number; spinUp?: number; headMult?: number;
+  sight: Sight; // what aiming down sights (right click) shows: see SIGHTS
   proj?: 'rocket' | 'missile' | 'guided' | 'spell'; // fires a projectile instead of a bullet
   melee?: { reach: number; arc: number; block: number }; // swung, not fired: everyone in the arc in front of you (no ammo)
 }
+// a burst gun fires its rounds this far apart (3 ticks: 0.1 s), then waits its cd before the next burst
+export const BURST_GAP = 0.075;
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
-  pistol: { name: 'Pistol', rarity: 'common', dmg: 22, cd: 0.22, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.2, auto: false },
-  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.25, auto: true },
-  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 9, cd: 0.6, range: 22, pellets: 8, spread: 0.085, mag: 8, reload: 2.6, zoom: 1.1, auto: false },
-  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 12, cd: 1.0, range: 26, pellets: 9, spread: 0.065, mag: 5, reload: 2.8, zoom: 1.1, auto: false },
-  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.6, auto: true },
-  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.7, auto: false, burst: 3 },
-  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, auto: false, headMult: 2 },
-  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.2, auto: true, spinUp: 0.7 },
-  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.75, auto: true },
-  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 300, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, auto: false },
-  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 285, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.4, auto: false, proj: 'rocket' },
-  stinger: { name: 'Stinger', rarity: 'rare', dmg: 500, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.8, auto: false, proj: 'missile' },
-  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 300, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.4, auto: false, proj: 'guided' },
-  blade: { name: 'Plasma Blade', rarity: 'epic', dmg: 72, cd: 0.42, range: 3.6, pellets: 1, spread: 0, mag: 1, reload: 0, zoom: 1, auto: true, melee: { reach: 3.4, arc: 0.8, block: 75 } },
-  wand: { name: 'Magic Wand', rarity: 'rare', dmg: 46, cd: 0.55, range: 220, pellets: 1, spread: 0.006, mag: 6, reload: 2.4, zoom: 1.3, auto: false, proj: 'spell' },
+  pistol: { name: 'Pistol', rarity: 'common', dmg: 16, cd: 0.25, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.15, sight: 'iron', auto: false },
+  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.2, sight: 'iron', auto: true },
+  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 12, cd: 0.6, range: 24, pellets: 9, spread: 0.06, mag: 8, reload: 2.6, zoom: 1.08, sight: 'iron', auto: false },
+  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 15, cd: 0.9, range: 28, pellets: 10, spread: 0.048, mag: 5, reload: 2.8, zoom: 1.08, sight: 'iron', auto: false },
+  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.35, sight: 'dot', auto: true },
+  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.45, sight: 'dot', auto: false, burst: 3 },
+  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, sight: 'scope', auto: false, headMult: 2 },
+  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.05, sight: 'hip', auto: true, spinUp: 0.7 },
+  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.45, sight: 'dot', auto: true },
+  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 150, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, sight: 'scope', auto: false },
+  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.12, sight: 'ring', auto: false, proj: 'rocket' },
+  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.15, sight: 'ring', auto: false, proj: 'missile' },
+  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 120, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.12, sight: 'ring', auto: false, proj: 'guided' },
+  blade: { name: 'Plasma Blade', rarity: 'epic', dmg: 40, cd: 0.42, range: 3.6, pellets: 1, spread: 0, mag: 1, reload: 0, zoom: 1, sight: 'hip', auto: true, melee: { reach: 3.4, arc: 0.8, block: 75 } },
+  wand: { name: 'Magic Wand', rarity: 'rare', dmg: 30, cd: 0.55, range: 220, pellets: 1, spread: 0.006, mag: 6, reload: 2.4, zoom: 1.15, sight: 'hip', auto: false, proj: 'spell' },
 };
 // rockets fly straight and blow up on whatever they touch; Stinger missiles lock onto the nearest
 // helicopter or plane in front of you and chase it
@@ -108,7 +124,7 @@ export const GUIDED = { speed: 36, turn: 3.2, radius: 6.5, life: 10 };
 export const SPELL = { speed: 72, push: 19, lift: 7.5, life: 3 };
 // weapon upgrades: each level adds damage; benches upgrade once per player, kits anywhere
 export const UPGRADE = { max: 3, perLevel: 0.22, benchReach: 2.4 };
-export const MOLOTOV = { radius: 4.5, life: 7, dps: 38 };
+export const MOLOTOV = { radius: 4.5, life: 7, dps: 15 };
 export const SHOCK = { radius: 7, push: 22, fuse: 1.4 };
 // the drop: everyone starts aboard a giant paper plane crossing the island in a straight line (near the
 // middle, from a random side) and jumps out where they like (Space); at the far edge everyone left is
@@ -117,7 +133,7 @@ export const BUS = { y: 140, speed: 44, len: 2 * MAP_HALF + 120, offset: 90, exi
 export const SLOTS = 4;
 // the axe: always in your pocket (X). Swing it at walls, cars and people; broken blocks give you
 // material, right click with the axe out places a 1 m block (Minecraft style)
-export const AXE = { reach: 3.2, cd: 0.34, player: 28, vehicle: 30, block: 50 }; // wood 2 hits, brick 3, metal 6
+export const AXE = { reach: 3.2, cd: 0.34, player: 20, vehicle: 30, block: 50 }; // wood 2 hits, brick 3, metal 6
 export const BUILD = { cost: 2, maxMats: 400, reach: 6, cd: 0.16, cap: 3000, startMats: 30 };
 // destruction: block health by material, and how much material a broken block gives back
 export const MATERIAL = { wood: { hp: 70, yield: 3 }, brick: { hp: 150, yield: 5 }, metal: { hp: 270, yield: 7 } };
@@ -125,9 +141,9 @@ export const WRECK_BUDGET = 30000; // blocks a match may break off before big bo
 
 export type ItemId = 'mini' | 'big' | 'med';
 export const ITEMS: Record<ItemId, { name: string; rarity: Rarity; use: number; max: number; shield?: number; shieldCap?: number; heal?: number }> = {
-  mini: { name: 'Mini Shield', rarity: 'uncommon', use: 1.0, max: 6, shield: 60, shieldCap: 125 },
-  big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 125, shieldCap: 250 },
-  med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 250 },
+  mini: { name: 'Mini Shield', rarity: 'uncommon', use: 1.0, max: 6, shield: 25, shieldCap: 50 },
+  big: { name: 'Shield Potion', rarity: 'rare', use: 3.0, max: 3, shield: 50, shieldCap: 100 },
+  med: { name: 'Medkit', rarity: 'uncommon', use: 4.0, max: 3, heal: 100 },
 };
 export type PerkId = 'grenade' | 'molotov' | 'shock' | 'smoke' | 'launch' | 'fort' | 'kit' | 'c4' | 'nuke';
 export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number }> = {
@@ -141,17 +157,17 @@ export const PERKS: Record<PerkId, { name: string; rarity: Rarity; count: number
   c4: { name: 'C4', rarity: 'epic', count: 2 },
   nuke: { name: 'Atomic Bomb', rarity: 'legendary', count: 1 },
 };
-export const SHIELD_MAX = 250;
-export const GRENADE = { fuse: 2.2, radius: 7, dmg: 260, speed: 19 };
+export const SHIELD_MAX = 100;
+export const GRENADE = { fuse: 2.2, radius: 7, dmg: 105, speed: 19 };
 export const SMOKE = { radius: 7, life: 12 };
 export const PAD = { life: 30, launch: 24 };
 export const FORT = { life: 30, size: 2.2, height: 1.8 };
-export const NUKE = { delay: 6, radius: 26, dmg: 1000, range: 450 };
+export const NUKE = { delay: 6, radius: 26, dmg: 400, range: 450 };
 export const INTERACT_R = 2.3;
-// C4: throw it (it sticks where it lands), press again to set it off. Up to 250 damage (a full
+// C4: throw it (it sticks where it lands), press again to set it off. Up to 100 damage (a full
 // health bar), walls block it, shields soak it first: with shields up you survive your own
 // charge, without you don't.
-export const C4 = { radius: 7, dmg: 250, speed: 15, core: 2.5 };
+export const C4 = { radius: 7, dmg: 100, speed: 15, core: 2.5 };
 // supply drops: a crate on a balloon falls into the next circle every time the storm moves
 export const SUPPLY = { height: 110, fall: 7 };
 
@@ -170,11 +186,13 @@ export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number
   moto: { name: 'Motorbike', hp: 260, r: 0.75, h: 1.4, top: 30, boost: 44, accel: 24, reach: 2.4, seats: 1 },
   tank: { name: 'Tank', hp: 2200, r: 2.1, h: 2.3, top: 8, boost: 11, accel: 6, reach: 3.8, seats: 1 },
 };
-// the tank's cannon: a shell that blows up buildings; its tracks plough through walls
-export const TANK = { dmg: 340, cd: 2.4, speed: 70, radius: 6.5 };
-export const RAM = { minSpeed: 7, dmgPerMs: 10.5, cooldown: 0.6 };      // running people over
+// the tank's cannon (left click): a shell that blows up buildings; its tracks plough through walls.
+// Right click: the machine gun beside it. Both fire at the crosshair (tankAim)
+export const TANK = { dmg: 136, cd: 2.4, speed: 70, radius: 6.5 };
+export const TANK_MG = { dmg: 11, cd: 0.1, range: 160, spread: 0.02 };
+export const RAM = { minSpeed: 7, dmgPerMs: 4.2, cooldown: 0.6 };      // running people over
 export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle
-export const VEH_BOOM = { radius: 7.5, dmg: 275 };                     // a wrecked vehicle explodes
+export const VEH_BOOM = { radius: 7.5, dmg: 110 };                     // a wrecked vehicle explodes
 // an aircraft flown into something faster than minSpeed (or set down harder than land) is wrecked on the
 // spot and blows up: the fireball tears through what it hit along its path (r across, depth along it,
 // flat: the slab of floors it takes, as a share of r), every building it reaches takes struct damage (a
@@ -182,12 +200,12 @@ export const VEH_BOOM = { radius: 7.5, dmg: 275 };                     // a wrec
 // is within boom (the crew in full). All of it at full speed (at); slower is less, boosting a bit more.
 export const AIR_CRASH = {
   minSpeed: 16, land: 24,
-  plane: { at: 46, r: 12, depth: 20, flat: 0.45, struct: 14000, dmg: 420, boom: 11 },
-  heli: { at: 25, r: 7.5, depth: 10, flat: 0.5, struct: 3600, dmg: 340, boom: 9 },
+  plane: { at: 46, r: 12, depth: 20, flat: 0.45, struct: 14000, dmg: 170, boom: 11 },
+  heli: { at: 25, r: 7.5, depth: 10, flat: 0.5, struct: 3600, dmg: 136, boom: 9 },
 };
 export const HELI_GUN = { dmg: 14, cd: 0.09, range: 170, spread: 0.028 };
 export const PLANE_GUN = { dmg: 12, cd: 0.07, range: 200, spread: 0.02 };
-export const BOMB = { radius: 8, dmg: 310, cd: 2.5 };
+export const BOMB = { radius: 8, dmg: 125, cd: 2.5 };
 
 // economy
 export const EPOCH_MS = 60 * 60 * 1000; // the pot pays out every hour, on the hour (UTC)

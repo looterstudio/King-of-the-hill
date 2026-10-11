@@ -979,8 +979,8 @@ function frame(now: number) {
       setText($('hpNum'), String(me.hp));
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
       setText($('shNum'), String(me.shield));
-      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 75);
-      (document.querySelector('.hud-bl') as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
+      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= PLAYER_HP * 0.3);
+      for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
       setText($('ammo'), def ? (def.melee ? '∞' : String(mag)) : '–'); // a blade has no ammo
       setText($('ammoMax'), def && !def.melee ? `/${def.mag}` : '');
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
@@ -1017,10 +1017,15 @@ function frame(now: number) {
       setHTML($('prompt'), game.prompt);
       setText($('killCount'), String(me.kills));
       const body = game.me;
-      const scoped = input.aim && (w === 'heavy' || w === 'hunting') && me.alive;
-      const spread = body && w ? spreadFor(body, w, input.aim) : 0.02;
+      const scoped = input.aim && !!w && WEAPONS[w].sight === 'scope' && me.alive;
+      // aiming down sights in first person: the gun's own sight over the middle of the screen (irons and red
+      // dots replace the crosshair; a launcher's ring sits around it and hides nothing)
+      const sight = me.alive && w && !scoped && game.aimK > 0.7 ? WEAPONS[w].sight : null, overlay = sight === 'iron' || sight === 'dot' || sight === 'ring';
+      $('sight').className = `sight ${overlay ? sight : 'hidden'}`;
+      const tank = body?.ride === 5 && !body.seat; // a tank's gunner sight: a steady crosshair (the cannon has no spread)
+      const spread = tank ? 0.006 : body && w ? spreadFor(body, w, input.aim) : 0.02;
       $('crosshair').style.setProperty('--s', `${Math.round(6 + spread * 900)}px`);
-      $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
+      $('crosshair').style.visibility = me.alive && !scoped && sight !== 'iron' && sight !== 'dot' ? 'visible' : 'hidden';
       $('scope').classList.toggle('hidden', !scoped);
       if (body?.gliding && me.alive) tipOnce('glide', 'gliding · look down to dive, look up to float · land anywhere', 5000, 5);
     }
@@ -1052,7 +1057,7 @@ function frame(now: number) {
       const kmh = Math.round(Math.hypot(game.me!.vx, game.me!.vy, game.me!.vz) * 3.6);
       setHTML($('vehHud'), `<div class="veh-name">${def.name}<b>${kmh}<small> km/h</small></b></div><div class="bar veh"><div style="width:${hpPct}%" class="${hpPct < 30 ? 'low' : ''}"></div></div>`
         + `<div class="veh-keys">${game.me!.seat ? '<b>passenger</b> · <kbd>LMB</kbd> shoot out of it · <kbd>G</kbd> throw · <kbd>E</kbd> hop off' : kind === 'car' || kind === 'moto' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
-          : kind === 'tank' ? '<kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · drive through walls'
+          : kind === 'tank' ? `<span class="cannon ${game.tankCd > 0 ? 'wait' : 'ready'}">${game.tankCd > 0 ? `cannon reloading ${game.tankCd.toFixed(1)}s` : 'cannon ready'}</span> · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · <kbd>RMB</kbd> machine gun · <kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn`
           : kind === 'heli' ? '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up / down · <kbd>Shift</kbd> fast · <kbd>LMB</kbd> nose gun'
           : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'}${game.me!.seat ? '' : ' · <kbd>E</kbd> get out'}</div>`);
     }

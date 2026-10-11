@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
-import { MODES, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
+import { MODES, RING_PHASES, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
 import { rng } from '../../shared/src/rng.ts';
 import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
@@ -71,6 +71,8 @@ test('a 40-bot solo match is fought to a winner: no one stuck, no one left in th
   const m = match(1, 'solo');
   assert.equal(m.sim.teamsAlive.size, 1, `no winner after ${m.t.toFixed(0)} s (${m.sim.alive} alive)`);
   assert.ok(m.t < 420, `took ${m.t.toFixed(0)} s: the storm, not a fight, decided it`);
+  // and the storm brought it to an end: decided in the last circles, not before the first one closed
+  assert.ok(m.sim.ring.phase >= RING_PHASES.length - 3, `over in circle ${m.sim.ring.phase + 1} of ${RING_PHASES.length} (${m.t.toFixed(0)} s)`);
   assert.ok(m.stuckMax < 20, `a bot stood still for ${m.stuckMax} s with nothing to do`);
   assert.ok(m.stormMax < 12, `a bot stayed ${m.stormMax.toFixed(0)} s in the storm`);
   assert.equal(m.ringDeaths, 0, 'bots walked out of the storm in time');
