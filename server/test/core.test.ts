@@ -7,6 +7,7 @@ import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { Sim, TP, aimFrom, emptyInput, moveStep, rayPlayer, sanitizeInput, type Input, type PlayerState } from '../../shared/src/sim.ts';
 import { World, newBody, rayBox } from '../../shared/src/world.ts';
+import { tankEye } from '../../shared/src/vehicles.ts';
 import { EPOCH_MS, KNOCK, PLAYER_HP, RING_PHASES, SHIELD_MAX, SLOTS, TICK_HZ, WEAPONS, WEAPON_IDS, type WeaponId } from '../../shared/src/constants.ts';
 const SLOTS_AXE = SLOTS + 1;
 import { computePayouts } from '../src/payout.ts';
@@ -1118,6 +1119,31 @@ test('a motorbike rides fast; a tank drives through a wall and its cannon blows 
   for (let i = 0; i < TICK_HZ * 3 && s2.vehicles.some((v) => v.id === 951); i++) s2.step(DT, new Map([[1, inp({ fire: true, yaw: Math.PI, pitch: -0.03, seq: 500 + i })]]));
   const c = s2.vehicles.find((v) => v.id === 951);
   assert.ok(!c || c.hp < 500, 'the shell hit the car');
+});
+
+// the tank fires at the crosshair: the chase camera's ray (tankEye) picks the point, cannon and machine gun
+// both go there (fired parallel to the camera from the hull, shots passed under the crosshair)
+test('the tank cannon and machine gun hit what is under the crosshair', () => {
+  for (const gun of ['fire', 'aim'] as const) {
+    const sim = garage('car');
+    sim.vehicles = [];
+    const tb = { ...newBody(0, 0, 0), ride: 5, grounded: true };
+    sim.vehicles.push({ id: 950, kind: 'tank', hp: 2200, driver: 0, last: 0, body: tb, gunCd: 0, bombCd: 0, seats: [] });
+    sim.spawn([2]);
+    const t = sim.players.get(1)!, foe = sim.players.get(2)!;
+    t.x = 0; t.z = 0; t.y = 0;
+    Object.assign(foe, { x: 12, y: 0, z: -45, gliding: false, grounded: true, hp: PLAYER_HP, shield: 0 });
+    tickN(sim, 1, { interact: true });
+    assert.equal(t.ride, 5);
+    // put the crosshair on the foe's chest: the camera's eye moves with the aim, so settle it
+    let yaw = 0, pitch = 0;
+    for (let k = 0; k < 8; k++) {
+      const [ex, ey, ez] = tankEye(t.x, t.y, t.z, yaw, pitch, t.spd), dx = foe.x - ex, dy = foe.y + 1.1 - ey, dz = foe.z - ez;
+      yaw = Math.atan2(-dx, -dz); pitch = Math.atan2(dy, Math.hypot(dx, dz));
+    }
+    for (let i = 0; i < TICK_HZ * 2 && foe.hp === PLAYER_HP; i++) sim.step(DT, new Map([[1, inp({ [gun]: true, yaw, pitch, seq: 10 + i })], [2, inp({ seq: 10 + i })]]));
+    assert.ok(foe.hp < PLAYER_HP || !foe.alive, `${gun === 'fire' ? 'the cannon' : 'the machine gun'} missed what the crosshair was on`);
+  }
 });
 
 test('loose pieces fall: blow out the bottom of a wall and the top comes down; a held piece stays', () => {

@@ -179,8 +179,10 @@ export const VEHICLES: Record<VehicleKind, { name: string; hp: number; r: number
   moto: { name: 'Motorbike', hp: 260, r: 0.75, h: 1.4, top: 30, boost: 44, accel: 24, reach: 2.4, seats: 1 },
   tank: { name: 'Tank', hp: 2200, r: 2.1, h: 2.3, top: 8, boost: 11, accel: 6, reach: 3.8, seats: 1 },
 };
-// the tank's cannon: a shell that blows up buildings; its tracks plough through walls
+// the tank's cannon (left click): a shell that blows up buildings; its tracks plough through walls.
+// Right click: the machine gun beside it. Both fire at the crosshair (tankAim)
 export const TANK = { dmg: 136, cd: 2.4, speed: 70, radius: 6.5 };
+export const TANK_MG = { dmg: 11, cd: 0.1, range: 160, spread: 0.02 };
 export const RAM = { minSpeed: 7, dmgPerMs: 4.2, cooldown: 0.6 };      // running people over
 export const CRASH = { minSpeed: 9, dmgPerMs: 9 };                     // hitting walls hurts the vehicle
 export const VEH_BOOM = { radius: 7.5, dmg: 110 };                     // a wrecked vehicle explodes

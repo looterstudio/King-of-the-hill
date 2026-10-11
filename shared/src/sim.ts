@@ -5,9 +5,9 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_HURRY, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AIR_CRASH, AXE, BOMB, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AIR_CRASH, AXE, BOMB, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
-import { moveVehicle } from './vehicles.ts';
+import { moveVehicle, tankAim } from './vehicles.ts';
 import { rng } from './rng.ts';
 import { INK, World, moveBody, newBody, rayBox, type Body, type Box, type Structure } from './world.ts';
 
@@ -624,13 +624,21 @@ export class Sim {
   private vehicleGuns(p: PlayerState, inp: Input, ev: SimEvent[]) {
     const v = this.vehicles.find((x) => x.id === p.rideV);
     if (!v || !covered(p.ride)) return;
-    if (v.kind === 'tank') { // the cannon fires where you look
-      if (inp.fire && v.gunCd <= 0) {
-        v.gunCd = TANK.cd;
-        const cp = Math.cos(inp.pitch), dx = -Math.sin(inp.yaw) * cp, dy = Math.sin(inp.pitch), dz = -Math.cos(inp.yaw) * cp;
-        const ox = p.x + dx * 3.2, oy = p.y + 2.1 + dy * 3.2, oz = p.z + dz * 3.2;
-        this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg, r: TANK.radius });
-        this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
+    if (v.kind === 'tank') { // the cannon (and the machine gun beside it, on right click) fire at the crosshair
+      if ((inp.fire && v.gunCd <= 0) || (inp.aim && v.bombCd <= 0)) {
+        const a = tankAim(this.world, p.x, p.y, p.z, inp.yaw, inp.pitch, p.spd);
+        if (inp.fire && v.gunCd <= 0) {
+          v.gunCd = TANK.cd;
+          const ox = a.mx, oy = a.my, oz = a.mz, dx = a.dx, dy = a.dy, dz = a.dz;
+          this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg, r: TANK.radius });
+          this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
+        }
+        if (inp.aim && v.bombCd <= 0) { // (a tank has no bombs: bombCd is the machine gun's)
+          v.bombCd = TANK_MG.cd;
+          const yaw = Math.atan2(-a.dx, -a.dz) + (this.rand() - 0.5) * 2 * TANK_MG.spread, pitch = Math.asin(clamp(a.dy, -1, 1)) + (this.rand() - 0.5) * 2 * TANK_MG.spread;
+          const cp = Math.cos(pitch);
+          this.ray(p, a.mx, a.my + 0.35, a.mz, -Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, TANK_MG.range, () => TANK_MG.dmg, ev);
+        }
       }
       return;
     }
