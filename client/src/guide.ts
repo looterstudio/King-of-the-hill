@@ -66,7 +66,7 @@ export const GUIDE: Card[] = [
   { art: spin, title: 'Magic Wand', tab: 'loot', keys: '<kbd>Left click</kbd>', tone: 'pink', text: 'Rare. Six charges of a fast spell that hurts and throws whoever it hits back through the air (off a roof, into the storm).' },
   { art: hand, title: 'Loot, vehicles, revive', tab: 'loot', keys: '<kbd>E</kbd>', tone: 'orange', text: 'Open pencil cases, pick up or swap guns, get in and out of cars, helis and planes. Hold E by a knocked teammate to pick them up.' },
   { art: bomb, title: 'Perks', tab: 'loot', keys: '<kbd>G</kbd>', tone: 'red', text: 'Grenades, C4, molotovs, launch pads, instant forts, the atomic bomb.' },
-  { art: glide, title: 'Glide in', tab: 'basics', keys: '<kbd>Mouse</kbd>', tone: 'teal', text: 'Everyone drops from the sky. Look down to dive fast, up to float far. Land anywhere.' },
+  { art: glide, title: 'Glide in', tab: 'basics', keys: '<kbd>Click</kbd> <kbd>Space</kbd>', tone: 'teal', text: 'Everyone starts on the paper plane: click or Space to jump, Space again to open your glider (low down it opens by itself). W faster, S brake, look down to dive.' },
   { art: storm, title: 'The storm', tab: 'basics', keys: 'minimap', tone: 'red', text: 'Stay inside the circle. The dashed ring is the next one; the last always closes on the King\'s Tower.' },
   // vehicles
   { tab: 'vehicles', art: car, title: 'Cars', keys: '<kbd>E</kbd> in/out · <kbd>W</kbd><kbd>S</kbd> gas, brake · <kbd>A</kbd><kbd>D</kbd> steer', tone: 'red', text: 'Shift boosts, Space hops. Run people over. Teammates ride along and shoot out of the windows.' },

@@ -572,6 +572,7 @@ let dropFor: World | null = null, lineFor: World | null = null, line: ReturnType
 function toggleMap() {
   state.mapOpen = !state.mapOpen;
   dropMap.classList.toggle('open', state.mapOpen);
+  $('tags').style.visibility = state.mapOpen ? 'hidden' : ''; // names and tags over the world, not over the map
   if (state.mapOpen) input.unlock(); else input.lock();
 }
 dropMap.addEventListener('mousedown', (e) => { if (!state.mapOpen) return; e.stopPropagation(); markAt(dropMap, e); toggleMap(); });
@@ -589,9 +590,9 @@ function dropFrame() {
   const me = game.me, w = game.world, alive = !!game.self?.alive;
   if (w && lineFor !== w) { lineFor = w; line = busLine(w); }
   const aboard = alive && !!me?.bus, falling = alive && !!me && !me.bus && me.gliding && !me.ride;
-  $('dropHud').classList.toggle('hidden', !aboard && !falling);
+  $('dropHud').classList.toggle('hidden', (!aboard && !falling) || state.mapOpen);
   dropMap.classList.toggle('hidden', !aboard && !state.mapOpen);
-  if (state.mapOpen && !aboard) { state.mapOpen = false; dropMap.classList.remove('open'); $('pause').classList.remove('hidden'); } // thrown out with the map open: click to carry on
+  if (state.mapOpen && !aboard) { state.mapOpen = false; dropMap.classList.remove('open'); $('tags').style.visibility = ''; $('pause').classList.remove('hidden'); } // thrown out with the map open: click to carry on
   if (aboard && line && me) {
     const left = Math.max(0, (BUS.len - ((me.x - line.x) * line.dx + (me.z - line.z) * line.dz)) / BUS.speed);
     setHTML($('dropHud'), `<div class="big"><kbd>CLICK</kbd> ANYWHERE or <kbd>SPACE</kbd> to jump</div>`
