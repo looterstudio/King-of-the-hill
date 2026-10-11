@@ -731,6 +731,9 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .profile-pop h4 { margin: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; }
 .profile-pop h4 button { font: inherit; font-size: 18px; border: 0; background: none; cursor: pointer; color: var(--ink-soft); }
 .profile-pop .pf-wallet { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-soft); word-break: break-all; margin: 2px 0 10px; }
+.profile-pop .pf-skin { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; font-size: 13px; color: var(--ink-soft); }
+.profile-pop .pf-skin img { width: 40px; height: 50px; object-fit: contain; }
+.profile-pop .pf-skin b { color: var(--ink); }
 .profile-pop .pf-status { padding: 8px 10px; border-radius: 8px; border: 2px solid; font-size: 14px; font-weight: 700; margin-bottom: 10px; }
 .profile-pop .pf-status.ok { border-color: #2a8a4a; background: rgba(42,138,74,.08); color: #1f6b39; }
 .profile-pop .pf-status.no { border-color: var(--red); background: rgba(211,35,54,.06); color: #a51b2a; }
