@@ -8,6 +8,8 @@ import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Game3D, RARITY_CSS } from './game3d.ts';
 import { renderArsenal, renderSkins } from './arsenal.ts';
+import { PartyUI } from './party.ts';
+import { lobbyMusic } from './music.ts';
 import { STATIONS, radio } from './radio.ts';
 import { voice } from './voice.ts';
 import { World } from '../../shared/src/world.ts';
@@ -147,6 +149,7 @@ function show(s: Screen) {
     document.body.classList.remove('knocked');
   }
   if (s === 'lobby') { jar.resize(); flyover.ink.resize(); updatePlay(); }
+  party.onScreen(s); lobbyMusic.setScreen(s);
 }
 
 function err(msg: string) { $('error').textContent = msg; if (msg) setTimeout(() => { if ($('error').textContent === msg) $('error').textContent = ''; }, 5000); }
@@ -220,12 +223,14 @@ const saveParty = () => { try { localStorage.setItem('pr_party', state.party); }
 $<HTMLInputElement>('party').oninput = (e) => {
   const el = e.target as HTMLInputElement; el.value = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); state.party = el.value; saveParty();
 };
-$('partyNew').onclick = () => {
-  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  state.party = Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join(''); saveParty(); renderMode();
-  navigator.clipboard?.writeText(state.party).then(() => toast(`party code ${state.party} copied`), () => {});
-};
 renderMode();
+// the party pre-lobby (party.ts): Create party / Join, and the slots screen over the lobby
+const party = new PartyUI(net, {
+  skin: () => mySkin,
+  setSkin: (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } document.querySelectorAll('#skinList .skin').forEach((b, k) => b.classList.toggle('on', k === i)); },
+  mode: () => state.mode, authed: () => state.authed, err, toLobby: () => show('lobby'),
+  canPlay: () => (touchOnly() ? 'King of the Hill Royale needs a mouse and keyboard. Open it on a computer.' : null),
+});
 
 // ---------- pot odometer: each digit is a rolling column ----------
 function odometer(el: HTMLElement, text: string, sym = '◎') {

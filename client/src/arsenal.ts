@@ -73,6 +73,8 @@ export function renderArsenal(el: HTMLElement) {
   renderer.dispose(); renderer.forceContextLoss();
 }
 
+// the character pictures, once the picker has drawn them (the party screen reuses them)
+export const skinPics: string[] = [];
 // the character picker: one picture per character, click to choose
 export function renderSkins(el: HTMLElement, picked: number, onPick: (i: number) => void) {
   const canvas = document.createElement('canvas');
@@ -92,6 +94,7 @@ export function renderSkins(el: HTMLElement, picked: number, onPick: (i: number)
     return picture(renderer, f.root, Math.PI + 0.5, 0.15);
   });
   renderer.dispose(); renderer.forceContextLoss();
+  skinPics.splice(0, skinPics.length, ...pics);
   el.innerHTML = SKINS.map((n, i) => `<button type="button" class="skin ${i === picked ? 'on' : ''}" data-skin="${i}" aria-label="${n}"><img src="${pics[i]}" alt=""><span>${n}</span></button>`).join('');
   el.onclick = (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-skin]');
