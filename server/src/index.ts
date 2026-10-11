@@ -51,7 +51,7 @@ function potView(): PotView {
     rolloverLamports: epochs.rolloverIn.toString(), commit: epochs.commitFor(epochs.current),
     online: clients.size, rooms: mm.rooms.size, tickets: epochs.leaderboard(10),
     closeFrom: epochs.endsAt - CANDLE_MS, holdTokens: epochs.requirement(), symbol: config.tokenSymbol, solUsd: price.solUsd(),
-    mint: config.tokenMint, holdMinUsd: config.holdMinUsd,
+    mint: config.tokenMint, holdMinUsd: config.holdMinUsd, live: config.potSource !== 'off',
   };
 }
 

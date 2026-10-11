@@ -20,6 +20,7 @@ export interface PotView {
   mint?: string;             // the token's contract address ('' before launch)
   holdMinUsd?: number;       // the USD side of the hold requirement
   solUsd: number | null;     // to show the pot in dollars
+  live?: boolean;            // false while the pot is off (before the token launches): no amount to show
 }
 
 export interface InflowView { lamports: string; at: number; source: string }

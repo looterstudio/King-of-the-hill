@@ -25,7 +25,8 @@ export interface Bot {
 }
 
 export function newBot(id: number, rand: () => number): Bot {
-  const skill = 0.3 + rand() * 0.55, strafe = rand() < 0.5 ? 1 : -1, dropX = (rand() - 0.5) * 640, dropZ = (rand() - 0.5) * 640;
+  // normal players, not aimbots: the best of them plays like a decent human
+  const skill = 0.25 + rand() * 0.45, strafe = rand() < 0.5 ? 1 : -1, dropX = (rand() - 0.5) * 640, dropZ = (rand() - 0.5) * 640;
   return {
     id, rand, skill, strafe, aimErr: 0, reaction: 0, target: null, los: false, vis: 0, losT: (id % 10) * 0.04, seenT: -99, acqT: 0,
     wp: { x: dropX, z: dropZ }, wpT: 0, carId: 0, carT: 0, seq: 0, dropX, dropZ, landed: false, mode: 'glide', dest: { x: dropX, z: dropZ },

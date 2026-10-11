@@ -47,6 +47,16 @@ export class MockPot extends EventEmitter implements PotSource {
   async holderTokens(_wallet?: string, _fresh?: boolean): Promise<Holding> { return { raw: 1n << 62n, decimals: 6 }; }
 }
 
+// Before the token launches: matches are real, the pot is empty and never fills, nobody holds anything.
+export class OffPot extends EventEmitter implements PotSource {
+  start() {}
+  stop() {}
+  balance() { return 0n; }
+  markPaid() {}
+  ready() { return true; }
+  async holderTokens(): Promise<Holding> { return { raw: 0n, decimals: 6 }; }
+}
+
 // Production: poll the vault over JSON-RPC. No @solana/web3.js dependency; two calls is all we need.
 export class SolanaPot extends EventEmitter implements PotSource {
   private raw = 0n;            // last observed vault lamports
@@ -144,4 +154,4 @@ export class SolanaPot extends EventEmitter implements PotSource {
   }
 }
 
-export const makePot = (cfg: Config): PotSource => (cfg.potSource === 'solana' ? new SolanaPot(cfg) : new MockPot());
+export const makePot = (cfg: Config): PotSource => (cfg.potSource === 'solana' ? new SolanaPot(cfg) : cfg.potSource === 'off' ? new OffPot() : new MockPot());
