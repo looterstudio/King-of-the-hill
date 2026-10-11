@@ -15,7 +15,7 @@ export class PriceFeed {
   constructor(private cfg: Config, private now = () => Date.now()) {}
 
   start() {
-    if (this.cfg.potSource !== 'solana') { this.push(this.cfg.mockPriceUsd); this.sol = { at: Infinity, usd: this.cfg.mockSolUsd }; return; }
+    if (this.cfg.potSource !== 'solana' && this.cfg.potSource !== 'wallet') { this.push(this.cfg.mockPriceUsd); this.sol = { at: Infinity, usd: this.cfg.mockSolUsd }; return; }
     const poll = async () => {
       try {
         const res = await fetch(this.cfg.priceUrl + `${this.cfg.tokenMint},${this.cfg.solMint}`, { signal: AbortSignal.timeout(8000) });
