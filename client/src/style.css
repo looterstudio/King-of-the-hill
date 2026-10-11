@@ -475,7 +475,6 @@ kbd { font-family: var(--f-hand); font-size: 12px; border: 1.5px solid var(--ink
 .amount .col { display: flex; flex-direction: column; transition: transform .7s cubic-bezier(.2, 1.3, .4, 1); }
 .amount .col span { height: 1.05em; display: grid; place-items: center; }
 .amount .pt { display: inline-block; width: .28em; text-align: center; }
-.amount .soon { font-size: .6em; text-transform: uppercase; letter-spacing: .02em; }
 .draw-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 8px; font-size: 16px; }
 .cd { display: inline-flex; align-items: baseline; gap: 3px; }
 .cd b { display: inline-grid; place-items: center; min-width: 46px; height: 44px; padding: 0 4px; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--card); background: var(--ink); border-radius: 8px 10px 7px 11px; box-shadow: 2px 3px 0 var(--red); }
