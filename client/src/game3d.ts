@@ -5,7 +5,7 @@
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
 import { AMMO, type AmmoId, AXE, BUILD, BURST_GAP, BUS, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TANK, TANK_MG, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
-import { OTHER_ALIVE, OTHER_AXE, OTHER_BUS, OTHER_DOWN, OTHER_FALL, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
+import { OTHER_ALIVE, OTHER_AXE, OTHER_BUS, OTHER_DOWN, OTHER_FALL, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_SWING, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
 import { tankAim, tankEye } from '../../shared/src/vehicles.ts';
@@ -118,6 +118,7 @@ export class Game3D {
   private wind: THREE.LineSegments | null = null; private windPts = new Float32Array(0); // speed lines while you fall
   private axeView: THREE.Group | null = null;
   private axeSwing = 0;
+  private swings = new Map<number, { t: number; on: boolean }>(); // others' pickaxe swings, from the snapshot flag (1 just started .. 0)
   private axeLocal = 0;
   private ghost: THREE.LineSegments | null = null;
   private target: THREE.LineSegments | null = null; // the block the axe would hit
@@ -1123,7 +1124,12 @@ export class Game3D {
       seen.add(o[0]);
       const a = this.avatar(o[0]);
       a.root.visible = true;
-      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt, !!(o[7] & OTHER_DOWN), !!(o[7] & OTHER_AXE), (o[7] >> OTHER_UPS) & 3);
+      let sw = this.swings.get(o[0]);
+      if (!sw) { sw = { t: 0, on: false }; this.swings.set(o[0], sw); }
+      const swinging = !!(o[7] & OTHER_SWING);
+      if (swinging && !sw.on) sw.t = 1;
+      sw.on = swinging; sw.t = Math.max(0, sw.t - dt * 3.3);
+      poseFigure(a, o[1], o[2], o[3], o[4], o[5], o[8] >= 0 ? WEAPON_IDS[o[8]] : null, !!(o[7] & OTHER_SLIDE), !!(o[7] & OTHER_GLIDE), this.leader?.[0] === o[0], dt, !!(o[7] & OTHER_DOWN), !!(o[7] & OTHER_AXE), (o[7] >> OTHER_UPS) & 3, sw.t);
       if (o[7] & OTHER_FALL) poseFall(a, o[4], this.time + o[0]);
       this.unfold(a.chute, dt);
       const d = a.root.position.distanceTo(cam.position);
@@ -1273,7 +1279,7 @@ export class Game3D {
     const axeOut = !!me?.alive && !!me.axe && !gliding && !me.use && !((this.pred?.down ?? 0) > 0);
     if (this.axeView) {
       this.axeView.visible = axeOut && fp;
-      this.axeSwing = Math.max(0, this.axeSwing - dt * 4.5);
+      this.axeSwing = Math.max(0, this.axeSwing - dt * 3.3);
       const s = Math.sin(this.axeSwing * Math.PI);
       this.axeView.rotation.set(-s * 1.3, 0, s * 0.25);
       this.axeView.position.set(0.36 - s * 0.08, -0.36 + Math.sin(this.bob) * 0.012, -0.5 - s * 0.12);
@@ -1480,7 +1486,7 @@ export class Game3D {
       poseRider(f, at.pos, at.driver ? m.root.quaternion : null, look.yaw, look.pitch, SEATS[v[1]].legs, at.driver, this.weapon, leader, dt, me.ups[me.cur] ?? 0);
     } else if (this.tpNow && !p.bus && (this.camB > 0.6 || this.airK > 0.5)) { // (with a wall at your back the camera is in your head: no figure)
       f.root.visible = true;
-      poseFigure(f, this.selfAt.x, this.selfAt.y, this.selfAt.z, look.yaw, look.pitch, this.weapon, p.slideT > 0 || p.mantleT > 0, p.gliding, leader, dt, p.down > 0, me.axe, me.ups[me.cur] ?? 0); // tucked going over a ledge
+      poseFigure(f, this.selfAt.x, this.selfAt.y, this.selfAt.z, look.yaw, look.pitch, this.weapon, p.slideT > 0 || p.mantleT > 0, p.gliding, leader, dt, p.down > 0, me.axe, me.ups[me.cur] ?? 0, this.axeSwing); // tucked going over a ledge
       if (p.fall) poseFall(f, look.yaw, this.time);
       this.unfold(f.chute, dt);
     }
