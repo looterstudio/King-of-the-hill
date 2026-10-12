@@ -34,6 +34,7 @@ export interface Bot {
   cover: { x: number; z: number; until: number; at: boolean } | null; // somewhere they can't see us, to heal at (at: got there)
   job: Job | null; jobT: number; perch: { x: number; y: number; z: number } | null; // building, the last build, standing on our own pillar
   chop: { yaw: number; until: number } | null; chopT: number; benches: Set<number>; // gathering material with the axe; benches used
+  sep: Pt; // a push away from whoever is walking right on top of us (updated with the scan)
 }
 
 // which players in a match are bots: between bots fights start rarely early on and more as the storm closes
@@ -54,7 +55,7 @@ export function newBot(id: number, rand: () => number): Bot {
     plan: null, navT: 0, direct: true, forcePlan: 0, groundY: 0, jumpT: -9, jumps: 0,
     goal: null, scanT: (id % 20) * 0.03, skip: new Map(), prog: { x: 0, z: 0, t: 0 }, gp: null, escape: null, blockT: 0,
     life: 500, hitT: -99, slotT: -99, rot: false, car: null,
-    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(), peace: new Map(),
+    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(), peace: new Map(), sep: { x: 0, z: 0 },
   };
 }
 
@@ -403,12 +404,16 @@ export function botInput(b: Bot, sim: Sim): Input {
     // (at the end of a match the nearest anywhere, to go and find: two bots must not wait out the storm apart)
     const near: { q: PlayerState; d: number }[] = [], reg = BOTS.get(sim), armedSelf = self.slots.some(Boolean);
     let far: { q: PlayerState; d: number } | null = null;
+    let sepX = 0, sepZ = 0;
     for (const q of sim.players.values()) {
-      if (!q.alive || q.team === self.team || q.gliding) continue; // gliders can't shoot back
+      if (!q.alive || q.id === self.id || q.gliding || q.ride) continue;
       const d = Math.hypot(q.x - self.x, q.z - self.z);
+      if (d < 3.5 && Math.abs(q.y - self.y) < 2) { const k = (3.5 - d) / 3.5 / (d || 1); sepX += (self.x - q.x) * k; sepZ += (self.z - q.z) * k; } // too close: step away
+      if (q.team === self.team) continue; // (gliders can't shoot back)
       if (d < 120) near.push({ q, d });
       else if (late && (!far || d < far.d)) far = { q, d };
     }
+    b.sep = { x: sepX, z: sepZ };
     if (!near.length && far) near.push(far);
     near.sort((a, c) => a.d - c.d);
     // who we'd take on (or keep tracking): someone new is only noticed in front of us (a person's field of
@@ -430,7 +435,7 @@ export function botInput(b: Bot, sim: Sim): Input {
           if (until !== undefined && (until >= PHASE_PEACE ? until - PHASE_PEACE === g.phase : t < until)) { near.splice(i, 1); continue; }
           // another bot: rarely early on, more as the storm closes, and much more when both carry guns and
           // they're close; a person: a fair chance from the start (but never everyone at once, above)
-          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) && near[i].d < 20 ? Math.min(1, base * 2) : base) : Math.min(1, 0.85 + base * 0.3);
+          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) ? (near[i].d < 8 ? 1 : near[i].d < 25 ? Math.min(1, base * 2) : base) : base) : Math.min(1, 0.85 + base * 0.3);
           if (R() >= chance) { b.peace.set(q.id, bot ? PHASE_PEACE + g.phase : t + 12); near.splice(i, 1); continue; }
           b.peace.set(q.id, -1);
         }
@@ -679,11 +684,14 @@ export function botInput(b: Bot, sim: Sim): Input {
     const d = steer(b, sim, self, goal.x, goal.z, goal.y);
     // no way to it from here: forget it (a case up on a ledge, a car behind a fence)
     if (d.stuck) { if (b.goal && (b.mode === 'case' || b.mode === 'loot' || b.mode === 'bench')) { b.skip.set(b.goal.ref.id, t + 60); b.goal = null; } else if (b.mode === 'car') b.skip.set(b.carId, t + 60); else if (b.mode === 'roam') b.wpT = 0; }
-    inp.yaw = Math.atan2(-d.x, -d.z); inp.fwd = 1; inp.sprint = goal.sprint && !self.use;
+    const dl = Math.hypot(d.x, d.z) || 1, sl = Math.hypot(b.sep.x, b.sep.z);
+    inp.yaw = sl > 0.05 && dl > 2 ? Math.atan2(-(d.x / dl + b.sep.x * 1.2), -(d.z / dl + b.sep.z * 1.2)) : Math.atan2(-d.x, -d.z); inp.fwd = 1; inp.sprint = goal.sprint && !self.use;
     if (Math.hypot(goal.x - self.x, goal.z - self.z) < 0.4) inp.fwd = 0;
     if (d.hop) hop(b, self, inp, t);
   }
   if (b.jumps === 1 && !self.grounded && !b.job) hop(b, self, inp, t);
+  // like a person on a keyboard: now and then a hop while running across open ground
+  else if (goal && !moved && inp.sprint && self.grounded && !fighting && R() < 0.004 * b.skill) inp.jump = true;
 
   // ---- stuck: hop it, cut through it, plan around it, then give up on that goal and step aside ----
   const wants = Math.abs(inp.fwd) + Math.abs(inp.strafe) > 0.3;
@@ -908,7 +916,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
     inp.fire = def.spinUp ? true : R() < 0.25 + b.skill * 0.45 && (def.auto || R() < 0.4);
     // and only through a sight line checked a moment ago: it may have stepped behind a wall since (every shot
     // while they have the axe out: a wall may be going up between us)
-    if (inp.fire && (t - b.seenT > 0.1 || tgt.axe)) { const v = sight(sim.world, self, tgt); if (v) { b.seenT = t; b.vis = v; } else { inp.fire = false; b.los = false; b.losT = t; } }
+    if (inp.fire && (t - b.seenT > 0.03 || tgt.axe)) { const v = sight(sim.world, self, tgt); if (v) { b.seenT = t; b.vis = v; } else { inp.fire = false; b.los = false; b.losT = t; } }
   }
   // move: strafe, close in or back off to the gun's range, flip when a wall stops the strafe; the storm comes first
   const pref = !def ? 20 : def.melee ? 1.5 : push ? (def.proj ? 14 : 4) : def.pellets > 1 ? 6 : def.zoom >= 2.4 ? 55 : def.proj ? 30 : def.range < 70 ? 14 : 24;

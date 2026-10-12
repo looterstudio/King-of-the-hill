@@ -1069,8 +1069,10 @@ function frame(now: number) {
   const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
   if (state.screen === 'game') govern(raw);
   if (state.screen === 'lobby') {
-    jar.frame(dt);
-    if (flyVisible) { lobby.frame(dt); setText($('flyCaption'), lobby.caption); }
+    const onLanding = document.body.classList.contains('landing-on');
+    if (!onLanding) jar.frame(dt);
+    // (under the landing page the lobby scene is hidden: drawing it anyway took the frames the video needed, ~1 fps)
+    if (flyVisible && !onLanding) { lobby.frame(dt); setText($('flyCaption'), lobby.caption); }
     if (state.pot) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
