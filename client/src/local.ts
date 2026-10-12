@@ -62,7 +62,7 @@ export class LocalNet {
   private emit(m: ServerMsg) { for (const h of this.handlers) h(m); }
 
   connect() {
-    setTimeout(() => { this.onOpen?.(); this.emit({ t: 'hello', nonce: 'demo', requireWallet: false, allowGuests: true, holdMinUsd: 50 }); this.emitPot(); }, 50);
+    setTimeout(() => { this.onOpen?.(); this.emit({ t: 'hello', nonce: 'demo', requireWallet: false, allowGuests: true, holdMinUsd: TOKEN.holdMinUsd }); this.emitPot(); }, 50);
     setInterval(() => this.emitPot(), 2000);
     setTimeout(() => this.emitLobby(), 60);
     setInterval(() => this.emitLobby(), 1000);
