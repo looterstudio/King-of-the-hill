@@ -1065,7 +1065,7 @@ export class Game3D {
         const [sx, sy, sz] = aimFrom(this.world, pos.x, pos.y, pos.z, look.yaw, look.pitch, true);
         const cp = Math.cos(look.pitch), fx = -Math.sin(look.yaw) * cp, fy = Math.sin(look.pitch), fz = -Math.cos(look.yaw) * cp;
         this.boom += ((look.aim ? TP.aimBack : TP.back) - this.boom) * Math.min(1, dt * 12);
-        const room = this.world.raycast(sx, sy, sz, -fx, -fy, -fz, this.boom + 0.35) - 0.35;
+        const room = this.world.raycast(sx, sy, sz, -fx, -fy, -fz, this.boom + 0.7) - 0.7; // (0.7 m off the wall: closer, the wide lens's near plane cut into it and showed the inside of the block)
         const b = Math.max(0.15, Math.min(this.boom, room));
         this.camB = b < this.camB ? b : this.camB + (b - this.camB) * Math.min(1, dt * 6);
         cam.position.set(sx - fx * this.camB, sy - fy * this.camB, sz - fz * this.camB);
