@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { BUILD, BUS, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, SKINS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { podiumOf, BUILD, BUS, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, SKINS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
 import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type ProfileView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
 import { busLine, spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
@@ -359,18 +359,18 @@ function renderPot(p: PotView) {
   setText($('qualUsd'), `$${p.holdMinUsd ?? TOKEN.holdMinUsd}`);
   document.querySelectorAll('.sym-tok').forEach((e) => { e.textContent = `$${p.symbol}`; });
   renderCa(p.mint || TOKEN.mint, p.symbol);
-  // who's on top this hour: they take the pot unless someone passes them before :00
+  // who's on top this round: they take the pot unless someone passes them before :00
   const top = p.tickets[0], at = new Date(p.epochEndMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const lead = $('potLeader');
   lead.classList.toggle('you', !!top && top.wallet === state.wallet);
   setHTML(lead, top ? (top.wallet === state.wallet ? `<span class="crown">♛</span> <b>You</b> lead with <b>${top.wins} pts</b> · hold on until ${at}` : `<span class="crown">♛</span> <b>${esc(top.name)}</b> leads with <b>${top.wins} pts</b> · beat them before ${at}`)
-    : `Nobody has scored this hour yet: the first win puts you on top.`);
+    : `Nobody has scored this round yet: the first win puts you on top.`);
   jar.setSol(sol(p.lamports)); miniJar.setSol(sol(p.lamports));
   $('online').textContent = p.online.toLocaleString('en-US');
   $('rooms').textContent = String(p.rooms);
   $('tickets').innerHTML = p.tickets.length
     ? p.tickets.map((t, i) => `<li class="${t.wallet === state.wallet ? 'me-row' : ''} ${i === 0 ? 'top' : ''}"><span class="name"><span>${i === 0 ? '<i class="crown">♛</i> ' : ''}${esc(t.name)}${i === 0 ? ' <small class="takes">takes the pot</small>' : ''}</span></span><span class="marks">${marks(t.wins)}<em>${t.wins}</em></span></li>`).join('')
-    : '<li class="nobody">Nobody has scored this hour. Win, place top 10 or get kills: the top scorer at the close takes the pot.</li>';
+    : '<li class="nobody">Nobody has scored this round. Win, place top 10 or get kills: the top 3 at the close share the round prize.</li>';
 }
 // the token's contract address with buy links, or a note until it launches
 let caShown = '';
@@ -401,9 +401,9 @@ function renderProfile() {
   const won = sol(p.prizeLamports);
   setHTML(pop, `<h4>Your profile <button type="button" data-close aria-label="close">✕</button></h4><div class="pf-wallet">${esc(p.wallet)}</div>`
     + (skinPics[mySkin] ? `<div class="pf-skin"><img src="${skinPics[mySkin]}" alt=""><span>playing as <b>${esc(SKINS[mySkin])}</b></span></div>` : '')
-    + `<div class="pf-status ${p.qualified ? 'ok' : 'no'}">${p.qualified ? `✓ Qualified for this hour's prize` : '✗ Not qualified this hour'}`
+    + `<div class="pf-status ${p.qualified ? 'ok' : 'no'}">${p.qualified ? `✓ Qualified for this round prize` : '✗ Not qualified this round'}`
     + `<small>${p.balance !== null ? `You hold ${fmtNum(p.balance)} $${esc(p.symbol)}${p.need ? ` · need ${fmtNum(p.need)} (≈ $${p.holdMinUsd})` : ''}` : esc(p.why ?? '')}${p.qualified || p.balance === null ? '' : `<br>${esc(p.why ?? '')}`}</small></div>`
-    + `<div class="pf-grid"><div class="gold"><b>${p.points}</b><span>points this hour</span></div><div class="gold"><b>${p.rank ? `#${p.rank}` : '–'}</b><span>rank this hour</span></div><div class="gold"><b>${p.prizes}</b><span>prizes won</span></div>`
+    + `<div class="pf-grid"><div class="gold"><b>${p.points}</b><span>points this round</span></div><div class="gold"><b>${p.rank ? `#${p.rank}` : '–'}</b><span>rank this round</span></div><div class="gold"><b>${p.prizes}</b><span>prizes won</span></div>`
     + `<div><b>${p.matches}</b><span>matches</span></div><div><b>${p.wins}</b><span>wins</span></div><div><b>${p.kills}</b><span>kills</span></div></div>`
     + `<div class="pf-foot"><span>${won > 0 ? `won ${fmtSol(won)} in total` : p.best ? `best finish #${p.best}` : 'no matches yet: drop in!'}</span><button type="button" data-refresh>refresh</button></div>`);
   // the "who can win" checklist ticks itself off
@@ -893,7 +893,7 @@ net.on((m: ServerMsg) => {
       const won = winners.includes(state.you), team = winners.length > 1, mine = m.points?.[state.you] ?? 0;
       const word = !winners.length ? 'Draw' : won ? 'Victory!' : team ? `Team ${label(winners[0])} wins` : `${label(winners[0])} wins`;
       const sub = !m.awarded ? (mine ? `${mine} points · not counted: not enough verified wallets in this match` : '')
-        : mine ? `+${mine} points this hour · the top scorer takes the pot${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
+        : mine ? `+${mine} points this round · the top 3 share the round prize${state.authMode === 'guest' ? ' (connect a wallet to keep them)' : ''}` : 'no points this time: place top 10 or get a kill';
       if (winners.length) ticker(`<span class="gold">♛ <b>${esc(winners.map((w) => seatOf(w)?.name ?? label(w)).join(' + '))}</b> won a ${MODES[state.roomMode].name.toLowerCase()} match</span>`);
       if (won) victory(team, mine, sub); else banner(word, sub, won);
       voice.stop();
@@ -917,7 +917,7 @@ function victory(team: boolean, points: number, sub: string) {
 }
 function victoryStats(sub?: string) {
   const wins = profile ? profile.wins : null;
-  setHTML($('vStats'), `<div><b>${vKills}</b><span>kills</span></div><div><b>+${vPoints}</b><span>points this hour</span></div>`
+  setHTML($('vStats'), `<div><b>${vKills}</b><span>kills</span></div><div><b>+${vPoints}</b><span>points this round</span></div>`
     + (wins !== null ? `<div class="gold"><b>${wins}</b><span>wins on your wallet</span></div>` : `<div><b>♛</b><span>connect Phantom to keep your wins</span></div>`)
     + (sub ? `<p>${esc(sub)}</p>` : ''));
 }
@@ -1068,6 +1068,9 @@ function frame(now: number) {
         odometer($('potAmount'), d.toLocaleString('en-US', { minimumFractionDigits: d < 1000 ? 2 : 0, maximumFractionDigits: d < 1000 ? 2 : 0 }), '$');
         setText($('potSol'), `${target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} SOL`);
       } else { odometer($('potAmount'), target.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })); setText($('potSol'), ''); }
+      // what this round's top three would take from the pig as it stands (4% of it, 60/25/15)
+      const places = podiumOf(target * (usd || 1)), fmt = (v: number) => usd ? `$${v.toLocaleString('en-US', { maximumFractionDigits: v < 100 ? 2 : 0 })}` : `${v.toFixed(3)} SOL`;
+      setHTML($('podium'), `<span>🥇 ${fmt(places[0])}</span><span>🥈 ${fmt(places[1])}</span><span>🥉 ${fmt(places[2])}</span>`);
       const closing = Date.now() >= state.pot.closeFrom;
       setText($('candle'), closing ? 'scoring can close any minute now' : 'scoring closes at a random minute in the last 10');
       $('candle').classList.toggle('hot', closing);

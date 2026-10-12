@@ -221,7 +221,13 @@ export const PLANE_GUN = { dmg: 12, cd: 0.07, range: 200, spread: 0.02 };
 export const BOMB = { radius: 8, dmg: 125, cd: 2.5 };
 
 // economy
-export const EPOCH_MS = 60 * 60 * 1000; // the pot pays out every hour, on the hour (UTC)
+export const EPOCH_MS = 4 * 60 * 60 * 1000; // the pig pays out every 4 hours: 00, 04, 08, 12, 16 and 20 UTC
+// the prize: 60% of the creator fees fill the pig (the treasury, 40% is the team's); every round pays 4% of
+// the pig to that round's top three, 60/25/15. The rest stays in the pig: a burst of fees after launch pays
+// big prizes for days instead of one huge round and then crumbs (at a steady volume a round pays what came in)
+export const PRIZE = { treasuryBps: 6000, roundBps: 400, podiumBps: [6000, 2500, 1500] };
+// what each place takes from a pig of `pig` (any unit)
+export const podiumOf = (pig: number) => PRIZE.podiumBps.map((b) => (pig * PRIZE.roundBps * b) / 1e8);
 export const LAMPORTS_PER_SOL = 1_000_000_000n;
 
 export const epochOf = (ms: number) => Math.floor(ms / EPOCH_MS);

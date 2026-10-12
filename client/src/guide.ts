@@ -86,19 +86,19 @@ export const GUIDE: Card[] = [
   { tab: 'squad', art: mic, title: 'Squad voice', keys: '<kbd>V</kbd> hold to talk · <kbd>U</kbd> mute them', tone: 'blue', text: 'Talk to your team, peer to peer. The microphone is only asked for the first time you press V.' },
   { tab: 'squad', art: party, title: 'Party codes', keys: 'duos or squads · same code', tone: 'green', text: 'Friends who type the same party code drop on your team; empty spots get filled.' },
   { tab: 'squad', art: eye, title: 'Spectating', keys: '<kbd>Left</kbd>/<kbd>Right click</kbd> switch · <kbd>F</kbd> free camera', tone: 'teal', text: 'Out? Watch your teammates while one is alive, then anyone. A team win scores for everyone on it.' },
-  // the hourly prize
-  { tab: 'prize', art: crownA, title: 'Top of the hour wins', keys: 'every hour, on the hour', tone: 'orange', text: 'The player with the most points when the hour closes takes the whole pot (a tie splits it). 10% stays to start the next one.' },
-  { tab: 'prize', art: coins, title: 'Score points', keys: 'win <b>100</b> · top 10 <b>+20</b> · kill <b>+5</b>', tone: 'red', text: 'Duos win 50 each, squads 25 each. Up to 10 kills count per match. Every match this hour adds up.' },
+  // the pig
+  { tab: 'prize', art: crownA, title: 'The top 3 of every round get paid', keys: 'every 4 hours', tone: 'orange', text: 'Every 4 hours (00, 04, 08, 12, 16 and 20 UTC) 4% of the pig goes to the three players with the most points that round: 60% to the first, 25% to the second, 15% to the third. The rest stays in the pig for the next rounds.' },
+  { tab: 'prize', art: coins, title: 'Score points', keys: 'win <b>100</b> · top 10 <b>+20</b> · kill <b>+5</b>', tone: 'red', text: 'Duos win 50 each, squads 25 each. Up to 10 kills count per match. Every match this round adds up.' },
   { tab: 'prize', art: ghost, title: 'Connect Phantom', keys: 'top right: Connect Phantom', tone: 'pink', text: 'Your wallet is how we check you hold the token and where the prize goes. Signing in costs nothing.' },
-  { tab: 'prize', art: chain, title: `Hold $${TOKEN.holdMinUsd} all hour`, keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the hour. Dip under and your points for that hour don\'t count.' },
+  { tab: 'prize', art: chain, title: `Hold $${TOKEN.holdMinUsd} all round`, keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the hour. Dip under and your points for that hour don\'t count.' },
   { tab: 'prize', art: clock, title: 'The close', keys: 'a random minute in the last 10', tone: 'blue', text: 'Scoring closes at a random minute so nobody can time it; later points count for the next hour.' },
-  { tab: 'prize', art: hand, title: 'Paid to your wallet', keys: 'the wallet you play with', tone: 'teal', text: 'When the hour closes the winner is sent the pot in SOL. Every hour\'s result, and the transfer that paid it, is public.' },
+  { tab: 'prize', art: hand, title: 'Paid to your wallet', keys: 'the wallet you play with', tone: 'teal', text: 'When the round closes the top 3 are sent their share in SOL, to the wallet they play with. Every result, and the transfer that paid it, is public.' },
 ];
 
 const cardHTML = (c: Card) => `<article class="guide-card ${c.tone}">${c.art}<div><h4>${c.title}</h4><div class="g-keys">${c.keys}</div><p>${c.text}</p></div></article>`;
 const TABS: { id: Tab | 'keys'; name: string }[] = [
   { id: 'basics', name: 'Basics' }, { id: 'build', name: 'Break & build' }, { id: 'loot', name: 'Weapons & loot' },
-  { id: 'vehicles', name: 'Vehicles' }, { id: 'squad', name: 'Squads' }, { id: 'prize', name: '♛ Hourly prize' }, { id: 'keys', name: 'All controls' },
+  { id: 'vehicles', name: 'Vehicles' }, { id: 'squad', name: 'Squads' }, { id: 'prize', name: '♛ The pig' }, { id: 'keys', name: 'All controls' },
 ];
 const KEYS: [string, string][] = [
   ['W A S D', 'move'], ['Mouse', 'look and aim'], ['Shift', 'sprint'], ['Space', 'jump · again in the air: double jump · against a wall: wall jump'], ['W + Space', 'at a ledge or a window: climb over / dive through'],

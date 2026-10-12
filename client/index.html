@@ -16,7 +16,7 @@
 
 <!-- ============ LOBBY ============ -->
 <!-- The front: the island live behind everything (client/src/lobbystage.ts), your party standing on the
-     paper plane, the hourly prize, the friend panel and one big Play. The rest of the page scrolls up over it. -->
+     paper plane, the pig, the friend panel and one big Play. The rest of the page scrolls up over it. -->
 <section id="lobby" class="screen lobby">
   <canvas id="flyCanvas" class="lb-world" aria-label="live view of the island, your character on the paper plane"></canvas>
   <div id="flyTags" class="fly-tags" hidden></div>
@@ -39,22 +39,23 @@
     </header>
     <div id="profilePop" class="profile-pop hidden" role="dialog" aria-label="your profile"></div>
 
-    <aside class="lb-prize" aria-label="this hour's prize">
+    <aside class="lb-prize" aria-label="this round's prize">
       <div class="lb-card-head">
-        <span class="lb-kicker"><i aria-hidden="true">♛</i> Hourly prize</span>
-        <span class="lb-pill">#1 of the hour takes it</span>
+        <span class="lb-kicker"><i aria-hidden="true">♛</i> The pig</span>
+        <span class="lb-pill">top 3 every 4 hours</span>
       </div>
       <div class="jar-wrap"><canvas id="jar" aria-hidden="true"></canvas></div>
       <div class="prize">
         <div id="potAmount" class="amount" aria-live="off"><span class="sym">$</span></div>
         <div id="potSol" class="pot-sol"></div>
+        <div id="podium" class="podium" title="every 4 hours, 4% of the pig goes to the round's top 3: 60% / 25% / 15%"></div>
         <div class="hour-clock">
           <div class="draw-row"><span>paid out in</span>
             <span class="cd" id="countdown"><b>--</b><i>h</i><b>--</b><i>m</i><b>--</b><i>s</i></span>
           </div>
           <div class="hour-bar" aria-hidden="true"><i id="hourFill"></i><span id="hourLabel"></span></div>
         </div>
-        <div id="potLeader" class="pot-leader">Nobody has scored this hour yet.</div>
+        <div id="potLeader" class="pot-leader">Nobody has scored this round yet.</div>
         <div id="candle" class="candle">scoring closes at a random minute in the last 10</div>
         <div id="inflowToast" class="toast" aria-live="polite"></div>
       </div>
@@ -121,12 +122,12 @@
 
   <div class="lb-sheet paper">
     <div class="wrap">
-      <section id="prize" class="lb-sec prize-sec" aria-label="the hourly prize">
-        <h3 class="wall-title">The hourly prize <span>(every hour, on the hour)</span></h3>
+      <section id="prize" class="lb-sec prize-sec" aria-label="the pig">
+        <h3 class="wall-title">The pig <span>(paid every 4 hours: 00, 04, 08, 12, 16, 20 UTC)</span></h3>
         <ol class="flow" aria-label="how the prize fills">
           <li><span class="fl-ico">⇄</span><b>Every trade pays a fee</b><small>each buy and sell of <span class="sym-tok">$KOTH</span> drops a fee into the King Pig, live</small></li>
-          <li><span class="fl-ico">♛</span><b>The pig fills up</b><small>all hour long; you see every coin land</small></li>
-          <li><span class="fl-ico">◷</span><b>At :00 the #1 takes it all</b><small>the player with the most points this hour wins the pot</small></li>
+          <li><span class="fl-ico">♛</span><b>The pig fills up</b><small>all round long; you see every coin land</small></li>
+          <li><span class="fl-ico">◷</span><b>Every 4 hours the top 3 get paid</b><small>4% of the pig goes to the round's top 3: 60% / 25% / 15%</small></li>
         </ol>
         <div class="qualify" id="qualify">
           <h3>Who can win the prize</h3>
@@ -146,17 +147,17 @@
           <ul id="roomList" class="roomlist"><li class="nobody">No rooms yet. Hit drop in and you open the first one.</li></ul>
         </div>
         <div class="sheet">
-          <div class="sheet-head"><h3>Points this hour</h3><span class="aside">top of the list takes the pot · win 100 · top 10 +20 · kill +5</span></div>
+          <div class="sheet-head"><h3>Points this round</h3><span class="aside">the top 3 share the round's prize · win 100 · top 10 +20 · kill +5</span></div>
           <ol id="tickets" class="ledger"></ol>
         </div>
         <div class="sheet receipt">
           <div class="sheet-head"><h3>Last payout</h3><span class="aside">paid in SOL</span></div>
-          <div id="lastDraw" class="empty">No payout yet. When the countdown hits zero, the top scorer of the hour takes the pot.</div>
+          <div id="lastDraw" class="empty">No payout yet. When the countdown hits zero, the round's top 3 share 4% of the pig.</div>
         </div>
       </section>
 
       <section id="guide" class="guide" aria-label="how to play">
-        <h3 class="wall-title">How to play <span>(everything, by topic: controls, building, vehicles, squads and how to win the hourly prize)</span></h3>
+        <h3 class="wall-title">How to play <span>(everything, by topic: controls, building, vehicles, squads and how to win the pig)</span></h3>
         <div id="guideCards"></div>
       </section>
 

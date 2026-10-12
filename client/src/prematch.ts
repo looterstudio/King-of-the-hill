@@ -26,7 +26,7 @@ export class PreMatch {
     this.opts = o;
     const m = MODES[o.mode], team = o.mode === 'solo' ? 'Last one standing wins' : `Last ${o.mode === 'duo' ? 'pair' : 'squad'} standing wins`;
     const who = o.wallet
-      ? `<div class="pm-who"><span>Playing as</span><b>${esc(o.name)}</b><small>wallet connected · your points count for the hourly prize</small></div>`
+      ? `<div class="pm-who"><span>Playing as</span><b>${esc(o.name)}</b><small>wallet connected · your points count for the pig</small></div>`
       : `<label class="pm-name"><span>Your name</span><input id="pmName" maxlength="14" autocomplete="off" spellcheck="false" placeholder="pick a name" value="${esc(o.name)}" /></label>`;
     this.root.innerHTML = `<div class="pm-card" role="dialog" aria-modal="true" aria-label="ready to drop">`
       + `<div class="pm-top"><div><span class="pm-kicker">Ready to drop</span><h2>${m.name} <small>${o.mode === 'solo' ? `${POINTS.win.solo} points a win` : `${POINTS.win[o.mode]} points each a win`}</small></h2></div><button class="pm-x" data-pm="back" type="button" aria-label="back to the lobby">✕</button></div>`
