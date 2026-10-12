@@ -71,7 +71,7 @@ function html() {
     <div class="lp-pig">
       <span class="tape tape-l"></span><span class="tape tape-r"></span>
       <canvas id="lpJar" aria-hidden="true"></canvas>
-      <svg class="lp-stamp" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46"/><circle cx="50" cy="50" r="38" stroke-dasharray="2 4"/><text x="50" y="50" font-size="26">1h</text><text x="50" y="70" font-size="12">payout</text></svg>
+      <svg class="lp-stamp" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46"/><circle cx="50" cy="50" r="38" stroke-dasharray="2 4"/><text x="50" y="50" font-size="26">4h</text><text x="50" y="70" font-size="12">payout</text></svg>
       <div class="lp-pig-cap"><b>The King Pig</b><span>fills all round, empties at :00</span></div>
     </div>
   </section>

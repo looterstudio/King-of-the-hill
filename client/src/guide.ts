@@ -90,8 +90,8 @@ export const GUIDE: Card[] = [
   { tab: 'prize', art: crownA, title: 'The top 3 of every round get paid', keys: 'every 4 hours', tone: 'orange', text: 'Every 4 hours (00, 04, 08, 12, 16 and 20 UTC) 4% of the pig goes to the three players with the most points that round: 60% to the first, 25% to the second, 15% to the third. The rest stays in the pig for the next rounds.' },
   { tab: 'prize', art: coins, title: 'Score points', keys: 'win <b>100</b> · top 10 <b>+20</b> · kill <b>+5</b>', tone: 'red', text: 'Duos win 50 each, squads 25 each. Up to 10 kills count per match. Every match this round adds up.' },
   { tab: 'prize', art: ghost, title: 'Connect Phantom', keys: 'top right: Connect Phantom', tone: 'pink', text: 'Your wallet is how we check you hold the token and where the prize goes. Signing in costs nothing.' },
-  { tab: 'prize', art: chain, title: `Hold $${TOKEN.holdMinUsd} all round`, keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the hour. Dip under and your points for that hour don\'t count.' },
-  { tab: 'prize', art: clock, title: 'The close', keys: 'a random minute in the last 10', tone: 'blue', text: 'Scoring closes at a random minute so nobody can time it; later points count for the next hour.' },
+  { tab: 'prize', art: chain, title: `Hold $${TOKEN.holdMinUsd} all round`, keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the 4-hour round. Dip under and your points for that round don\'t count.' },
+  { tab: 'prize', art: clock, title: 'The close', keys: 'a random minute in the last 10', tone: 'blue', text: 'Scoring closes at a random minute so nobody can time it; later points count for the next round.' },
   { tab: 'prize', art: hand, title: 'Paid to your wallet', keys: 'the wallet you play with', tone: 'teal', text: 'When the round closes the top 3 are sent their share in SOL, to the wallet they play with. Every result, and the transfer that paid it, is public.' },
 ];
 

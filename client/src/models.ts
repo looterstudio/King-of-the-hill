@@ -806,6 +806,34 @@ function lookOf(skin: number, id: number): Look {
       crown += 0.08;
       break;
     }
+    case 13: { // Slingoor: a wavy brown mop, a long face with a half smirk, a grey polo under black suspenders, khaki pleated chinos, white trainers
+      legs(I.KHAKI, I.KHAKI, I.WHITE, I.GRAPHITE, { wide: 1.08 });
+      for (const [, s, side] of LEGS) r.box(s, I.GRAPHITE, 0.012, 0.04, 0.07, side * 0.078, -fr.shin + 0.07, -0.07); // the trainer's N
+      for (const x of [-0.065, 0.065]) r.box(pelvis, I.BROWN, 0.012, 0.13, 0.012, x, 0.05, -0.158); // the pleats
+      chest(I.GRAPHITE);
+      r.cyl(torso, I.BROWN, 0.218, 0.214, 0.05, 0, 0.075, 0, 0, 0, 0, 12, SZ); // the belt, polo tucked in
+      // the suspenders: a black strap on each side, from over the shoulder down to a clip at the waistband
+      for (const s of [-1, 1]) {
+        const x = s * 0.105;
+        for (let k = 0; k < 6; k++) { const y = 0.11 + k * 0.09; r.box(torso, I.BLACK, 0.034, 0.1, 0.012, x, y, front(y, x) - 0.005); }
+        r.box(torso, I.BLACK, 0.034, 0.05, 0.3, x, 0.605, 0, -0.1);                       // over the shoulder
+        r.box(torso, I.WHITE, 0.03, 0.045, 0.014, x, 0.085, front(0.085, x) - 0.009);   // the clip
+      }
+      r.box(torso, I.BLACK, 0.012, 0.11, 0.01, 0, 0.5, front(0.5) - 0.004);             // the polo's placket
+      for (const s of [-1, 1]) r.box(torso, I.GRAPHITE, 0.09, 0.05, 0.03, s * 0.062, 0.605, front(0.6, 0.062) - 0.01, 0.2, 0, s * -0.5); // the collar
+      arms(I.GRAPHITE, 0.45, I.SKIN, I.SKIN);
+      skull(I.SKIN);
+      eyes({ y: -0.005, sy: 0.9, r: 0.03 });
+      brows(0.065, 0.04, 0.016);
+      nose(I.SKIN, -0.05, 0.033);
+      r.box(head, I.BLACK, 0.07, 0.011, 0.014, 0.012, HY - 0.108, zf(0, -0.108) - 0.002, 0, 0, 0.12); // a flat half smirk
+      dome(I.BROWN, 0.26, Math.PI * 0.56, 0.03, 0.12, 1.1, 1.08, 1.1);
+      curtain(I.BROWN, 0.268, 0.272, 0.2, 0.0, 0.95, 0.01);                              // hair over the ears and the nape
+      r.box(head, I.BROWN, 0.34, 0.07, 0.05, 0.03, HY + 0.135, zf(0, 0.135) + 0.012, -0.35, 0, -0.12); // the fringe, swept to one side
+      for (let k = 0; k < 11; k++) { const a = k * 2.399, rr = 0.1 + (k % 4) * 0.035; r.ball(head, I.BROWN, 0.07, Math.cos(a) * rr, HY + 0.17 + ((k * 5) % 3) * 0.025, Math.sin(a) * rr, 1.1, 0.8, 1.1, 6, 4); } // the wavy mop on top
+      crown += 0.1;
+      break;
+    }
     case 0:
     default: { // Scribble: a hoodie (its colour changes player to player), jeans, a beanie with a pom-pom, a backpack
       legs(I.BLUE, I.BLUE, I.GRAPHITE, I.WHITE);
@@ -826,7 +854,7 @@ function lookOf(skin: number, id: number): Look {
       break;
     }
   }
-  const L: Look = { geo: r.geometry(true), fr, crownY: crown, nod, hat: skin === 0 ? hat : [I.RED, I.BLUE, I.RED, I.ORANGE, I.BLACK, I.BROWN, I.GREEN, I.ORANGE, I.BLACK, I.YELLOW, I.YELLOW][skin] ?? hat };
+  const L: Look = { geo: r.geometry(true), fr, crownY: crown, nod, hat: skin === 0 ? hat : skin === 13 ? I.GRAPHITE : [I.RED, I.BLUE, I.RED, I.ORANGE, I.BLACK, I.BROWN, I.GREEN, I.ORANGE, I.BLACK, I.YELLOW, I.YELLOW][skin] ?? hat };
   looks.set(key, L);
   return L;
 }
@@ -859,7 +887,8 @@ export interface Figure {
 // a head), 6 Cupsey (a plush gumdrop), 7 Retardio (clown face, orange bob, black cap), 8 Kimchi (bowl cut,
 // cream tee, silver chain), 9 Unipcs (a round yellow robot with headphones), 10 Alon (grey hair, cycling
 // cap, white shades, STOP BEING POOR), 11 Mitch (brown bob, painted clown face, red web tee, cash),
-// 12 Ansem (short black curls, yellow tee). Every one has the same bones, so they all run, aim, glide, ride and
+// 12 Ansem (short black curls, yellow tee), 13 Slingoor (a wavy brown mop, grey polo, black suspenders, khaki
+// pleated chinos, white trainers). Every one has the same bones, so they all run, aim, glide, ride and
 // fall the same way.
 export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.length): Figure {
   const L = lookOf(skin, id), fr = L.fr, rest = restOf(fr);

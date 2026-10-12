@@ -1098,10 +1098,11 @@ function frame(now: number) {
       if (cd[0].textContent !== hh) cd[0].textContent = hh;
       if (cd[1].textContent !== mm) cd[1].textContent = mm;
       if (cd[2].textContent !== ss) { cd[2].textContent = ss; cd[2].classList.remove('tick'); void cd[2].offsetWidth; cd[2].classList.add('tick'); }
-      // the hour as a bar filling toward the payout
+      // the 4-hour round as a bar filling toward the payout
       const left = Math.max(0, state.pot.epochEndMs - Date.now()), k = 1 - left / EPOCH_MS;
       $('hourFill').style.width = `${(Math.max(0, Math.min(1, k)) * 100).toFixed(1)}%`;
-      setText($('hourLabel'), left < 60_000 ? 'PAYING OUT…' : `${Math.ceil(left / 60_000)} MIN TO THE PAYOUT`);
+      const mins = Math.ceil(left / 60_000);
+      setText($('hourLabel'), left < 60_000 ? 'PAYING OUT…' : mins >= 60 ? `${Math.floor(mins / 60)}H ${String(mins % 60).padStart(2, '0')}M TO THE PAYOUT` : `${mins} MIN TO THE PAYOUT`);
     }
   } else if (state.screen === 'waiting') {
     // the bottom card: a new lesson every 6 s while you wait

@@ -147,7 +147,8 @@ async function holdStatus(wallet: string): Promise<string | null> {
   try { h = await pot.holderTokens(wallet); } catch { return 'could not read your balance yet'; }
   const raw = epochs.rawRequirement(epochs.current, h.decimals);
   if (h.raw >= raw) return null;
-  return `hold ${fromRaw(raw, h.decimals)} $${config.tokenSymbol} to score points for the pot (you have ${fromRaw(h.raw, h.decimals)})`;
+  // in dollars first, so it reads at a glance: the token count is only a thing to check against
+  return `hold $${config.holdMinUsd} of $${config.tokenSymbol} (≈ ${Number(fromRaw(raw, h.decimals)).toLocaleString('en-US', { maximumFractionDigits: 0 })} tokens) to score points for the pot · you hold ${Number(fromRaw(h.raw, h.decimals)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
 
 // a connected wallet's lobby profile: balance, whether it qualifies this hour, standing, record
@@ -159,11 +160,11 @@ async function profileOf(wallet: string): Promise<ProfileView> {
       const h = await pot.holderTokens(wallet), raw = epochs.rawRequirement(epochs.current, h.decimals);
       balance = fromRaw(h.raw, h.decimals); needS = need > 0 ? fromRaw(raw, h.decimals) : null;
       holds = h.raw >= raw;
-      if (!holds) why = `hold ${needS} $${config.tokenSymbol} (≈ $${config.holdMinUsd}) all hour to qualify`;
+      if (!holds) why = `hold $${config.holdMinUsd} of $${config.tokenSymbol} (≈ ${Number(needS).toLocaleString('en-US', { maximumFractionDigits: 0 })} tokens) all round to qualify`;
     } catch { why = 'could not read your balance yet'; holds = false; }
   } else if (need > 0) { holds = false; why = `$${config.tokenSymbol} isn't live yet`; }
   const voided = epochs.isVoid(epochs.scoringEpoch(), wallet);
-  if (voided) why = 'your balance dipped under the requirement at a check this hour: points void until the next hour';
+  if (voided) why = 'your balance dipped under the requirement at a check this round: points void until the next round';
   return { wallet, symbol: config.tokenSymbol, balance, need: needS, holdMinUsd: config.holdMinUsd, qualified: holds && !voided, why, points: st.points, rank: st.rank, ...rec };
 }
 async function sendProfile(c: Client) {
