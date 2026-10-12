@@ -578,7 +578,7 @@ test('anti-wallhack: an enemy behind a wall is not sent, one in the open is', as
   const m = new Match('r3', 4, [1, 2, 3], Date.now());
   m.sim.world = World.custom([{ x0: -10, y0: 0, z0: -62, x1: 10, y1: 6, z1: -60, ink: 1, kind: 'wall' }]);
   const [a, b, c] = [1, 2, 3].map((id) => m.sim.players.get(id)!);
-  for (const p of m.sim.players.values()) { p.gliding = false; p.y = 0; p.grounded = true; }
+  for (const p of m.sim.players.values()) { p.gliding = false; p.bus = 0; p.y = 0; p.grounded = true; }
   a.x = 0; a.z = 0; b.x = 0; b.z = -80; c.x = 60; c.z = 0;
   let snap: { others: number[][] } | null = null;
   for (let i = 0; i < 4; i++) { const o = m.step(Date.now()); const s = o.sends.find((x) => x.drop && (x.to as number[])[0] === 1); if (s) snap = JSON.parse(s.json); }
