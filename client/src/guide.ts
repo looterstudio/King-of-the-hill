@@ -90,7 +90,7 @@ export const GUIDE: Card[] = [
   { tab: 'prize', art: crownA, title: 'Top of the hour wins', keys: 'every hour, on the hour', tone: 'orange', text: 'The player with the most points when the hour closes takes the whole pot (a tie splits it). 10% stays to start the next one.' },
   { tab: 'prize', art: coins, title: 'Score points', keys: 'win <b>100</b> · top 10 <b>+20</b> · kill <b>+5</b>', tone: 'red', text: 'Duos win 50 each, squads 25 each. Up to 10 kills count per match. Every match this hour adds up.' },
   { tab: 'prize', art: ghost, title: 'Connect Phantom', keys: 'top right: Connect Phantom', tone: 'pink', text: 'Your wallet is how we check you hold the token and where the prize goes. Signing in costs nothing.' },
-  { tab: 'prize', art: chain, title: 'Hold $50 all hour', keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the hour. Dip under and your points for that hour don\'t count.' },
+  { tab: 'prize', art: chain, title: `Hold $${TOKEN.holdMinUsd} all hour`, keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the hour. Dip under and your points for that hour don\'t count.' },
   { tab: 'prize', art: clock, title: 'The close', keys: 'a random minute in the last 10', tone: 'blue', text: 'Scoring closes at a random minute so nobody can time it; later points count for the next hour.' },
   { tab: 'prize', art: hand, title: 'Paid to your wallet', keys: 'the wallet you play with', tone: 'teal', text: 'When the hour closes the winner is sent the pot in SOL. Every hour\'s result, and the transfer that paid it, is public.' },
 ];

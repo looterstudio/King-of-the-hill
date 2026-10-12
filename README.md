@@ -181,7 +181,7 @@ Players trust the team to pay in this mode. The vault program below removes that
 
 1. **Paste the contract address (CA)** into `shared/src/token.ts` (`mint`). That one line puts it in the lobby
    with copy / pump.fun / Jupiter / chart links, in the demo build, and on the server (where `TOKEN_MINT` in
-   the environment overrides it). Symbol and the $50 hold rule live in the same file.
+   the environment overrides it). Symbol and the $25 hold rule live in the same file.
 2. **Fees into the pot:** deploy `programs/pot_vault`, run `initialize`, and send the token's creator fees to
    the `vault` PDA (claim them and transfer, on a schedule, or point the fee recipient at the vault if the
    launchpad allows it). Set `POT_SOURCE=solana`, `VAULT_ADDRESS`, `CONFIG_ADDRESS` and a paid `SOLANA_RPC_URL`.
@@ -200,7 +200,7 @@ Players trust the team to pay in this mode. The vault program below removes that
    nonce, verified with ed25519) and **hold the epoch's requirement**: `min(HOLD_TOKENS, $HOLD_MIN_USD)`
    worth of the token, priced at the **one-hour median** and fixed in tokens when the epoch starts.
    A price drop never pushes a holder out mid-epoch (the 50K cap), a pump never prices new players
-   out (the $50 side).
+   out (the dollar side).
 3. **No buying 5 minutes before the payout.** The server checks every scoring wallet's balance at
    six secret moments in the epoch and again at the close; below the requirement at any of them and
    that wallet's points for the epoch are void (`data/voids.jsonl`). Scoring itself closes at a
@@ -225,7 +225,7 @@ Players trust the team to pay in this mode. The vault program below removes that
 | `SOLANA_RPC_URL` | mainnet | use a paid RPC in production |
 | `VAULT_ADDRESS` / `CONFIG_ADDRESS` | | PDAs of the vault program |
 | `TOKEN_MINT` | `shared/src/token.ts` | the game's coin (the CA); required when `HOLD_MIN_USD` > 0 |
-| `HOLD_MIN_USD` | `50` | USD side of the hold requirement for scoring points |
+| `HOLD_MIN_USD` | `25` | USD side of the hold requirement for scoring points |
 | `HOLD_TOKENS` | `0` | optional cap in tokens: the requirement never exceeds this many (0 = dollars only) |
 | `TOKEN_SYMBOL` | `KOTH` | shown in the lobby |
 | `PRICE_URL` | Jupiter price v3 | mint is appended to it |
