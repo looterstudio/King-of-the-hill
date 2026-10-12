@@ -186,7 +186,7 @@ Players trust the team to pay in this mode. The vault program below removes that
 | `VAULT_ADDRESS` / `CONFIG_ADDRESS` | | PDAs of the vault program |
 | `TOKEN_MINT` | `shared/src/token.ts` | the game's coin (the CA); required when `HOLD_MIN_USD` > 0 |
 | `HOLD_MIN_USD` | `50` | USD side of the hold requirement for scoring points |
-| `HOLD_TOKENS` | `50000` | token side: the requirement never exceeds this many tokens |
+| `HOLD_TOKENS` | `0` | optional cap in tokens: the requirement never exceeds this many (0 = dollars only) |
 | `TOKEN_SYMBOL` | `KOTH` | shown in the lobby |
 | `PRICE_URL` | Jupiter price v3 | mint is appended to it |
 | `REQUIRE_WALLET` / `ALLOW_GUESTS` | `false` / `true` | set `true` / `false` in production |
