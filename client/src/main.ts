@@ -7,7 +7,7 @@ import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Game3D, RARITY_CSS } from './game3d.ts';
-import { renderArsenal, renderSkins } from './arsenal.ts';
+import { renderArsenal, renderSkins, skinPics } from './arsenal.ts';
 import { PartyUI } from './party.ts';
 import { lobbyMusic } from './music.ts';
 import { STATIONS, radio } from './radio.ts';
@@ -112,7 +112,7 @@ addEventListener('keydown', (e) => {
 // the character you drop in as (remembered between visits)
 let mySkin = 0;
 try { mySkin = Math.max(0, Math.min(SKINS.length - 1, Number(localStorage.getItem('skin')) || 0)); } catch { /* private window */ }
-setTimeout(() => renderSkins($('skinList'), mySkin, (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } }), 50);
+setTimeout(() => renderSkins($('skinList'), mySkin, (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } renderProfile(); }), 50);
 let flyVisible = true;
 try { new IntersectionObserver((e) => { flyVisible = e[0].isIntersecting; }).observe(flyCanvas); } catch { /* old browser: always draw */ }
 const input = new FpsInput(canvas);
@@ -396,6 +396,7 @@ function renderProfile() {
   chip.setAttribute('aria-expanded', String(!pop.classList.contains('hidden')));
   const won = sol(p.prizeLamports);
   setHTML(pop, `<h4>Your profile <button type="button" data-close aria-label="close">✕</button></h4><div class="pf-wallet">${esc(p.wallet)}</div>`
+    + (skinPics[mySkin] ? `<div class="pf-skin"><img src="${skinPics[mySkin]}" alt=""><span>playing as <b>${esc(SKINS[mySkin])}</b></span></div>` : '')
     + `<div class="pf-status ${p.qualified ? 'ok' : 'no'}">${p.qualified ? `✓ Qualified for this hour's prize` : '✗ Not qualified this hour'}`
     + `<small>${p.balance !== null ? `You hold ${fmtNum(p.balance)} $${esc(p.symbol)}${p.need ? ` · need ${fmtNum(p.need)} (≈ $${p.holdMinUsd})` : ''}` : esc(p.why ?? '')}${p.qualified || p.balance === null ? '' : `<br>${esc(p.why ?? '')}`}</small></div>`
     + `<div class="pf-grid"><div class="gold"><b>${p.points}</b><span>points this hour</span></div><div class="gold"><b>${p.rank ? `#${p.rank}` : '–'}</b><span>rank this hour</span></div><div class="gold"><b>${p.prizes}</b><span>prizes won</span></div>`
