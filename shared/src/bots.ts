@@ -404,8 +404,8 @@ export function botInput(b: Bot, sim: Sim): Input {
     // (at the end of a match the nearest anywhere, to go and find: two bots must not wait out the storm apart)
     const near: { q: PlayerState; d: number }[] = [], reg = BOTS.get(sim), armedSelf = self.slots.some(Boolean);
     let far: { q: PlayerState; d: number } | null = null;
-    // what a person sees: about 70 m of open ground, 110 with a scope in hand; farther away only whoever is shooting at us
-    const seeR = self.slots.some((x) => !!x && WEAPONS[x].zoom >= 2.4) ? 110 : 70, shooter = t - b.hitT < 2 ? self.hitBy : undefined;
+    // what a person sees: about 50 m of open ground, 90 with a scope in hand; farther away only whoever is shooting at us
+    const seeR = self.slots.some((x) => !!x && WEAPONS[x].zoom >= 2.4) ? 90 : 50, shooter = t - b.hitT < 2 ? self.hitBy : undefined;
     for (const q of sim.players.values()) {
       if (!q.alive || q.team === self.team || q.gliding) continue; // gliders can't shoot back
       const d = Math.hypot(q.x - self.x, q.z - self.z);
@@ -521,7 +521,9 @@ export function botInput(b: Bot, sim: Sim): Input {
   }
 
   // ---- hurt, and the fight isn't going our way: break off to somewhere they can't see us, heal there ----
-  if (!goal && !moved && fighting && tgt && !b.cover && life < (PLAYER_HP + SHIELD_MAX) * 0.28 && self.items.big + self.items.mini + self.items.med > 0 && td > 10 && !rotate && foe > life && spend(coverBudget, sim, 2)) {
+  // (like a person: with heals in the bag, back off at under 45% and patch up; with none, a fight going badly is left at under 30%)
+  const heals = self.items.big + self.items.mini + self.items.med > 0, hurtBad = life < (PLAYER_HP + SHIELD_MAX) * (heals ? 0.45 : 0.3);
+  if (!goal && !moved && fighting && tgt && !b.cover && hurtBad && td > 6 && !rotate && foe > life * (heals ? 1 : 1.3) && spend(coverBudget, sim, 2)) {
     b.mode = 'retreat';
     const c = coverFrom(w, self, b.groundY, tgt, R() * Math.PI * 2);
     if (c) b.cover = { x: c.x, z: c.z, until: t + 1.5 + Math.hypot(c.x - self.x, c.z - self.z) / 6 + 5, at: false }; // time to get there, and to heal
@@ -993,16 +995,19 @@ function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number
     const r = b.goal.ref;
     if ((b.goal.kind === 'case' ? (r as Case).open : b.goal.kind === 'bench' ? b.benches.has(-1 - r.id) : !sim.loot.includes(r as Loot)) || !ok(r.x, r.z, 12)) b.goal = null; // (the one we're walking to has 12 m of slack: at the edge of the zone it flipped between it and the storm, standing still)
   }
+  // loot other bots are already walking to counts as farther away: a hundred bots all took the nearest case and met there
+  const crowded = new Map<string, number>();
+  for (const o of BOTS.get(sim)?.list ?? []) if (o !== b && o.goal) { const k = `${o.goal.kind}:${o.goal.ref.id}`; crowded.set(k, (crowded.get(k) ?? 0) + 1); }
   const full = !self.slots.includes(null), wi = worstSlot(self, b.skill), wv = full ? worth(self.slots[wi]!, self.ups[wi], b.skill) : 0;
   let best: Loot | Case | Bench | null = null, kind: 'case' | 'loot' | 'bench' = 'loot', bd = 45;
   for (const c of sim.cases) {
     if (c.open || Math.abs(c.y - self.y) > 1.3 || b.skip.has(c.id) || out(c.x, c.z)) continue;
-    const d = Math.hypot(c.x - self.x, c.z - self.z) * 0.85;
+    const d = Math.hypot(c.x - self.x, c.z - self.z) * 0.85 + 14 * (crowded.get(`case:${c.id}`) ?? 0);
     if (d < bd) { bd = d; best = c; kind = 'case'; }
   }
   for (const l of sim.loot) {
     if (Math.abs(l.y - self.y) > 1.2 || b.skip.has(l.id) || out(l.x, l.z)) continue;
-    const d = Math.hypot(l.x - self.x, l.z - self.z);
+    const d = Math.hypot(l.x - self.x, l.z - self.z) + 10 * (crowded.get(`loot:${l.id}`) ?? 0);
     if (d >= bd) continue;
     let useful = false;
     if (l.kind === 'weapon') { const x = l.what as WeaponId; useful = !self.slots.includes(x) && (!full || worth(x, l.up ?? 0, b.skill) > wv * 1.15 + 3); }
