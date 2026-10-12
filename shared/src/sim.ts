@@ -515,7 +515,7 @@ export class Sim {
     if (vhit) { this.damageVehicle(vhit, Math.round(dmgAt(t, false)), p.id, ev); return; }
     if (hit && hit.q.alive) {
       let dmg = Math.round(dmgAt(t, hit.head));
-      if (this.botDmg < 1 && this.botIds?.has(p.id) && this.botIds.has(hit.q.id)) dmg = Math.max(1, Math.round(dmg * this.botDmg));
+      if (this.botDmg < 1 && this.botIds?.has(p.id) && this.botIds.has(hit.q.id)) dmg = Math.max(1, Math.round(dmg * (this.botDmg + (1 - this.botDmg) * clamp((14 - this.alive) / 8, 0, 1)))); // (full damage again as the field thins: the last ones finish it)
       const h = this.hurt(hit.q, dmg);
       ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg, head: hit.head, ...h });
       if (hit.q.hp <= 0) this.fall(hit.q, p.id, 'shot', ev, hit.head);

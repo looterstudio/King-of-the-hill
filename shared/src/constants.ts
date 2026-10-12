@@ -77,7 +77,7 @@ export const RING_PHASES: RingPhase[] = [ // about 18 minutes from the first wai
 export const RING_DPS_START = 1;
 // the storm hurries as the field thins out: its clock runs at normal pace while half the teams are
 // still in, then faster and faster, up to max times as fast with a tenth of them left
-export const RING_HURRY = { from: 0.25, to: 0.05, max: 1.5 };
+export const RING_HURRY = { from: 0.3, to: 0.05, max: 2 };
 
 // ---- loot ----
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
