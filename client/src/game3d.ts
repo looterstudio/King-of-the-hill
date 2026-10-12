@@ -113,6 +113,7 @@ export class Game3D {
   private busSnap: { b: number[]; at: number } | null = null;
   busNow: { x: number; y: number; z: number; dx: number; dz: number; aboard: number } | null = null;
   private planeModel: THREE.Group | null = null;
+  private exitK = 0; private wasBus = false; private exitOff = new THREE.Vector3(); private exitQ = new THREE.Quaternion(); // jumping out of the plane: the camera glides from the plane's view to yours
   private airK = 0; // 0 over the shoulder .. 1 the chase camera you glide and fall with
   private wind: THREE.LineSegments | null = null; private windPts = new Float32Array(0); // speed lines while you fall
   private axeView: THREE.Group | null = null;
@@ -1049,6 +1050,16 @@ export class Game3D {
       } else {
         cam.position.copy(pos.add(new THREE.Vector3(0, (this.pred.down > 0 ? KNOCK.eye : EYE_H + crouch) + Math.sin(this.bob) * (speed > 7.4 ? 0.07 : 0.04), 0)));
         cam.rotation.set(look.pitch, look.yaw, this.pred.slideT > 0 ? 0.06 : this.pred.down > 0 ? 0.12 : 0, 'YXZ');
+      }
+      // just out of the plane: start from where the plane's camera was (relative to you) and ease into the
+      // fall view, instead of cutting from 36 m back to your shoulder in one frame
+      if (this.pred.bus) { this.wasBus = true; this.exitOff.copy(cam.position).sub(pos); this.exitQ.copy(cam.quaternion); }
+      else if (this.wasBus) { this.wasBus = false; this.exitK = 1; this.airK = 1; }
+      if (this.exitK > 0 && !this.pred.bus) {
+        this.exitK = Math.max(0, this.exitK - dt / 0.9);
+        const k = this.exitK * this.exitK * (3 - 2 * this.exitK); // smoothstep
+        cam.position.lerp(this.exitOff.clone().add(pos), k);
+        cam.quaternion.slerp(this.exitQ, k);
       }
       const w = this.weapon;
       const zoom = look.aim && w ? (this.tpNow ? Math.min(1.3, WEAPONS[w].zoom) : WEAPONS[w].zoom) : 1; // over the shoulder, aiming only leans in
