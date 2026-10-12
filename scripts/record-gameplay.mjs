@@ -6,9 +6,9 @@
 // Builds the demo (skip with --no-build), serves it, joins as a guest, and lets the bots' own brain
 // play your seat (client/src/autopilot.ts) through the normal input path: the paper plane, the drop,
 // looting, fights, all in third person. The page runs on a virtual clock the recorder steps one frame
-// at a time (so the clip is smooth however slow the machine), each frame is screenshotted at 1280x720
+// at a time (so the clip is smooth however slow the machine), each frame is screenshotted at 1920x1080
 // and the frames are encoded with ffmpeg into client/public/media/:
-//   gameplay.mp4 (H.264), gameplay.webm (VP9), gameplay.jpg (poster)
+//   gameplay.mp4 (H.264), gameplay.jpg (poster)
 // Without ffmpeg it stops with a message (the frames need an encoder either way).
 //
 // Options (flags or env):
@@ -36,7 +36,7 @@ const flag = (n) => args.includes(`--${n}`);
 const opt = (n, env, d) => { const i = args.indexOf(`--${n}`); return Number(i >= 0 ? args[i + 1] : process.env[env] ?? d); };
 const SECONDS = opt('seconds', 'SECONDS', 60);
 const MAX_MB = opt('max-mb', 'MAX_MB', 8);
-const FPS = 30, W = 1280, H = 720;
+const FPS = 30, W = 1920, H = 1080;
 const log = (...a) => console.log('[record]', ...a);
 
 // ---------- tools ----------
@@ -132,16 +132,16 @@ await ctx.addInitScript(() => {
 });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => log('page error:', e.message));
-await page.goto(URL_);
+await page.goto(URL_, { waitUntil: 'domcontentloaded', timeout: 120000 });
 // until the match starts, time runs on its own (about real time) while we click through the lobby
 let pumping = true;
 const pump = (async () => { while (pumping) { await page.evaluate(() => window.__vt.step(50)).catch(() => {}); await new Promise((r) => setTimeout(r, 30)); } })();
-await page.waitForSelector('#guestBtn', { state: 'visible' });
-await page.fill('#guestName', 'you');
-await page.click('#guestBtn');
+// sign in as a guest where the lobby still shows the field; otherwise the pre-match card asks for the name
+if (await page.locator('#guestBtn').isVisible({ timeout: 4000 }).catch(() => false)) { await page.fill('#guestName', 'you'); await page.click('#guestBtn'); }
 await page.waitForFunction(() => !document.querySelector('#playBtn')?.hasAttribute('disabled'));
 await page.click('#playBtn');
 // the pre-match card (controls, your name): one more click takes you in
+if (await page.locator('#pmName').isVisible({ timeout: 3000 }).catch(() => false)) await page.fill('#pmName', 'you');
 const enter = page.locator('[data-pm="go"]');
 if (await enter.isVisible({ timeout: 3000 }).catch(() => false)) await enter.click();
 log('queued; waiting for the match');
@@ -181,22 +181,17 @@ log(`captured ${total} frames in ${((Date.now() - started) / 1000).toFixed(0)} s
 fs.mkdirSync(OUT, { recursive: true });
 const mb = (p) => fs.statSync(p).size / 1e6;
 const ff = (a) => { const r = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', ...a], { stdio: 'inherit' }); if (r.status !== 0) throw new Error('ffmpeg failed: ' + a.join(' ')); };
-const mp4 = path.join(OUT, 'gameplay.mp4'), webm = path.join(OUT, 'gameplay.webm'), jpg = path.join(OUT, 'gameplay.jpg');
+const mp4 = path.join(OUT, 'gameplay.mp4'), jpg = path.join(OUT, 'gameplay.jpg'); // H.264 plays everywhere; the VP9 copy took ages for little
 // a detailed, busy picture (every line is ink): step down quality, then size, until the file fits
-const LADDER = [[1280, 30], [1280, 33], [1280, 36], [1280, 39], [960, 37], [960, 41], [854, 44]];
+const LADDER = [[1920, 24], [1920, 27], [1920, 30], [1600, 30], [1280, 30], [1280, 34], [960, 37]];
 for (const [w, crf] of LADDER) {
   ff(['-i', raw, '-an', '-vf', `scale=${w}:-2:flags=lanczos`, '-c:v', 'libx264', '-preset', 'medium', '-crf', String(crf), '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4]);
   log(`mp4 ${w}px crf ${crf}: ${mb(mp4).toFixed(2)} MB`);
   if (mb(mp4) <= MAX_MB) break;
-}
-for (const [w, crf] of LADDER.map(([w, c]) => [w, c + 10])) {
-  ff(['-i', raw, '-an', '-vf', `scale=${w}:-2:flags=lanczos`, '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(crf), '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', webm]);
-  log(`webm ${w}px crf ${crf}: ${mb(webm).toFixed(2)} MB`);
-  if (mb(webm) <= MAX_MB) break;
 }
 // the poster: the first moment the pilot was fighting, else a third of the way in
 const fight = timeline.find((s) => s.mode === 'fight' && s.alive);
 const posterAt = Math.min(SECONDS - 1, fight ? fight.at + 0.5 : SECONDS / 3);
 ff(['-ss', posterAt.toFixed(2), '-i', raw, '-frames:v', '1', '-q:v', '4', jpg]);
 if (!flag('keep')) fs.rmSync(tmp, { recursive: true, force: true }); else log('raw capture kept at', raw);
-log(`done: ${path.relative(ROOT, mp4)} ${mb(mp4).toFixed(2)} MB · ${path.relative(ROOT, webm)} ${mb(webm).toFixed(2)} MB · ${path.relative(ROOT, jpg)} (poster at ${posterAt.toFixed(1)} s)`);
+log(`done: ${path.relative(ROOT, mp4)} ${mb(mp4).toFixed(2)} MB · ${path.relative(ROOT, jpg)} (poster at ${posterAt.toFixed(1)} s)`);
