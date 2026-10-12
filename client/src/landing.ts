@@ -7,7 +7,7 @@ import { MODES, POINTS, ROOM_MAX, topPlaces, type Mode } from '../../shared/src/
 import { TOKEN } from '../../shared/src/token.ts';
 import { PotJar } from './potjar.ts';
 
-const VIDEO = { mp4: 'media/gameplay.mp4', webm: 'media/gameplay.webm', poster: 'media/gameplay.jpg' };
+const VIDEO = { mp4: 'media/gameplay.mp4', poster: 'media/gameplay.jpg' };
 
 const LOGO = '<svg class="syms" viewBox="0 0 96 30" aria-hidden="true"><circle cx="14" cy="15" r="10.5"/><path d="M38 25 L48 5 L58 25 Z"/><rect x="72" y="5" width="20" height="20" rx="1"/></svg><span class="word">King of the Hill <em>Royale</em></span>';
 const SCRIBBLE = '<svg viewBox="0 0 300 20" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 60 4, 120 16, 180 9 S 270 6, 296 11"/></svg>';
@@ -91,7 +91,6 @@ function html() {
     <div class="lp-film lp-in">
       <span class="tape tape-l"></span><span class="tape tape-r"></span>
       <video muted loop playsinline preload="none" poster="${VIDEO.poster}" aria-label="a minute of gameplay: the drop, looting and a fight, in third person">
-        <source data-src="${VIDEO.webm}" type="video/webm" />
         <source data-src="${VIDEO.mp4}" type="video/mp4" />
       </video>
       <div class="lp-film-cap"><span><span class="rec">REC</span> third person, over the shoulder</span><button type="button" data-film>Pause</button></div>
