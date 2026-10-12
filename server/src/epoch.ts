@@ -80,7 +80,13 @@ export class Epochs extends EventEmitter {
       const usd = this.priceUsd();
       const byUsd = this.cfg.holdMinUsd > 0 && usd ? this.cfg.holdMinUsd / usd : Infinity;
       r = Math.min(this.cfg.holdTokens > 0 ? this.cfg.holdTokens : Infinity, byUsd);
-      if (!Number.isFinite(r)) r = this.cfg.holdTokens; // no price yet and no token cap: fall back to the cap
+      if (!Number.isFinite(r)) {
+        // no price and no token cap (dollars only): the last hour's requirement, never 0. With none yet,
+        // nobody qualifies until a price comes in (not cached: the next call tries again)
+        const prev = [...this.reqTokens.entries()].filter(([e]) => e < epoch).sort((a, b) => b[0] - a[0])[0];
+        if (!prev) return Number.MAX_SAFE_INTEGER;
+        r = prev[1];
+      }
     }
     this.reqTokens.set(epoch, r);
     appendFileSync(this.reqFile, JSON.stringify({ epoch, tokens: r, at: this.now() }) + '\n');

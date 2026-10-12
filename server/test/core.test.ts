@@ -396,7 +396,7 @@ test('epoch rollover settles points into a claim file', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let now = EPOCH_MS * 100 + 1000;
   const pot = new MockPot(3_000_000_000n);
-  const ep = new Epochs({ ...config, dataDir: dir, payoutMode: 'prorata', rolloverBps: 1000 }, pot, () => now);
+  const ep = new Epochs({ ...config, dataDir: dir, payoutMode: 'prorata', rolloverBps: 1000, holdTokens: 50_000 }, pot, () => now);
   const w1 = wallet(), w2 = wallet();
   ep.recordWin(w1, 'a'); ep.recordWin(w1, 'a'); ep.recordWin(w2, 'b');
   let settled: unknown = null;
@@ -419,10 +419,10 @@ test('an epoch missed while the server was down settles on boot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let now = EPOCH_MS * 200 + 5;
   const pot = new MockPot(1_000_000_000n);
-  const ep = new Epochs({ ...config, dataDir: dir }, pot, () => now);
+  const ep = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000 }, pot, () => now);
   ep.recordWin(wallet(), 'x');
   now += EPOCH_MS * 2; // down for two boundaries
-  const ep2 = new Epochs({ ...config, dataDir: dir }, pot, () => now);
+  const ep2 = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000 }, pot, () => now);
   await ep2.catchUp();
   const rec = JSON.parse(readFileSync(join(dir, 'epochs', '200.json'), 'utf8'));
   assert.equal(rec.claims.length, 1);
@@ -807,6 +807,16 @@ test('the hold requirement is min(HOLD_TOKENS, $HOLD_MIN_USD) and fixed for the 
   assert.equal(ep.requirement(), 50_000);
   const ep2 = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 50_000, holdMinUsd: 50 }, new MockPot(), () => EPOCH_MS * 301 + 5, () => 0.01);
   assert.equal(ep2.requirement(), 5_000, 'pumped 10x: $50 is 5K tokens, new players need less');
+});
+
+test('dollars only (no token cap): without a price the requirement is never 0', () => {
+  let price: number | null = null, now = EPOCH_MS * 500 + 5;
+  const ep = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 0, holdMinUsd: 25 }, new MockPot(), () => now, () => price);
+  assert.equal(ep.requirement(500), Number.MAX_SAFE_INTEGER, 'no price yet: nobody qualifies for free');
+  price = 0.0005;
+  assert.equal(ep.requirement(500), 50_000, '$25 at $0.0005 is 50K tokens, fixed for the hour');
+  price = null; now += EPOCH_MS;
+  assert.equal(ep.requirement(501), 50_000, 'the price feed is down next hour: last hour\'s requirement, not 0');
 });
 
 test('selling before a hidden snapshot voids your points; holders keep theirs', async () => {
