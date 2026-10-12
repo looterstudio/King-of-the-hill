@@ -231,6 +231,19 @@ class Sfx {
   swing() { if (this.ctx && this.enabled) this.burst(900, 0.8, 0.12, 0.12, 'bandpass'); }
   chop(broke: boolean) { if (!this.ctx || !this.enabled) return; this.burst(broke ? 500 : 1800, 2, broke ? 0.35 : 0.25, broke ? 0.3 : 0.08); if (broke) this.tone(160, 60, 0.18, 0.3, 'triangle'); }
   // you won: a short brass-ish fanfare, up a major arpeggio to a held chord
+  // the lobby: a soft tick when browsing (characters, modes), a bright chord on a pick, a whoosh opening
+  // the character select, a two-note chime when a friend lands in your party
+  ui(kind: 'tick' | 'pick' | 'open' | 'join') {
+    if (!this.ctx || !this.enabled) return;
+    if (kind === 'tick') { this.tone(1320, 1180, 0.05, 0.05, 'triangle'); this.burst(5200, 6, 0.04, 0.02, 'bandpass'); }
+    else if (kind === 'open') { this.burst(1400, 0.9, 0.16, 0.22, 'bandpass'); this.tone(392, 784, 0.08, 0.2, 'triangle'); }
+    else if (kind === 'join') { this.tone(659, 659, 0.12, 0.18, 'triangle'); this.tone(988, 988, 0.12, 0.3, 'triangle', 0.11); }
+    else {
+      this.burst(900, 1.4, 0.3, 0.12, 'bandpass');
+      for (const [f, d] of [[523, 0], [659, 0.04], [784, 0.08], [1047, 0.12]] as const) this.tone(f, f, 0.13, 0.55, 'triangle', d);
+      this.tone(2093, 2637, 0.05, 0.4, 'sine', 0.14);
+    }
+  }
   fanfare() {
     if (!this.ctx || !this.enabled) return;
     const notes = [523, 659, 784, 1047];

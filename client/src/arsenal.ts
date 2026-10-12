@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { PERKS, UPGRADE, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type PerkId } from '../../shared/src/constants.ts';
 import type { InkRenderer } from './ink.ts';
-import { buildGun, buildItem, buildVehicle, buildPickaxe, buildFigure, posedGeometry, poseStand, upgradeGun } from './models.ts';
+import { buildGun, buildItem, buildVehicle, buildPickaxe, upgradeGun } from './models.ts';
 import { SKINS } from '../../shared/src/constants.ts';
 
 const COLORS = [0x3b6fd6, 0xd32336, 0x3a3f4b, 0xf08c00, 0x2f9e44, 0xe64980, 0x8b5a2b, 0xf6f2e4, 0x2fd4f0, 0x7b3fb0, 0xf3c6a5, 0xf5c518, 0x25262d, 0xffffff, 0x7a4e36]; // INK_IDS order
@@ -73,35 +73,30 @@ export function renderArsenal(el: HTMLElement) {
   renderer.dispose(); renderer.forceContextLoss();
 }
 
-// the character pictures, once the picker has drawn them (the party screen and the profile card reuse them)
+// the character pictures: a full figure and a head-and-shoulders portrait each, drawn by the lobby's own
+// ink renderer (lobbystage.ts) at the screen's pixel ratio. The party panel and the profile card reuse them
 export const skinPics: string[] = [];
-// the character picker: one picture per character, click to choose
+export const skinBusts: string[] = [];
+const grids = new Set<HTMLElement>();
+const fill = (el: HTMLElement) => el.querySelectorAll<HTMLImageElement>('img[data-pic]').forEach((img) => { const src = skinBusts[Number(img.dataset.pic)]; if (src && img.src !== src) img.src = src; });
+export function setSkinPics(full: string[], bust: string[]) {
+  skinPics.splice(0, skinPics.length, ...full);
+  skinBusts.splice(0, skinBusts.length, ...bust);
+  for (const g of grids) fill(g);
+  dispatchEvent(new Event('skins:ready'));
+}
+// the character select's grid: one portrait card per character, click to choose (window 'skin:pick' tells the lobby)
 export function renderSkins(el: HTMLElement, picked: number, onPick: (i: number) => void) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 160; canvas.height = 200;
-  let renderer: THREE.WebGLRenderer;
-  try { renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true }); } catch { return; }
-  renderer.setClearColor(0x000000, 0);
-  const mats = COLORS.map((c) => new THREE.MeshLambertMaterial({ color: c })), byVertex = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const fakeInk = { material: (id: number) => mats[id] ?? byVertex } as unknown as InkRenderer;
-  const col = new THREE.Color();
-  const pics = SKINS.map((_, i) => {
-    // a character is one skinned mesh with its inks per vertex: pose it, bake the pose, colour each vertex
-    const f = buildFigure(fakeInk, 7, i);
-    poseStand(f);
-    const geo = posedGeometry(f), ink = geo.getAttribute('aInk'), rgb = new Float32Array(ink.count * 3);
-    for (let k = 0; k < ink.count; k++) col.setHex(COLORS[ink.getX(k)] ?? 0x888888).toArray(rgb, k * 3);
-    geo.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
-    return picture(renderer, new THREE.Mesh(geo, byVertex), Math.PI + 0.5, 0.15);
-  });
-  renderer.dispose(); renderer.forceContextLoss();
-  skinPics.splice(0, skinPics.length, ...pics);
-  el.innerHTML = SKINS.map((n, i) => `<button type="button" class="skin ${i === picked ? 'on' : ''}" data-skin="${i}" aria-label="${n}"><img src="${pics[i]}" alt=""><span>${n}</span></button>`).join('');
+  el.innerHTML = SKINS.map((n, i) => `<button type="button" role="option" class="skin cs-tile ${i === picked ? 'on' : ''}" data-skin="${i}" aria-label="${n}" aria-selected="${i === picked}" style="--i:${i}">`
+    + `<span class="cs-pic"><img data-pic="${i}" alt="" draggable="false"></span><span class="cs-no">${String(i + 1).padStart(2, '0')}</span><span class="cs-label">${n}</span></button>`).join('');
+  grids.add(el);
+  fill(el);
   el.onclick = (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-skin]');
     if (!b) return;
     const i = Number(b.dataset.skin);
-    el.querySelectorAll('.skin').forEach((x) => x.classList.toggle('on', x === b));
+    el.querySelectorAll('.skin').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', String(x === b)); });
     onPick(i);
+    dispatchEvent(new CustomEvent('skin:pick', { detail: i }));
   };
 }

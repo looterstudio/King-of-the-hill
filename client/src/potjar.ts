@@ -8,12 +8,12 @@ const COINS = 700;
 const INK = '#1d33b8', INK_SOFT = 'rgba(29,51,184,0.55)', RED = '#d32336', COIN = '#ffd23f', COIN_DEEP = '#f2b51c', PAPER = '#f6f2e4', PINK = 'rgba(232,96,140,0.5)';
 const MARKS = [1, 5, 10, 25, 50, 100, 250];
 
-interface Falling { x: number; y: number; vy: number; tx: number; spin: number; bill?: boolean }
+interface Falling { x: number; y: number; vy: number; tx: number; spin: number }
 interface Sparkle { x: number; y: number; life: number; max: number; size: number }
 interface Floater { text: string; x: number; y: number; life: number; big: boolean }
 // crown: the King Pig wears one. rays: a slow sunburst behind it (the lobby's big pig). pipe: the fee
 // pipe coming in from the left, every trade's coins rolling down it into the slot
-// stage: the Squid Game look, a dark vault with the pig hanging in a golden spotlight, banknotes and coins
+// stage: the King's Hill drawn under the pig on the paper, a highlighter glow behind it
 export interface JarOptions { string?: boolean; marks?: boolean; crown?: boolean; rays?: boolean; pipe?: boolean; stage?: boolean }
 interface Piped { t: number; v: number; tone: number }
 interface Burst { x: number; y: number; vx: number; vy: number; spin: number; life: number }
@@ -35,7 +35,6 @@ export class PotJar {
   private piping: Piped[] = [];
   private bursts: Burst[] = [];
   private flow = 0; // how busy the pipe has been lately: it glows with it
-  private dust = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random(), v: 0.01 + Math.random() * 0.03, r: 0.6 + Math.random() * 1.6 }));
   scaleSol = 40;
   sol = 0;
 
@@ -108,7 +107,7 @@ export class PotJar {
     // the coins in it
     this.piping = this.piping.filter((c) => {
       c.t += dt * c.v * (0.8 + c.t);
-      if (c.t >= 1) { this.falling.push({ x: p[6], y: p[7], vy: 120, tx: g.cx + (Math.random() - 0.5) * g.rx * 1.1, spin: Math.random() * 6, bill: this.opts.stage && c.tone < 0.3 }); return false; }
+      if (c.t >= 1) { this.falling.push({ x: p[6], y: p[7], vy: 120, tx: g.cx + (Math.random() - 0.5) * g.rx * 1.1, spin: Math.random() * 6 }); return false; }
       if (c.t > 0) { const q = this.bez(p, c.t); this.coin(q.x, q.y, cw * 0.95, cw * 0.95, 0, c.tone); }
       return true;
     });
@@ -206,7 +205,7 @@ export class PotJar {
     ctx.save(); ctx.clip(body);
     ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.fill(body);
     const n = Math.floor(this.shown * this.pile.length), cw = g.rx * 0.085, ch = cw * 0.45;
-    for (let i = 0; i < n; i++) { const c = this.pile[i]; if (this.opts.stage && i % 5 === 0) this.bill(g.cx + c.x * g.rx, g.cy + c.y * g.ry, cw * 2.1, cw * 1.05, c.tilt * 2, c.tone); else this.coin(g.cx + c.x * g.rx, g.cy + c.y * g.ry, cw, ch, c.tilt, c.tone); }
+    for (let i = 0; i < n; i++) { const c = this.pile[i]; this.coin(g.cx + c.x * g.rx, g.cy + c.y * g.ry, cw, ch, c.tilt, c.tone); }
     if (n > 0) {
       const sy = this.surfaceY(g, this.shown * 1.02);
       ctx.strokeStyle = INK_SOFT; ctx.lineWidth = 1.6 * lw; ctx.beginPath();
@@ -277,8 +276,7 @@ export class PotJar {
       c.vy += 1700 * dt; c.y += c.vy * dt; c.spin += dt * 10;
       if (c.y > g.top) c.x += (c.tx - c.x) * Math.min(1, dt * 6);
       if (c.y >= Math.max(surf, g.top + g.ry * 0.25)) return false;
-      if (c.y > -20 && c.bill) { c.vy = Math.min(c.vy, 260); this.bill(c.x + Math.sin(c.spin) * 6, c.y, cw * 2.1 * (0.4 + 0.6 * Math.abs(Math.cos(c.spin * 0.7))), cw * 1.05, Math.sin(c.spin) * 0.6, 0.5); }
-      else if (c.y > -20) {
+      if (c.y > -20) {
         this.coin(c.x, c.y, Math.abs(Math.cos(c.spin)) * cw + 2, cw * 0.9, 0, 0.5);
         if (c.vy > 300) { ctx.strokeStyle = INK_SOFT; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(c.x - 4, c.y - cw - 6); ctx.lineTo(c.x - 4, c.y - cw - 16); ctx.moveTo(c.x + 4, c.y - cw - 4); ctx.lineTo(c.x + 4, c.y - cw - 12); ctx.stroke(); }
       }
@@ -341,48 +339,31 @@ export class PotJar {
     ctx.restore();
   }
 
-  // the vault: dark all round, a gold spotlight from the ceiling onto the pig, light pooling under it,
-  // dust drifting in the beam
-  private drawStage(g: ReturnType<PotJar['geom']>, dt: number) {
+  // the stage: the King's Hill under the pig, drawn on the paper (the card shows through), a highlighter
+  // glow behind it that grows with the pot, a few tufts of grass and the pig's hatched shadow on the top
+  private drawStage(g: ReturnType<PotJar['geom']>, _dt: number) {
     const { ctx } = this, W = this.w, H = this.h;
-    const bg = ctx.createRadialGradient(g.cx, g.cy, g.rx * 0.2, g.cx, g.cy, Math.max(W, H) * 0.75);
-    bg.addColorStop(0, '#5a4a1e'); bg.addColorStop(0.35, '#2a2a46'); bg.addColorStop(1, '#0c0e22');
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-    // the dome's ribs
-    ctx.strokeStyle = 'rgba(255,240,200,0.07)'; ctx.lineWidth = 2;
-    for (let k = -4; k <= 4; k++) { ctx.beginPath(); ctx.moveTo(g.cx + k * W * 0.13, 0); ctx.quadraticCurveTo(g.cx + k * W * 0.2, H * 0.35, g.cx + k * W * 0.32, H); ctx.stroke(); }
-    for (let k = 1; k <= 3; k++) { ctx.beginPath(); ctx.ellipse(g.cx, -H * 0.1, W * 0.25 * k, H * 0.16 * k, 0, 0, Math.PI); ctx.stroke(); }
-    // the spotlight
-    const top = 0, w0 = g.rx * 0.18, w1 = g.rx * 1.75, y1 = g.cy + g.ry * 1.35;
-    const beam = ctx.createLinearGradient(0, top, 0, y1);
-    beam.addColorStop(0, `rgba(255,236,170,${0.55 + this.bump * 0.2})`); beam.addColorStop(1, 'rgba(255,214,90,0.10)');
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = beam; ctx.beginPath(); ctx.moveTo(g.cx - w0, top); ctx.lineTo(g.cx + w0, top); ctx.lineTo(g.cx + w1, y1); ctx.lineTo(g.cx - w1, y1); ctx.closePath(); ctx.fill();
-    const pool = ctx.createRadialGradient(g.cx, g.cy, 0, g.cx, g.cy, g.rx * 1.5);
-    pool.addColorStop(0, `rgba(255,228,140,${0.55 + this.shown * 0.25})`); pool.addColorStop(1, 'rgba(255,214,90,0)');
-    ctx.fillStyle = pool; ctx.fillRect(0, 0, W, H);
-    // light on the floor under it
-    const fy = g.cy + g.ry * 1.3, floor = ctx.createRadialGradient(g.cx, fy, 0, g.cx, fy, g.rx * 1.4);
-    floor.addColorStop(0, 'rgba(255,220,120,0.45)'); floor.addColorStop(1, 'rgba(255,220,120,0)');
-    ctx.save(); ctx.translate(g.cx, fy); ctx.scale(1, 0.18); ctx.translate(-g.cx, -fy); ctx.fillStyle = floor; ctx.beginPath(); ctx.arc(g.cx, fy, g.rx * 1.4, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    // dust in the beam
-    ctx.fillStyle = 'rgba(255,245,210,0.75)';
-    for (const d of this.dust) {
-      d.y += d.v * dt; if (d.y > 1) { d.y = 0; d.x = Math.random(); }
-      const yy = d.y * y1, half = w0 + (w1 - w0) * (yy / y1), xx = g.cx + (d.x * 2 - 1) * half * 0.9;
-      ctx.globalAlpha = 0.35 + 0.4 * Math.sin(this.t * 2 + d.x * 9) ** 2; ctx.beginPath(); ctx.arc(xx, yy, d.r, 0, Math.PI * 2); ctx.fill();
+    const glow = ctx.createRadialGradient(g.cx, g.cy, g.rx * 0.3, g.cx, g.cy, Math.max(W, H) * 0.62);
+    glow.addColorStop(0, `rgba(255,228,92,${0.42 + this.shown * 0.2 + this.bump * 0.2})`); glow.addColorStop(1, 'rgba(255,228,92,0)');
+    ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+    const base = H + 2, top = Math.min(H - 6, g.cy + g.ry * 1.3), lw = this.opts.string ? 1 : 0.7;
+    const hill = new Path2D();
+    hill.moveTo(-6, base);
+    hill.bezierCurveTo(W * 0.16, top + (base - top) * 0.25, g.cx - g.rx * 1.3, top, g.cx, top);
+    hill.bezierCurveTo(g.cx + g.rx * 1.3, top, W * 0.84, top + (base - top) * 0.3, W + 6, base);
+    hill.closePath();
+    ctx.fillStyle = 'rgba(206,234,198,0.95)'; ctx.fill(hill);
+    // hatching down the far side, like the shaded side of a drawn hill
+    ctx.save(); ctx.clip(hill); ctx.strokeStyle = 'rgba(29,51,184,0.2)'; ctx.lineWidth = 1.2;
+    for (let x = g.cx + g.rx * 0.5; x < W + (base - top); x += 7) { ctx.beginPath(); ctx.moveTo(x, top - 2); ctx.lineTo(x - (base - top) * 0.8, base); ctx.stroke(); }
+    ctx.restore();
+    this.pen(hill, 2.4 * lw);
+    // tufts of grass along the ridge
+    for (const k of [-1.7, -1.05, 0.95, 1.55]) {
+      const x = g.cx + k * g.rx, t = Math.abs(k) / 2.2, y = top + (base - top) * t * t * 0.9 + 1;
+      const tuft = new Path2D(); tuft.moveTo(x - 6, y); tuft.lineTo(x - 3, y - 7); tuft.moveTo(x, y); tuft.lineTo(x + 1, y - 9); tuft.moveTo(x + 5, y); tuft.lineTo(x + 7, y - 6);
+      this.pen(tuft, 1.6 * lw, 'rgba(42,138,74,0.9)');
     }
-    ctx.restore();
-  }
-
-  // a banknote: green, a darker frame, the SOL mark in the middle
-  private bill(x: number, y: number, w: number, h: number, tilt: number, tone: number) {
-    const { ctx } = this;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(tilt);
-    ctx.fillStyle = tone > 0.5 ? '#7cc47f' : '#5fae66'; ctx.strokeStyle = '#1f5a2c'; ctx.lineWidth = 1.2;
-    ctx.fillRect(-w / 2, -h / 2, w, h); ctx.strokeRect(-w / 2, -h / 2, w, h);
-    if (w > 10) { ctx.strokeStyle = 'rgba(31,90,44,0.6)'; ctx.strokeRect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4); ctx.beginPath(); ctx.ellipse(0, 0, h * 0.32, h * 0.32, 0, 0, Math.PI * 2); ctx.stroke(); }
-    ctx.restore();
   }
 
   private coin(x: number, y: number, w: number, h: number, tilt: number, tone: number) {
