@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { SKINS } from '../../shared/src/constants.ts';
 import type { Game3D } from './game3d.ts';
+import { INK_IDS } from './ink.ts';
 import { buildFigure, buildPaperPlane, posedGeometry, poseStand, type Figure } from './models.ts';
 
 export interface StageMember { key: string; skin: number; you: boolean }
@@ -14,7 +15,8 @@ interface Slot { key: string; skin: number; you: boolean; fig: Figure; x: number
 const FIG_H = 1.85;
 // where each lineup spot stands on the wing (you in the middle, friends either side)
 const SPOTS = [0, 1.35, -1.35, 2.7];
-const ORBIT_R = 250, ALT = 74, LAP = 260; // the plane's circle over the island, seconds a lap
+const ORBIT_R = 250, ALT = 58, LAP = 260;
+const LZ = 15; // where the lineup stands on the plane (the tail is at +18) // the plane's circle over the island, seconds a lap
 
 export type StageView = 'home' | 'select';
 
@@ -23,6 +25,7 @@ export class LobbyStage {
   private plane = new THREE.Group();   // the plane and everyone on it; moved along its path each frame
   private slots: Slot[] = [];
   private ghosts: number[] = [];       // open spots (x on the wing), for the "invite" cards
+  private pads: THREE.Mesh[] = [];     // the spots on the wing, one per place in the lineup
   private size = 1;
   private t = 0;
   private view: StageView = 'home';
@@ -36,6 +39,9 @@ export class LobbyStage {
   constructor(private game: Game3D) {
     this.ink = game.ink;
     this.plane.add(buildPaperPlane(this.ink)); // nose at -z: forward
+    // a highlighter spot on the wing under each place in the lineup, so everyone stands on something
+    const spot = new THREE.CylinderGeometry(0.62, 0.62, 0.05, 28), mat = this.ink.material(INK_IDS.ORANGE);
+    for (const x of SPOTS) { const m = new THREE.Mesh(spot, mat); m.position.set(x, Math.abs(x) / 12 + 0.03, LZ); this.plane.add(m); this.pads.push(m); }
     this.ink.scene.add(this.plane);
     this.place(0);
   }
@@ -60,6 +66,7 @@ export class LobbyStage {
       s.x = x; s.you = m.you;
     });
     this.ghosts = [];
+    this.pads.forEach((m, i) => { m.visible = i < Math.max(this.size, members.length); });
     for (let i = members.length; i < Math.max(this.size, members.length); i++) this.ghosts.push(SPOTS[i] ?? 0);
   }
 
@@ -94,7 +101,7 @@ export class LobbyStage {
   // screen positions of the lineup (for the name tags and invite cards), in CSS pixels
   spots(W: number, H: number): { x: number; y: number; foot: number; s: number; you: boolean; key: string | null }[] {
     const cam = this.ink.camera, out: { x: number; y: number; foot: number; s: number; you: boolean; key: string | null }[] = [];
-    const proj = (lx: number, ly: number) => { this.tmp.set(lx, ly, 12).applyMatrix4(this.plane.matrixWorld).project(cam); return [(this.tmp.x + 1) / 2 * W, (1 - this.tmp.y) / 2 * H] as const; };
+    const proj = (lx: number, ly: number) => { this.tmp.set(lx, ly, LZ).applyMatrix4(this.plane.matrixWorld).project(cam); return [(this.tmp.x + 1) / 2 * W, (1 - this.tmp.y) / 2 * H] as const; };
     for (const s of this.slots) {
       if (s.out || (this.viewK > 0.5 && !s.you)) continue;
       const [x, y] = proj(s.x, FIG_H + 0.28), [, foot] = proj(s.x, 0);
@@ -122,10 +129,12 @@ export class LobbyStage {
     let dist = Math.max(fitH, fitW) / (2 * Math.tan((fov * Math.PI) / 360));
     const selDist = (FIG_H + 0.5) / (narrow ? 0.4 : 0.78) / (2 * Math.tan((fov * Math.PI) / 360));
     dist += (selDist - dist) * k;
-    const drift = Math.sin(this.t * 0.17) * 0.35, lift = 1.35 + Math.sin(this.t * 0.11) * 0.12;
-    // local (plane) space: the lineup stands at z=12 facing +z (toward the tail); the camera behind the tail
-    this.camPos.set(drift + (1 - k) * 0, lift + 0.8 * (1 - k), 12 + dist);
-    this.look.set(drift * 0.4, 1.05 - 0.15 * k, 12);
+    // looking down at the lineup a little, so the island fills the picture behind it (less so in the select)
+    const drift = Math.sin(this.t * 0.17) * 0.35, tilt = 0.3 - 0.16 * k + Math.sin(this.t * 0.11) * 0.015;
+    // local (plane) space: the lineup stands near the tail facing the nose; the camera hangs over the wing in
+    // front of them, so past the tail there is only air and the island going by below
+    this.look.set(drift * 0.4, 1.0 - 0.1 * k, LZ);
+    this.camPos.set(drift, this.look.y + Math.sin(tilt) * dist, LZ - Math.cos(tilt) * dist);
     this.camPos.applyMatrix4(this.plane.matrixWorld);
     this.look.applyMatrix4(this.plane.matrixWorld);
     const cam = this.ink.camera;
@@ -176,8 +185,8 @@ export class LobbyStage {
     // friends step back out of the way while you pick
     const hide = s.you ? 0 : k;
     f.root.visible = hide < 0.6;
-    f.root.position.set(s.x, y + Math.abs(s.x) / 12, 12 - hide * 2);
-    f.root.rotation.set(0, Math.PI + yaw - s.x * 0.06, 0);
+    f.root.position.set(s.x, y + Math.abs(s.x) / 12, LZ + hide * 2);
+    f.root.rotation.set(0, yaw + s.x * 0.06, 0);
     f.root.scale.set(1 / Math.sqrt(scale), scale, 1 / Math.sqrt(scale));
   }
 
@@ -215,7 +224,7 @@ export class LobbyStage {
       const box = new THREE.Box3().setFromBufferAttribute(posedGeometry(f).getAttribute('position') as THREE.BufferAttribute);
       const top = box.max.y, fov = bust ? 24 : 26;
       cam.fov = fov; cam.aspect = cssW / cssH; cam.updateProjectionMatrix();
-      const h = bust ? (top - 1.05) * 1.25 : top * 1.12, cy = bust ? top - h * 0.46 : top * 0.5;
+      const h = bust ? Math.max((top - 1.05) * 1.25, top * 0.62) : top * 1.12, cy = bust ? top - h * 0.46 : top * 0.5;
       const d = (h / 2) / Math.tan((fov * Math.PI) / 360);
       cam.position.set(Math.sin(0.0) * d, 900 + cy + (bust ? 0.05 : 0.15), d);
       cam.lookAt(0, 900 + cy, 0);

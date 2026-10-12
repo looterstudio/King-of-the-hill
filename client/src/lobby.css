@@ -60,10 +60,10 @@
 /* shared card look: paper, a crisp ink line, a soft lift */
 .lb-prize, .lb-party, .lb-dock { position: relative; background: var(--card-bg); border: 2px solid var(--card-line); border-radius: calc(var(--u) * 1.1); box-shadow: var(--lift), 0 0 0 calc(var(--u) * 0.35) rgba(255, 253, 245, .35); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); min-width: 0; }
 .lb-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.lb-kicker { display: inline-flex; align-items: center; gap: .4em; font-weight: 800; font-size: calc(var(--u) * 1.05); letter-spacing: .14em; text-transform: uppercase; color: var(--red); }
+.lb-kicker { white-space: nowrap; display: inline-flex; align-items: center; gap: .4em; font-weight: 800; font-size: calc(var(--u) * 1.05); letter-spacing: .14em; text-transform: uppercase; color: var(--red); }
 .lb-kicker i { font-style: normal; color: #d99a00; font-size: 1.3em; letter-spacing: 0; }
 .lb-ico { width: 1.5em; height: 1.5em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-.lb-pill { font-size: calc(var(--u) * 0.92); font-weight: 700; color: var(--ink); background: var(--hl); border-radius: 999px; padding: .2em .75em .25em; white-space: nowrap; }
+.lb-pill { font-size: calc(var(--u) * 0.85); font-weight: 700; color: var(--ink); background: var(--hl); border-radius: 999px; padding: .2em .75em .25em; white-space: nowrap; }
 .lb-link { font-size: calc(var(--u) * 1.02); font-weight: 700; color: var(--ink); text-decoration: underline; text-decoration-color: var(--ink-faint); text-underline-offset: 3px; }
 .lb-link:hover { text-decoration-color: var(--red); }
 
@@ -93,7 +93,7 @@
 .lb-prize .pot-leader.you { background: var(--hl); }
 .lb-prize .pot-leader .crown { color: #d99a00; }
 .lb-prize .candle { font-size: calc(var(--u) * 0.88); color: var(--ink-soft); margin: 0; text-align: center; }
-.lb-prize .toast { position: absolute; left: 0; right: 0; top: calc(var(--u) * 3); text-align: center; font-family: var(--f-note); font-size: calc(var(--u) * 1.7); color: var(--teal); min-height: 0; pointer-events: none; }
+.lb-prize .toast { position: absolute; left: 50%; translate: -50% 0; top: calc(var(--u) * 3.4); white-space: nowrap; padding: 0 .6em; border-radius: 999px; background: var(--card); text-align: center; font-family: var(--f-note); font-size: calc(var(--u) * 1.7); color: var(--teal); min-height: 0; pointer-events: none; }
 .lb-prize .lb-link { justify-self: center; margin-top: calc(var(--u) * 0.2); }
 
 /* ---------- the friend panel ---------- */
@@ -159,7 +159,7 @@
 .lb-howto { justify-self: center; font-size: calc(var(--u) * 0.98); }
 
 /* ---------- the bottom strip: where the plane is, the ticker ---------- */
-.lb-bottom { grid-area: bottom; display: flex; align-items: center; gap: calc(var(--u) * 1.4); min-width: 0; }
+.lb-bottom { grid-area: bottom; padding-right: calc(42px + var(--u) * 0.6); display: flex; align-items: center; gap: calc(var(--u) * 1.4); min-width: 0; }
 .lb-cap { flex: 0 0 auto; display: flex; align-items: center; gap: .5em; font-size: calc(var(--u) * 1.1); color: var(--ink-soft); white-space: nowrap; }
 .lb-cap b { color: var(--ink); font-weight: 800; }
 #lobby .ticker { flex: 1 1 auto; min-width: 0; margin: 0; height: calc(var(--u) * 2.3); border: 0; border-block: 1.5px solid var(--ink-faint); }
@@ -244,6 +244,7 @@
   #lobby .radio-btn { display: none; }
   .lb-slots { position: absolute; }
   .lb-top { order: 0; }
+  .lb-prize, .lb-party, .lb-dock { align-self: stretch; }
   .lb-dock { order: 1; margin-top: 58vh; margin-top: 58svh; }
   .lb-party { order: 2; }
   .lb-prize { order: 3; }

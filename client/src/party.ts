@@ -94,7 +94,7 @@ export class PartyUI {
         break;
       case 'authed':
         if (this.pending) this.net.send({ t: 'party', op: 'join', code: this.pending.code, token: this.pending.token, skin: this.host.skin() });
-        else if (this.wantCreate) { this.wantCreate = false; this.create(); }
+        else if (this.wantCreate) { this.wantCreate = false; queueMicrotask(() => this.create()); } // once main.ts has marked us signed in
         queueMicrotask(() => this.renderStart()); // after the lobby has marked us signed in
         break;
       case 'party': {
