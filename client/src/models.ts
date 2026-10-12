@@ -862,13 +862,18 @@ const SUPPORT: Partial<Record<WeaponId | 'axe', number | null>> = { pistol: -0.0
 
 // the held model on the aim mount, and the arms reaching for it; the head and the gun keep looking where
 // the player aims however the body is turned or leaning
-function holdAndAim(f: Figure, what: WeaponId | 'axe' | null, level: number, pitch: number) {
+// swing: a pickaxe swing in progress (1 just started .. 0 done): up over the shoulder, then chopped down in front
+function holdAndAim(f: Figure, what: WeaponId | 'axe' | null, level: number, pitch: number, swing = 0) {
   const fr = f.look.fr;
   // the aim, undoing the torso's own turn and lean so the gun points where the player looks
   _qb.copy(f.pelvis.quaternion).multiply(f.torso.quaternion).invert();
   if (f.look.nod) f.head.quaternion.copy(_qb).multiply(_qa.setFromAxisAngle(_x, pitch * f.look.nod));
   if (!what) { hold(f, null); return; }
   f.aim.quaternion.copy(_qb).multiply(_qa.setFromAxisAngle(_x, pitch));
+  if (what === 'axe' && swing > 0) {
+    const u = 1 - swing, chop = u < 0.3 ? 1.5 * (u / 0.3) : 1.5 - 2.3 * ((u - 0.3) / 0.7); // the arms follow the pick (they reach for its grip)
+    f.aim.quaternion.multiply(_qa.setFromAxisAngle(_x, chop));
+  }
   const key = `${what}|${what === 'axe' ? 0 : level}`;
   if (f.held !== key) {
     f.hand.geometry = heldGeometry(what, level);
@@ -939,7 +944,7 @@ export function posedGeometry(f: Figure): THREE.BufferGeometry {
 }
 
 // pose a figure for this frame from its interpolated state
-export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number, down = false, axe = false, level = 0) {
+export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: number, pitch: number, weapon: WeaponId | null, sliding: boolean, gliding: boolean, leader: boolean, dt: number, down = false, axe = false, level = 0, swing = 0) {
   const dx = x - f.lastX, dz = z - f.lastZ, moved = Math.hypot(dx, dz), warp = Math.abs(y - f.lastY) > 4 || moved > 6; // a teleport, a respawn
   const k = Math.min(1, dt * 10);
   f.speed += ((dt > 0 && !warp ? moved / dt : 0) - f.speed) * k;
@@ -1010,7 +1015,7 @@ export function poseFigure(f: Figure, x: number, y: number, z: number, yaw: numb
   }
   // shouldering a long gun turns the body a little side-on
   if (what && what !== 'pistol' && what !== 'wand' && !sliding) _qa.setFromAxisAngle(_y, -0.22), f.torso.quaternion.premultiply(_qa);
-  holdAndAim(f, what, level, pitch);
+  holdAndAim(f, what, level, pitch, swing);
   if (!what) { // empty hands: arms swing against the legs
     f.armL.rotation.set(-s * 0.55 * run + 0.05, 0, -0.12); f.foreL.rotation.x = 0.3 + 0.5 * run;
     f.armR.rotation.set(s * 0.55 * run + 0.05, 0, 0.12); f.foreR.rotation.x = 0.3 + 0.5 * run;
