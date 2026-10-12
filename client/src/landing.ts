@@ -61,7 +61,7 @@ function html() {
     <div>
       <span class="lp-kicker">a battle royale drawn in ballpoint</span>
       <h1><span class="lp-line">${ROOM_MAX} players.</span> <span class="lp-line">One island.</span> <span class="lp-line lp-break">Every wall <span class="lp-u">breaks.${SCRIBBLE}</span></span></h1>
-      <p class="lp-lede">Jump from the paper plane, loot pencil cases and fight your way to the <b>King's Tower</b>. Last one standing wins, and every hour the <b>top scorer takes the pot</b>.</p>
+      <p class="lp-lede">Jump from the paper plane, loot pencil cases and fight your way to the <b>King's Tower</b>. Last one standing wins, and every 4 hours the <b>top 3 get paid from the pig</b>.</p>
       <div class="lp-cta">
         <button class="btn play lp-play" type="button" data-play>Play free<span class="arrow" aria-hidden="true">→</span></button>
         <a class="lp-watch" href="#lp-film"><i aria-hidden="true">▶</i>Watch a match</a>
@@ -72,7 +72,7 @@ function html() {
       <span class="tape tape-l"></span><span class="tape tape-r"></span>
       <canvas id="lpJar" aria-hidden="true"></canvas>
       <svg class="lp-stamp" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46"/><circle cx="50" cy="50" r="38" stroke-dasharray="2 4"/><text x="50" y="50" font-size="26">1h</text><text x="50" y="70" font-size="12">payout</text></svg>
-      <div class="lp-pig-cap"><b>The King Pig</b><span>fills all hour, empties at :00</span></div>
+      <div class="lp-pig-cap"><b>The King Pig</b><span>fills all round, empties at :00</span></div>
     </div>
   </section>
 
@@ -99,9 +99,9 @@ function html() {
 
   <section id="lp-pot" class="lp-sec lp-pot">
     <div class="lp-in">
-      <div class="lp-h"><h2>The hourly pot</h2><span class="lp-note">every hour, on the hour</span></div>
-      <p class="lp-pot-big">The player with the <span class="lp-hl">most points</span> each hour takes the whole pot.</p>
-      <p class="lp-pot-sub">Trading fees from <b>$${TOKEN.symbol}</b> fill the pig all hour long. Every match you play scores points toward it.</p>
+      <div class="lp-h"><h2>The pig</h2><span class="lp-note">every 4 hours</span></div>
+      <p class="lp-pot-big">Every 4 hours, <span class="lp-hl">4% of the pig</span> goes to the round top 3: 60%, 25% and 15%. The rest keeps filling it.</p>
+      <p class="lp-pot-sub">Trading fees from <b>$${TOKEN.symbol}</b> fill the pig all round long. Every match you play scores points toward it.</p>
     </div>
     <div class="lp-in">
       <div class="lp-points">
@@ -109,7 +109,7 @@ function html() {
         <div class="lp-pt"><b><small>+</small>${POINTS.top}</b><span>a top ${top} finish</span></div>
         <div class="lp-pt"><b><small>+</small>${POINTS.kill}</b><span>every kill</span></div>
       </div>
-      <div class="lp-who"><b>Who plays for it:</b> holders of $${TOKEN.symbol} with a connected Solana wallet, holding at least $${TOKEN.holdMinUsd} through the hour. Guests play free, just not for the pot.
+      <div class="lp-who"><b>Who plays for it:</b> holders of $${TOKEN.symbol} with a connected Solana wallet, holding at least $${TOKEN.holdMinUsd} through the round. Guests play free, just not for the pot.
         <span class="lp-wallets">Phantom, Solflare or Backpack. Signing in is free, no transaction. Duos win ${POINTS.win.duo} each, squads ${POINTS.win.squad} each.</span></div>
     </div>
   </section>

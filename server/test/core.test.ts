@@ -399,20 +399,21 @@ test('prorata never pays more than the pot and keeps dust in rollover', () => {
   assert.ok(r.rollover >= pot / 10n);
 });
 
-test('every hour the top scorer takes the pot: a tie splits it, the rest rolls over', async () => {
+test('every 4 hours the round top 3 take 4% of the pig, 60/25/15; the rest stays in it', async () => {
   const { config: cfg } = await import('../src/config.ts');
-  assert.equal(EPOCH_MS, 60 * 60 * 1000, 'hourly');
-  assert.equal(cfg.payoutMode, 'winner', 'the default policy');
-  const a = wallet(), b = wallet(), c = wallet(), pot = 1_000_000_001n;
-  const one = computePayouts(pot, new Map([[a, 40], [b, 125], [c, 5]]), policy('winner'));
-  assert.deepEqual(one.payouts.map((p) => p.wallet), [b]);
-  assert.equal(one.payouts[0].lamports, (pot * 9000n) / 10_000n, 'all of it but the 10% rollover');
-  assert.equal(one.payouts[0].lamports + one.rollover, pot);
-  const tie = computePayouts(pot, new Map([[a, 125], [b, 125], [c, 5]]), policy('winner'));
-  assert.deepEqual(tie.payouts.map((p) => p.wallet).sort(), [a, b].sort());
-  assert.equal(tie.payouts[0].lamports, tie.payouts[1].lamports);
-  assert.equal(tie.payouts.reduce((s, p) => s + p.lamports, 0n) + tie.rollover, pot, 'the odd lamport rolls over');
-  assert.equal(computePayouts(pot, new Map(), policy('winner')).rollover, pot, 'nobody scored: it all rolls over');
+  assert.equal(EPOCH_MS, 4 * 60 * 60 * 1000, 'every 4 hours');
+  assert.equal(cfg.payoutMode, 'podium', 'the default policy');
+  assert.equal(cfg.rolloverBps, 9600, 'a round pays 4% of the pig');
+  assert.equal(cfg.potShareBps, 6000, '60% of the fees fill the pig');
+  const pod = { mode: 'podium' as const, rolloverBps: cfg.rolloverBps, drawTiersBps: [], seed: Buffer.alloc(32) };
+  const a = wallet(), b = wallet(), c = wallet(), d = wallet(), pig = 10n ** 10n, round = (pig * 400n) / 10_000n;
+  const r = computePayouts(pig, new Map([[a, 40], [b, 125], [c, 5], [d, 90]]), pod);
+  assert.deepEqual(r.payouts.map((p) => p.wallet), [b, d, a], 'most points first');
+  assert.deepEqual(r.payouts.map((p) => p.lamports), [round * 6000n / 10_000n, round * 2500n / 10_000n, round * 1500n / 10_000n]);
+  assert.equal(r.payouts.reduce((s, p) => s + p.lamports, 0n) + r.rollover, pig, 'the other 96% stays in the pig');
+  const two = computePayouts(pig, new Map([[a, 10], [b, 20]]), pod);
+  assert.equal(two.payouts.length, 2); assert.equal(two.rollover, pig - (round * 8500n) / 10_000n, 'a place nobody took stays in the pig');
+  assert.equal(computePayouts(pig, new Map(), pod).rollover, pig, 'nobody scored: it all stays');
 });
 
 test('no tickets means the whole pot rolls over', () => {
@@ -1255,11 +1256,11 @@ test('the live pot is exactly what the vault program will accept', async () => {
   } finally { globalThis.fetch = realFetch; }
 });
 
-test('the team wallet pot never counts what the team still owes, and remembers what it paid', async () => {
+test('the pig is 60% of the fees that land in the team wallet; the team taking its 40% never shrinks it', async () => {
   const { WalletPot } = await import('../src/pot.ts');
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const dir = mkdtempSync(join(tmpdir(), 'pr-wallet-'));
-  const cfg = { ...config, dataDir: dir, potSource: 'wallet' as const, potWallet: 'W', holdMinUsd: 0, vaultReserveLamports: 1_000_000n };
+  const cfg = { ...config, dataDir: dir, potSource: 'wallet' as const, potWallet: 'W', holdMinUsd: 0, vaultReserveLamports: 1_000_000n, potShareBps: 6000 };
   const SOL = 1_000_000_000n;
   let wallet = 10n * SOL;
   const realFetch = globalThis.fetch;
@@ -1267,27 +1268,29 @@ test('the team wallet pot never counts what the team still owes, and remembers w
   try {
     const pot = new WalletPot(cfg);
     const inflows: bigint[] = []; pot.on('inflow', (f: { lamports: bigint }) => inflows.push(f.lamports));
-    assert.equal(pot.balance(), 0n, 'nothing before the wallet was read');
     await pot.poll();
-    assert.equal(pot.balance(), 10n * SOL - 1_000_000n);
-    wallet += 2n * SOL; await pot.poll();
-    assert.deepEqual(inflows, [2n * SOL], 'claimed fees show up as an inflow');
-    // hour 7 settles: 9 SOL owed; the next pot is only what is left
-    pot.markPaid(7, 9n * SOL);
-    mkdirSync(join(dir, 'epochs'), { recursive: true }); writeFileSync(join(dir, 'epochs', '7.json'), JSON.stringify({ paid: (9n * SOL).toString() }));
-    assert.equal(pot.balance(), 3n * SOL - 1_000_000n);
-    assert.deepEqual(pot.unpaid(), [{ epoch: 7, lamports: 9n * SOL }]);
-    // a restart before the team pays still holds it
+    assert.equal(pot.balance(), 0n, 'what was in the wallet before is not the pig');
+    wallet += 10n * SOL; await pot.poll();
+    assert.deepEqual(inflows, [6n * SOL], '60% of the fees that came in');
+    assert.equal(pot.balance(), 6n * SOL);
+    wallet -= 4n * SOL; await pot.poll();
+    assert.equal(pot.balance(), 6n * SOL, 'the team takes its 40%: the pig is untouched');
+    // round 7 settles: 1 SOL to its top 3, still to be sent
+    pot.markPaid(7, 1n * SOL);
+    mkdirSync(join(dir, 'epochs'), { recursive: true }); writeFileSync(join(dir, 'epochs', '7.json'), JSON.stringify({ paid: (1n * SOL).toString() }));
+    assert.equal(pot.balance(), 5n * SOL);
+    assert.deepEqual(pot.unpaid(), [{ epoch: 7, lamports: 1n * SOL }]);
     const again = new WalletPot(cfg); await again.poll();
-    assert.equal(again.balance(), 3n * SOL - 1_000_000n, 'owed survives a restart');
-    // the team sends it and marks it paid
-    wallet -= 9n * SOL; await again.poll();
+    assert.equal(again.balance(), 5n * SOL, 'the pig and what is owed survive a restart');
+    wallet -= 1n * SOL; await again.poll();
     assert.equal(again.settlePaid(7, 'sig'), true);
-    assert.equal(again.balance(), 3n * SOL - 1_000_000n, 'paid once: the transfer and the reservation do not both count');
+    assert.equal(again.balance(), 5n * SOL, 'paid once');
     assert.equal(again.settlePaid(7, 'sig'), false, 'and only once');
     const third = new WalletPot(cfg); await third.poll();
     assert.deepEqual(third.unpaid(), [], 'paid survives a restart');
     assert.equal(third.paidTx(7), 'sig');
+    wallet = 2n * SOL; await third.poll();
+    assert.equal(third.balance(), 2n * SOL - 1_000_000n, 'never more than the wallet can pay');
     assert.throws(() => new WalletPot({ ...cfg, potWallet: '' }), /POT_WALLET/);
   } finally { globalThis.fetch = realFetch; }
 });

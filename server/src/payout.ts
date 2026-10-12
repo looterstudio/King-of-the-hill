@@ -1,11 +1,12 @@
 // Pure payout math. bigint end to end: lamports never touch floating point.
 import { createHash } from 'node:crypto';
+import { PRIZE } from '../../shared/src/constants.ts';
 
 export interface Payout { wallet: string; lamports: bigint }
 export interface PayoutResult { payouts: Payout[]; rollover: bigint; distributable: bigint }
 
 export interface PayoutPolicy {
-  mode: 'winner' | 'prorata' | 'draw';
+  mode: 'podium' | 'winner' | 'prorata' | 'draw';
   rolloverBps: number;
   drawTiersBps: number[];
   seed: Buffer; // only used by draw
@@ -29,11 +30,18 @@ export function computePayouts(pot: bigint, wins: Map<string, number>, policy: P
   if (totalTickets === 0n) return { payouts: [], rollover: pot, distributable: 0n };
 
   const distributable = (pot * (BPS - BigInt(policy.rolloverBps))) / BPS;
-  const payouts = policy.mode === 'winner' ? winner(distributable, entries) : policy.mode === 'draw' ? draw(distributable, entries, policy) : prorata(distributable, entries, totalTickets);
+  const payouts = policy.mode === 'podium' ? podium(distributable, entries) : policy.mode === 'winner' ? winner(distributable, entries) : policy.mode === 'draw' ? draw(distributable, entries, policy) : prorata(distributable, entries, totalTickets);
   const kept = payouts.filter((p) => p.lamports >= MIN_PAYOUT_LAMPORTS);
   const paid = kept.reduce((s, p) => s + p.lamports, 0n);
   // rounding dust, shares under the minimum and any unawarded tiers stay in the pot
   return { payouts: kept, rollover: pot - paid, distributable };
+}
+
+// the round's top three by points take PRIZE.podiumBps of it (60/25/15; ties by wallet, so it's
+// deterministic); with fewer than three, the places nobody took stay in the pig
+function podium(dist: bigint, entries: [string, number][]): Payout[] {
+  const top = [...entries].sort((a, b) => b[1] - a[1] || byWallet(a, b)).slice(0, PRIZE.podiumBps.length);
+  return top.map(([wallet], i) => ({ wallet, lamports: (dist * BigInt(PRIZE.podiumBps[i])) / BPS }));
 }
 
 // the hour's winner takes the pot: the most points; a tie splits it evenly (the dust rolls over)

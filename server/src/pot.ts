@@ -169,9 +169,14 @@ export class WalletPot extends RpcPot implements PotSource {
   private timer: NodeJS.Timeout | null = null;
   private owed = new Map<number, bigint>();   // settled epochs not paid yet -> lamports
   private paidLog: { epoch: number; tx: string; at: number }[] = [];
+  // the pig: POT_SHARE_BPS (60%) of every fee that lands in the wallet, less the prizes settled from it. The
+  // wallet also holds the team's 40% (and whatever else the team keeps there): taking that out never
+  // shrinks the pig. It starts empty, so only fees from the day it's switched on fill it
+  private treasury = 0n;
   constructor(cfg: Config) {
     super(cfg);
     if (!cfg.potWallet) throw new Error('POT_WALLET is required for POT_SOURCE=wallet');
+    if (existsSync(this.treasuryFile())) this.treasury = BigInt((JSON.parse(readFileSync(this.treasuryFile(), 'utf8')) as { lamports: string }).lamports);
     if (cfg.holdMinUsd > 0 && !cfg.tokenMint) throw new Error('TOKEN_MINT is required when HOLD_MIN_USD > 0');
     const paidFile = this.paidFile();
     if (existsSync(paidFile)) this.paidLog = JSON.parse(readFileSync(paidFile, 'utf8')) as typeof this.paidLog;
@@ -184,11 +189,17 @@ export class WalletPot extends RpcPot implements PotSource {
     }
   }
   private paidFile() { return join(this.cfg.dataDir, 'paid.json'); }
+  private treasuryFile() { return join(this.cfg.dataDir, 'treasury.json'); }
+  private saveTreasury() { writeFileSync(this.treasuryFile(), JSON.stringify({ lamports: this.treasury.toString(), shareBps: this.cfg.potShareBps, at: Date.now() })); }
 
   async poll() {
     const r = await this.rpc<{ value: number }>('getBalance', [this.cfg.potWallet, { commitment: 'confirmed' }]);
     const now = BigInt(r.value);
-    if (this.read && now > this.raw) this.emit('inflow', { lamports: now - this.raw, source: 'trading fees' });
+    if (this.read && now > this.raw) {
+      const share = ((now - this.raw) * BigInt(this.cfg.potShareBps)) / 10_000n; // the pig's part of the fees that came in
+      this.treasury += share; this.saveTreasury();
+      this.emit('inflow', { lamports: share, source: 'trading fees' });
+    }
     this.raw = now; this.read = true; this.polledAt = Date.now();
   }
   ready() { return this.read && Date.now() - this.polledAt < 30_000; }
@@ -205,9 +216,10 @@ export class WalletPot extends RpcPot implements PotSource {
     let held = this.cfg.vaultReserveLamports;
     for (const l of this.owed.values()) held += l;
     const free = this.raw - held;
-    return free > 0n ? free : 0n;
+    // the pig, never more than the wallet can actually pay
+    return this.treasury < free ? this.treasury : free > 0n ? free : 0n;
   }
-  markPaid(epoch: number, l: bigint) { if (l > 0n) this.owed.set(epoch, l); }
+  markPaid(epoch: number, l: bigint) { if (l > 0n) { this.owed.set(epoch, l); this.treasury = this.treasury > l ? this.treasury - l : 0n; this.saveTreasury(); } }
   // what the team still has to send, oldest first
   unpaid() { return [...this.owed.entries()].sort((a, b) => a[0] - b[0]).map(([epoch, lamports]) => ({ epoch, lamports })); }
   // the team sent epoch's prizes (tx: the transfer signature, for the public record)

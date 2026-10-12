@@ -264,3 +264,7 @@
   .cs-foot { justify-content: center; }
   .cs-stamp { left: 50%; top: 14%; font-size: 30px; }
 }
+
+/* the pig's podium: what this round's top three take (4% of the pig, 60/25/15) */
+.lb-prize .podium { display: flex; justify-content: center; gap: 10px; margin: 4px 0 6px; font-weight: 800; font-size: 14px; color: var(--ink); }
+.lb-prize .podium span { background: rgba(255, 253, 245, .9); border: 1.5px solid var(--ink); border-radius: 8px 10px 7px 9px; padding: 1px 7px; white-space: nowrap; }

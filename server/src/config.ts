@@ -1,5 +1,6 @@
 import { cpus } from 'node:os';
 import { TOKEN } from '../../shared/src/token.ts';
+import { PRIZE } from '../../shared/src/constants.ts';
 // Every knob comes from the environment so the same build runs locally (mock pot, guests on)
 // and in production (real vault, wallets required, guests off).
 const env = process.env;
@@ -44,8 +45,9 @@ export const config = {
 
   // payout policy
   botFill: bool(env.BOT_FILL, true), // fill every room to 100 with bots (they never score points)
-  payoutMode: (env.PAYOUT_MODE ?? 'winner') as 'winner' | 'prorata' | 'draw', // winner: the hour's top scorer takes the pot
-  rolloverBps: int(env.ROLLOVER_BPS, 1000), // 10% of every pot seeds the next one
+  payoutMode: (env.PAYOUT_MODE ?? 'podium') as 'podium' | 'winner' | 'prorata' | 'draw', // podium: the round's top three take 60/25/15
+  rolloverBps: int(env.ROLLOVER_BPS, 10_000 - PRIZE.roundBps), // a round pays 4% of the pig; the rest stays for the next ones
+  potShareBps: int(env.POT_SHARE_BPS, PRIZE.treasuryBps), // POT_SOURCE=wallet: the pig's share of every fee inflow (the rest is the team's)
   drawTiersBps: (env.DRAW_TIERS_BPS ?? '6000,2500,1500').split(',').map((s) => Number(s)),
 };
 
