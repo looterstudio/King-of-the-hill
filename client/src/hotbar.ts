@@ -8,7 +8,7 @@ import { RARITY_CSS } from './game3d.ts';
 export function hotbarHTML(me: SnapSelf): string {
   const slot = (key: string, cls: string, color: string, icon: string, name: string, extra: string, ammo: string) =>
     `<div class="hb-slot ${cls}" style="--rc:${color}"><kbd>${key}</kbd><i class="ico ${icon}"></i><span class="hb-name">${name}${extra}</span><em>${ammo}</em></div>`;
-  const guns = [slot('X', `axe ${me.axe ? 'on' : ''}`, '#0fa3c4', 'ico-axe', 'Pickaxe', '', `▦ ${me.mats}`)];
+  const guns = [slot('Q', `axe ${me.axe ? 'on' : ''}`, '#0fa3c4', 'ico-axe', 'Pickaxe', '', `▦ ${me.mats}`)];
   me.slots.forEach((s, i) => {
     if (!s) { guns.push(`<div class="hb-slot empty"><kbd>${i + 1}</kbd><span class="hb-name">empty</span></div>`); return; }
     const d = WEAPONS[s], on = i === me.cur && !me.axe, ups = me.ups?.[i] ?? 0;

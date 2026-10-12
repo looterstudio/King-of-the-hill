@@ -227,6 +227,13 @@ class Sfx {
       this.tone(root * 8, root * 8, 0.08, 1.4, 'sine', 0.05); this.tone(root * 12, root * 12.05, 0.05, 1.1, 'triangle', 0.08);
     }, at * 1000);
   }
+  // the storm's warning: two square-wave beeps (higher and doubled when it is about to close)
+  alarm(urgent = false) {
+    if (!this.ctx || !this.enabled) return;
+    const hi = urgent ? 1046 : 880, lo = urgent ? 784 : 660;
+    this.tone(hi, hi, 0.1, 0.16, 'square'); this.tone(lo, lo, 0.1, 0.16, 'square', 0.2);
+    if (urgent) { this.tone(hi, hi, 0.1, 0.16, 'square', 0.4); this.tone(lo, lo, 0.1, 0.16, 'square', 0.6); }
+  }
   jump() { if (this.ctx && this.enabled) this.tone(300, 520, 0.08, 0.12, 'sine'); }
   swing() { if (this.ctx && this.enabled) this.burst(900, 0.8, 0.12, 0.12, 'bandpass'); }
   chop(broke: boolean) { if (!this.ctx || !this.enabled) return; this.burst(broke ? 500 : 1800, 2, broke ? 0.35 : 0.25, broke ? 0.3 : 0.08); if (broke) this.tone(160, 60, 0.18, 0.3, 'triangle'); }

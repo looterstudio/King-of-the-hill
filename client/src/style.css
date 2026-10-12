@@ -254,6 +254,15 @@ body.knocked #hud::after { content: ''; position: absolute; inset: 0; pointer-ev
 @keyframes blink { 50% { opacity: .35; } }
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; mix-blend-mode: normal !important; transition: opacity .9s ease-out; }
 .flash.on { opacity: .95; transition: none; }
+/* blood at the screen edges when you are hit: stronger for a harder hit, gone in half a second */
+.blood { position: absolute; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: normal !important; background: radial-gradient(ellipse at center, transparent 38%, rgba(170, 14, 30, .55) 72%, rgba(120, 6, 20, .9) 100%); transition: opacity .6s ease-out; }
+.blood.on { transition: none; }
+/* standing in the storm: the edges pulse purple and the screen shakes a little (it eats your health) */
+.stormfx { position: absolute; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: normal !important; background: radial-gradient(ellipse at center, transparent 35%, rgba(110, 40, 170, .5) 75%, rgba(70, 15, 130, .85) 100%); transition: opacity .35s; }
+.stormfx.on { opacity: 1; animation: stormPulse 1.1s ease-in-out infinite; }
+@keyframes stormPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.storm.warn { animation: stormWarn .5s ease-in-out infinite alternate; }
+@keyframes stormWarn { from { background: rgba(246,242,228,.6); } to { background: rgba(211,35,54,.35); } }
 .low .bar.hp { border-color: var(--red); } .low .bar.hp div { background: repeating-linear-gradient(-55deg, var(--red) 0 3px, transparent 3px 6.5px); }
 .ammo-row { display: flex; align-items: baseline; gap: 4px; }
 .ammo-row b { font-size: 54px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }

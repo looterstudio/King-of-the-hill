@@ -106,9 +106,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyV' && !e.repeat) void voice.talk(true);
   if (e.code === 'KeyU' && voice.active) { voice.setDeaf(!voice.deaf); hint(voice.deaf ? 'squad voice muted (U)' : 'squad voice on', 1500); }
   if (e.code === 'KeyN' && radio.on) radio.nextStation();
-  if (e.code === 'KeyM' && !e.repeat && (state.mapOpen || game.me?.bus)) { toggleMap(); return; } // aboard the plane M is the map
+  if (e.code === 'KeyM' && !e.repeat) { toggleMap(); return; } // M: the map, any time (the radio's on/off is the button at the top)
   if (e.code === 'Escape' && state.mapOpen) { toggleMap(); return; }
-  if (e.code === 'KeyM') { radio.muted = !radio.muted; if (radio.muted) { radio.stop(); hint('📻 radio off (M to turn it back on)', 1800); } }
   if (e.code === 'KeyP' && !e.repeat) { // third person (over the shoulder) or first person, remembered
     setSetting('view', game.thirdPerson ? 'fp' : 'tp');
     hint(game.thirdPerson ? 'third person · P for first person' : 'first person · P for third person', 1500);
@@ -509,6 +508,13 @@ function armorLost() {
   sfx.armorLost();
   const el = $('armorLost'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
+// blood across the edges of the screen, as strong as the hit was
+function bloodHit(dmg: number) {
+  const el = $('blood');
+  el.classList.add('on'); el.style.opacity = String(Math.min(0.95, 0.3 + dmg / 70));
+  void el.offsetWidth; el.classList.remove('on'); el.style.opacity = '0';
+}
+let lastWarn = -1, stormClosing = false;
 function damageFrom(by: number | null) {
   const pos = by !== null ? game.positionOf(by) : null;
   if (!pos) return;
@@ -534,7 +540,7 @@ function leaveMatch() {
 }
 input.onLockChange = (locked) => {
   if (!locked) unlockedAt = performance.now();
-  if (state.screen !== 'game' || state.over || (state.mapOpen && !locked)) return; // the flight map took the cursor: no pause card
+  if (state.screen !== 'game' || state.over || ((state.mapOpen || inventory.kept) && !locked)) return; // the map or the inventory took the cursor: no pause card
   if (locked && !state.dropped) { state.dropped = true; banner('Drop!', `${MODES[state.roomMode].name} · ${state.seats.length} players${game.mates.size ? ` · ${game.mates.size} teammate${game.mates.size > 1 ? 's' : ''} with you` : ''} · the hill is in the middle`, true, 2400); }
   if (locked) menu.hide(); else menu.show(state.dropped ? 'paused' : 'drop');
   if (locked && input.free) hint('mouse capture is blocked here: look with the mouse + arrow keys, Esc to pause', 4500);
@@ -646,7 +652,15 @@ function drawDropMap() {
   if (dropFor !== w) { dropFor = w; dropLayer.width = S; dropLayer.height = S; drawIsland(dropLayer.getContext('2d')!, w, S, true); }
   ctx.clearRect(0, 0, S, S); ctx.drawImage(dropLayer, 0, 0);
   drawDrop(ctx, S, line, game.busNow, true);
-  if (!state.marker) { ctx.font = '700 22px Caveat, cursive'; ctx.textAlign = 'center'; ctx.fillStyle = '#1d33b8'; ctx.fillText(state.mapOpen ? 'click where you want to land' : 'M · mark where you want to land', S / 2, S - 16); }
+  if (!game.me?.bus) { // on the ground: the storm, your mates and you
+    const k = S / (MAP_HALF * 2), X = (x: number) => (x + MAP_HALF) * k, Y = (z: number) => (z + MAP_HALF) * k, g = game.ring;
+    ctx.lineWidth = 3; ctx.strokeStyle = '#d32336'; ctx.beginPath(); ctx.arc(X(g.x), Y(g.y), Math.max(0.5, g.r * k), 0, Math.PI * 2); ctx.stroke();
+    if (g.nr > 0) { ctx.strokeStyle = '#1d33b8'; ctx.setLineDash([8, 8]); ctx.beginPath(); ctx.arc(X(g.nx), Y(g.ny), g.nr * k, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
+    for (const id of game.mates) { const o = game.infoOf(id); if (!o || state.dead.has(id)) continue; ctx.fillStyle = '#13897f'; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(o[1]), Y(o[3]), 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    const me = game.me;
+    if (me && game.self?.alive) { ctx.save(); ctx.translate(X(me.x), Y(me.z)); ctx.rotate(-input.yaw); ctx.fillStyle = '#d32336'; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(8, 8); ctx.lineTo(0, 3); ctx.lineTo(-8, 8); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+  }
+  if (!state.marker) { ctx.font = '700 22px Caveat, cursive'; ctx.textAlign = 'center'; ctx.fillStyle = '#1d33b8'; ctx.fillText(!game.me?.bus ? 'click to mark a spot for your squad · M closes' : state.mapOpen ? 'click where you want to land' : 'M · mark where you want to land', S / 2, S - 16); }
 }
 // what to press right now, aboard and on the way down, with the countdown and how high you are
 function dropFrame() {
@@ -655,7 +669,7 @@ function dropFrame() {
   const aboard = alive && !!me?.bus, falling = alive && !!me && !me.bus && me.gliding && !me.ride;
   $('dropHud').classList.toggle('hidden', (!aboard && !falling) || state.mapOpen);
   dropMap.classList.toggle('hidden', !aboard && !state.mapOpen);
-  if (state.mapOpen && !aboard) { state.mapOpen = false; dropMap.classList.remove('open'); $('tags').style.visibility = ''; $('pause').classList.remove('hidden'); } // thrown out with the map open: click to carry on
+  if (state.mapOpen && !alive) { state.mapOpen = false; dropMap.classList.remove('open'); $('tags').style.visibility = ''; $('pause').classList.remove('hidden'); } // died with the map open: click to carry on
   if (aboard && line && me) {
     const left = Math.max(0, (BUS.len - ((me.x - line.x) * line.dx + (me.z - line.z) * line.dz)) / BUS.speed);
     setHTML($('dropHud'), `<div class="big"><kbd>CLICK</kbd> ANYWHERE or <kbd>SPACE</kbd> to jump</div>`
@@ -821,7 +835,7 @@ net.on((m: ServerMsg) => {
           if (m.head) game.kick(0.45);
           if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); hint('shield broken · push now', 1200); }
         }
-        if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); if (m.broke) armorLost(); }
+        if (m.victim === state.you) { damageFrom(m.by); bloodHit(m.dmg); sfx.hurt(); if (m.broke) armorLost(); }
         break;
       }
       if (m.kind === 'boom') {
@@ -1200,6 +1214,13 @@ function frame(now: number) {
     const g = game.ring, st = $('storm');
     st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
+    // the alarm: a beep and a note when the storm is about to move (30 s, 10 s, the last five), and when it starts closing
+    const warnAt = !g.closing && [30, 15, 10, 5, 4, 3, 2, 1].includes(g.nextIn) ? g.nextIn : g.closing && !stormClosing ? 0 : -1;
+    st.classList.toggle('warn', !g.closing && g.nextIn <= 10 && g.nextIn > 0);
+    if (me?.alive && warnAt >= 0 && warnAt !== lastWarn) { sfx.alarm(warnAt <= 5); hint(warnAt ? `⚠ the storm moves in ${warnAt} s` : '⚠ the storm is closing in: get inside the circle', 1600); }
+    lastWarn = warnAt; stormClosing = g.closing;
+    // in the storm: the purple edges
+    $('stormfx').classList.toggle('on', !!me?.alive && Math.hypot(me.x - g.x, me.z - g.y) > g.r);
     if (state.pot) { const s = sol(state.pot.lamports), u = state.pot.solUsd; setText($('miniPot'), u ? `$${Math.round(s * u).toLocaleString('en-US')}` : fmtSol(s)); }
     dropFrame();
     if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); if (!dropMap.classList.contains('hidden')) drawDropMap(); }

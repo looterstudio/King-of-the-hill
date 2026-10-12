@@ -152,9 +152,10 @@ export function upgradeGun(g: THREE.Group, level: number, gold: Mat, gem: Mat) {
 // ---------------- loot, cases, gadgets ----------------
 // ammo boxes: the colour band and how many rounds stand on the lid
 const AMMO_LOOK: Record<string, [number, number]> = { light: [INK_IDS.BLUE, 4], medium: [INK_IDS.GREEN, 3], heavy: [INK_IDS.RED, 2], shells: [INK_IDS.ORANGE, 3], rockets: [INK_IDS.PURPLE, 1] };
-export function buildItem(what: string, ink: InkRenderer): THREE.Group {
+export function buildItem(what: string, ink: InkRenderer, front = false): THREE.Group { // front: for the first-person view scene
   const g = new THREE.Group();
-  const blue = ink.material(INK_IDS.BLUE), dark = ink.material(INK_IDS.GRAPHITE), red = ink.material(INK_IDS.RED), paper = ink.material(INK_IDS.PAPER), orange = ink.material(INK_IDS.ORANGE), green = ink.material(INK_IDS.GREEN);
+  const m = (i: number) => ink.material(i, front);
+  const blue = m(INK_IDS.BLUE), dark = m(INK_IDS.GRAPHITE), red = m(INK_IDS.RED), paper = m(INK_IDS.PAPER), orange = m(INK_IDS.ORANGE), green = m(INK_IDS.GREEN);
   if (what in AMMO_LOOK) { // an ammo box: a paper crate with its colour band, rounds standing on the lid
     const [band, n] = AMMO_LOOK[what], c = ink.material(band);
     g.add(box(0.46, 0.22, 0.3, paper, 0, 0.11, 0), box(0.47, 0.07, 0.31, c, 0, 0.12, 0), box(0.47, 0.02, 0.31, dark, 0, 0.225, 0));

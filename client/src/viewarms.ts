@@ -75,6 +75,14 @@ export class ViewArms {
     for (const a of [this.r, this.l]) a.sleeve.material = this.ink.material(ink, true);
   }
   hide() { this.group.visible = false; }
+  // healing: both hands hold the potion or medkit (a group in the view scene, already posed this frame)
+  updateItem(item: THREE.Group, half: number, up: number) {
+    this.group.visible = true;
+    item.updateMatrixWorld();
+    this.place(this.r, item, [half, up, 0], SHOULDER_R, null);
+    this.place(this.l, item, [-half, up, 0], SHOULDER_L, null);
+    for (const o of [this.l.sleeve, this.l.cuff, this.l.hand]) o.visible = true;
+  }
   // gun: the view gun, already posed this frame; reload: 0..1 through a reload (0 when not reloading)
   update(gun: THREE.Group, w: WeaponId, reload: number) {
     this.group.visible = true;
@@ -84,7 +92,9 @@ export class ViewArms {
     if (g.l) {
       // the support hand drops to the magazine and back while reloading
       const k = Math.sin(Math.min(1, reload) * Math.PI);
-      const at: V3 = [g.l[0] * (1 - k), g.l[1] + (-0.2 - g.l[1]) * k, g.l[2] + (-0.12 - g.l[2]) * k];
+      let at: V3 = [g.l[0] * (1 - k), g.l[1] + (-0.2 - g.l[1]) * k, g.l[2] + (-0.12 - g.l[2]) * k];
+      // the heavy rifle: the hand goes up to the open action and feeds the rounds in one by one
+      if (w === 'heavy') { const ins = Math.sin(Math.min(1, reload) * Math.PI * 6) * 0.045 * k; at = [g.l[0] * (1 - k) + 0.07 * k, g.l[1] * (1 - k) + 0.03 * k + ins, g.l[2] * (1 - k) + -0.04 * k]; }
       this.place(this.l, gun, at, SHOULDER_L, k);
     }
     for (const o of [this.l.sleeve, this.l.cuff, this.l.hand]) o.visible = !!g.l;

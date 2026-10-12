@@ -65,6 +65,7 @@ export class Game3D {
   private selfFig: Figure | null = null;
   private selfSkin = -1;
   private camB: number = TP.back;   // the camera's distance back along the crosshair ray (pulled in by walls)
+  private cockK = 0;                // 0..1: aiming from an aircraft eases the camera from the chase view to its nose, looking down your sights
   private boom: number = TP.back;   // ... where it wants to be (closer while aiming)
   private selfAt = new THREE.Vector3(); // where we're drawn this frame
   private fovBase = 78;
@@ -672,12 +673,14 @@ export class Game3D {
     const heard = new Set<number>();
     for (const sh of s.shots) {
       if (sh[6] === this.you && !((this.pred?.ride ?? 0) >= 2)) continue; // our own gunshots were drawn when we pulled the trigger
-      this.tracers.push({ start: new THREE.Vector3(sh[0], sh[1] - 0.15, sh[2]), end: new THREE.Vector3(sh[3], sh[4], sh[5]), life: 0.12, mine: false });
-      if (!heard.has(sh[6])) this.flash(sh[0], sh[1] - 0.15, sh[2], 0.32);
+      // the tracers are drawn over everything: only show a shot whose muzzle we could see (not one fired behind a wall)
+      const cam = this.ink.camera.position, vx = sh[0] - cam.x, vy = sh[1] - 0.15 - cam.y, vz = sh[2] - cam.z, vd = Math.hypot(vx, vy, vz) || 1;
+      const seen = !this.world || vd < 2 || this.world.raycast(cam.x, cam.y, cam.z, vx / vd, vy / vd, vz / vd, vd) >= vd - 0.6;
+      if (seen) this.tracers.push({ start: new THREE.Vector3(sh[0], sh[1] - 0.15, sh[2]), end: new THREE.Vector3(sh[3], sh[4], sh[5]), life: 0.12, mine: false });
+      if (seen && !heard.has(sh[6])) this.flash(sh[0], sh[1] - 0.15, sh[2], 0.32);
       if (!heard.has(sh[6])) { // one bang per shooter per snapshot (shotgun pellets are one shot)
         heard.add(sh[6]);
         const o = s.others.find((p) => p[0] === sh[6]);
-        const cam = this.ink.camera.position;
         sfx.shot(WEAPON_IDS[o?.[8] ?? 4] ?? 'ar', Math.max(1, Math.hypot(sh[0] - cam.x, sh[2] - cam.z)));
       }
     }
@@ -789,7 +792,11 @@ export class Game3D {
     const [ox, oy, oz] = aimFrom(this.world, this.pred.x, this.pred.y, this.pred.z, c.yaw, c.pitch, tp);
     const ex = this.pred.x, ey = this.pred.y + EYE_H, ez = this.pred.z;
     const view = new THREE.Euler(c.pitch, c.yaw, 0, 'YXZ');
-    const muzzle = (tp ? new THREE.Vector3(0.3, -0.3, -0.75) : new THREE.Vector3(0.22, -0.18, -0.6)).applyEuler(view).add(new THREE.Vector3(ex, ey, ez));
+    // first person: the tip of the barrel of the model in your hands (gun space: barrel down -z), so the flash and
+    // the tracer leave the muzzle of every gun, not one point in front of the camera
+    const gun = !tp && !def.melee ? this.guns.get(w) : null, mm = gun?.userData.min as number[] | undefined, mx = gun?.userData.max as number[] | undefined;
+    const tip = gun && mm && mx ? new THREE.Vector3((mm[0] + mx[0]) / 2, mm[1] + (mx[1] - mm[1]) * 0.6, mm[2]) : null;
+    const muzzle = (tip ? tip.clone().applyEuler(gun!.rotation).add(gun!.position) : tp ? new THREE.Vector3(0.3, -0.3, -0.75) : new THREE.Vector3(0.22, -0.18, -0.6)).applyEuler(view).add(new THREE.Vector3(ex, ey, ez));
     if (def.melee) this.slashT = 1; // a blade: the swing is all there is to draw
     else if (def.proj) { // a rocket (or a spell): drawn now, flying out of the launcher onto its line
       const cp = Math.cos(c.pitch), dx = -Math.sin(c.yaw) * cp, dy = Math.sin(c.pitch), dz = -Math.cos(c.yaw) * cp, drop = tp ? 0 : 0.1;
@@ -808,7 +815,17 @@ export class Game3D {
       }
       this.tracers.push({ start: muzzle.clone(), end, life: 0.08, mine: true });
     }
-    if (!def.melee) this.flash(muzzle.x, muzzle.y, muzzle.z, tp ? 0.3 : 0.18);
+    if (def.melee) return;
+    if (gun && tip) this.gunFlash(gun, tip, 0.18); else this.flash(muzzle.x, muzzle.y, muzzle.z, tp ? 0.3 : 0.18);
+  }
+
+  // the flash of the gun in your hands, stuck to its muzzle (it moves with the gun's kick and sway)
+  private gunFlash(g: THREE.Group, tip: THREE.Vector3, s: number) {
+    if (this.flashes.length > 40) return;
+    const m = new THREE.Mesh(Game3D.STAR, this.ink.material(INK_IDS.ORANGE, true));
+    m.position.copy(tip); m.position.z -= 0.03; m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3); m.scale.setScalar(s / 0.16);
+    g.add(m);
+    this.flashes.push({ m, t: 0.06 });
   }
 
   // a muzzle flash: a little orange star, turned at random, gone in a few frames
@@ -1034,6 +1051,12 @@ export class Game3D {
         if (eye.y < tgt.y - 1) eye.y = tgt.y - 1;
         if (eye.y < 0.5) eye.y = 0.5;
         if (this.pred.ride === 5 && !this.pred.seat) { const [tx, ty, tz] = tankEye(pos.x, pos.y, pos.z, look.yaw, look.pitch, this.pred.spd); eye.set(tx, ty, tz); } // the sight the cannon aims down
+        // aiming from a helicopter or a plane: first person, from just ahead of the nose along your aim (the model stays behind the camera)
+        this.cockK += (((air && look.aim ? 1 : 0)) - this.cockK) * Math.min(1, dt * 10);
+        if (this.cockK > 0.002) {
+          const nose = tgt.clone().add(new THREE.Vector3(-Math.sin(look.yaw) * cp, Math.sin(look.pitch), -Math.cos(look.yaw) * cp).multiplyScalar(5));
+          eye.lerp(nose, this.cockK);
+        }
         cam.position.copy(eye);
         cam.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
       } else if (this.tpNow) {
@@ -1347,8 +1370,10 @@ export class Game3D {
       this.gunKick = Math.max(0, this.gunKick - dt * 9);
       const reload = me.reloadT > 0 ? Math.sin(Math.min(1, me.reloadT / WEAPONS[w].reload) * Math.PI) : 0;
       const pose = gunPose(w, (g.userData.max as number[])[1], this.adsK), swap = Math.sin(this.swapT * Math.PI / 2), steady = 1 - this.adsK * 0.75;
-      g.position.set(pose.x, pose.y - reload * 0.22 + Math.sin(this.bob) * 0.012 * steady - swap * 0.35, pose.z + this.gunKick * 0.06 * steady);
-      g.rotation.set(this.gunKick * 0.12 * steady - reload * 0.6 - swap * 0.9, pose.ry, 0);
+      // the heavy rifle's reload is rounds fed in one at a time: the gun rolls over to show the action and the bolt works
+      const heavy = w === 'heavy', rprog = me.reloadT > 0 ? 1 - me.reloadT / WEAPONS[w].reload : 0, bolt = heavy ? Math.max(0, Math.sin(rprog * Math.PI * 6)) * 0.03 * reload : 0;
+      g.position.set(pose.x, pose.y - reload * 0.22 + Math.sin(this.bob) * 0.012 * steady - swap * 0.35, pose.z + this.gunKick * 0.06 * steady + bolt);
+      g.rotation.set(this.gunKick * 0.12 * steady - reload * 0.6 - swap * 0.9, pose.ry, heavy ? reload * 0.5 : 0);
       if (WEAPONS[w].melee) { // the blade: held up and out, a sweep from right to left on every swing
         this.slashT = Math.max(0, this.slashT - dt * 3.6);
         const k = Math.sin((1 - this.slashT) * Math.PI) * (this.slashT > 0 ? 1 : 0);
@@ -1360,6 +1385,7 @@ export class Game3D {
         this.arms.update(g, w, me.reloadT > 0 ? 1 - me.reloadT / WEAPONS[w].reload : 0);
       } else this.arms?.hide();
     } else this.arms?.hide();
+    this.drawHeal(dt, me, fp);
 
     this.drawVehicles(dt);
     this.drawWind(dt, !!me?.alive);
@@ -1373,6 +1399,22 @@ export class Game3D {
     this.ink.setDanger(n ? n.x : 0, n ? n.z : 0, n ? NUKE.radius : 0, n ? 0.6 + 0.4 * Math.sin(this.time * 12) : 0);
     this.ink.setStorm(this.ring.x, this.ring.y, this.ring.r, this.ring.nx, this.ring.ny, this.ring.nr);
     this.ink.render(this.time);
+  }
+
+  // healing in first person: the potion or medkit in both hands, a potion raised to the face and tipped back
+  // over the whole use, a medkit held low and pressed
+  private healViews = new Map<string, THREE.Group>();
+  private drawHeal(dt: number, me: SnapSelf | null, fp: boolean) {
+    const use = me && me.alive && fp && !this.pred?.gliding ? me.use : null;
+    for (const [k, g] of this.healViews) g.visible = !!use && use.item === k;
+    if (!use || !this.arms) return;
+    let g = this.healViews.get(use.item);
+    if (!g) { g = buildItem(use.item === 'med' ? 'med' : use.item, this.ink, true); this.ink.viewScene.add(g); this.healViews.set(use.item, g); }
+    const p = 1 - use.t / ITEMS[use.item].use, potion = use.item !== 'med', lift = Math.sin(Math.min(1, p * 2.2) * Math.PI / 2) * (potion ? 1 : 0);
+    g.scale.setScalar(potion ? 0.8 : 0.9);
+    g.position.set(0, -0.42 + 0.3 * lift + (potion ? 0 : Math.sin(p * 18) * 0.012), -0.5 + 0.08 * lift);
+    g.rotation.set(potion ? -1.0 * lift * Math.sin(p * Math.PI) - 0.2 * lift : 0.3 + Math.sin(p * 18) * 0.04, 0, 0);
+    this.arms.updateItem(g, potion ? 0.2 : 0.26, potion ? 0.2 : 0.14);
   }
 
   // the paper plane over the island: on you while you ride it (your prediction is where it is), flown on from

@@ -56,7 +56,7 @@ export const GUIDE: Card[] = [
   { art: jump, title: 'Jump, double jump, wall jump', tab: 'basics', keys: '<kbd>Space</kbd>', tone: 'teal', text: 'Space again in the air jumps twice. Jump against a wall to kick off it. C in the air dashes.' },
   { art: jump, title: 'Climb over anything', tab: 'basics', keys: '<kbd>W</kbd> + <kbd>Space</kbd>', tone: 'green', text: 'Jump at a crate, a car, a wall you can reach the top of or a window while moving at it: you pull yourself up and over, or dive through the window.' },
   { art: hook, title: 'Grapple', tab: 'basics', keys: '<kbd>Q</kbd> hold', tone: 'teal', text: 'Hold Q to hook what you look at and reel yourself in. Let go to drop.' },
-  { art: pick, title: 'Diamond pickaxe', tab: 'build', keys: '<kbd>X</kbd>', tone: 'diamond', text: 'Always in your pocket. 1-4 back to your guns.' },
+  { art: pick, title: 'Diamond pickaxe', tab: 'build', keys: '<kbd>Q</kbd>', tone: 'diamond', text: 'Always in your pocket. 1-4 back to your guns.' },
   { art: crack, title: 'Break', tab: 'build', keys: 'pickaxe + <kbd>Left click</kbd>', tone: 'red', text: 'Breaks walls, cars and people. Every block you break gives you ▦ material. Rock is unbreakable.' },
   { art: block, title: 'Build', tab: 'build', keys: 'pickaxe + <kbd>Right click</kbd> or <kbd>B</kbd>', tone: 'diamond', text: 'Places a block where the blue cube shows. Wall yourself in, make stairs, block a door.' },
   { art: spin, title: 'Minigun', tab: 'loot', keys: 'hold <kbd>Left click</kbd>', tone: 'pink', text: `The barrels spin up first (${MG.spinUp} s, you hear the whine climb), then ${rps} shots a second. ${MG.mag}-round drum, ${MG.reload} s reload: do it behind cover.` },
@@ -74,7 +74,7 @@ export const GUIDE: Card[] = [
   { tab: 'vehicles', art: heli, title: 'Helicopters', keys: '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up, down · <kbd>Shift</kbd> fast · <kbd>Left click</kbd> nose gun', tone: 'blue', text: 'Land on any roof. Fly one into a building at speed and the building goes up with it.' },
   { tab: 'vehicles', art: plane, title: 'Planes', keys: '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>Left click</kbd> guns · <kbd>Right click</kbd> bomb', tone: 'teal', text: 'Take off from the runway at Paper Plane Field. A plane flown into a tower brings the tower down.' },
   { tab: 'vehicles', art: tank, title: 'Tanks', keys: '<kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn · <kbd>Mouse</kbd> turret · <kbd>Left click</kbd> cannon · <kbd>Right click</kbd> machine gun', tone: 'green', text: 'Drives straight through walls. The cannon fires at your crosshair and flattens houses; the panel shows when it has reloaded.' },
-  { tab: 'vehicles', art: radio, title: '80s radio', keys: '<kbd>N</kbd> next station · <kbd>M</kbd> radio off', tone: 'pink', text: 'It comes on by itself in every vehicle.' },
+  { tab: 'vehicles', art: radio, title: '80s radio', keys: '<kbd>N</kbd> next station', tone: 'pink', text: 'It comes on by itself in every vehicle.' },
   // weapons and loot
   { tab: 'loot', art: star, title: 'Rarity and golden cases', keys: 'grey → green → blue → purple → gold', tone: 'orange', text: 'Golden pencil cases (★ on the map) hold the legendaries: the SCAR, the Heavy Sniper. A Heavy Sniper headshot drops anyone.' },
   { tab: 'loot', art: crate, title: 'Supply drops', keys: 'a balloon in every new circle', tone: 'red', text: 'A crate falls into each new circle: a guaranteed legendary, C4 or a nuke, full shields. Everyone sees it coming.' },
@@ -102,12 +102,12 @@ const TABS: { id: Tab | 'keys'; name: string }[] = [
 ];
 const KEYS: [string, string][] = [
   ['W A S D', 'move'], ['Mouse', 'look and aim'], ['Shift', 'sprint'], ['Space', 'jump · again in the air: double jump · against a wall: wall jump'], ['W + Space', 'at a ledge or a window: climb over / dive through'],
-  ['C / Ctrl', 'slide while sprinting · air dash in the air'], ['Q (hold)', 'grapple and reel in'], ['Left click', 'shoot (hold for automatics)'],
-  ['Right click', 'aim down sights · with the pickaxe: build'], ['R', 'reload'], ['1 – 4 / wheel', 'switch gun'], ['X', 'diamond pickaxe'],
+  ['C / Ctrl', 'slide while sprinting · air dash in the air'], ['F (hold)', 'grapple and reel in'], ['Left click', 'shoot (hold for automatics)'],
+  ['Right click', 'aim down sights · with the pickaxe: build'], ['R', 'reload'], ['1 – 4 / wheel', 'switch gun'], ['Q', 'diamond pickaxe'],
   ['B', 'build a block (pickaxe out)'], ['E / F', 'open cases · pick up · swap · get in and out of vehicles · upgrade at a bench'],
   ['E (hold)', 'pick up a knocked teammate'], ['5', 'drink a shield'], ['6', 'use a medkit'], ['G', 'use your perk / throw'],
   ['Z (hold)', 'item wheel: point at a shield, medkit or perk, let go'], ['Tab / I', 'inventory: everything you carry and what it does'],
-  ['V (hold)', 'talk to your squad'], ['U', 'mute your squad'], ['N / M', 'next radio station / radio off'], ['H', 'controls card in a match'],
+  ['V (hold)', 'talk to your squad'], ['U', 'mute your squad'], ['N', 'next radio station'], ['M', 'map: the storm, you and your squad'], ['H', 'controls card in a match'],
   ['P', 'third person (over the shoulder) / first person'], ['T', 'hide the training list'], ['F (out)', 'free camera when your team is out'], ['Esc', 'menu: settings, controls, leave'],
 ];
 // the lobby's manual: every card and every key, by topic
@@ -148,7 +148,7 @@ export const DRILLS: Drill[] = [
   { id: 'shoot', keys: 'Left click', text: 'shoot a gun' },
   { id: 'ads', keys: 'Right click', text: 'aim down sights' },
   { id: 'reload', keys: 'R', text: 'reload' },
-  { id: 'pick', keys: 'X', text: 'take out the diamond pickaxe' },
+  { id: 'pick', keys: 'Q', text: 'take out the diamond pickaxe' },
   { id: 'break', keys: 'Left click', text: 'break a block with it (▦)' },
   { id: 'build', keys: 'Right click', text: 'build a block' },
   { id: 'heal', keys: '5 / 6', text: 'heal: shield or medkit' },

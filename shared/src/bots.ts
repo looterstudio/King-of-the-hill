@@ -41,7 +41,7 @@ export interface Bot {
 // (and a person never has more than two bots on them at once: a match is for the people in it)
 const BOTS = new WeakMap<Sim, { ids: Set<number>; list: Bot[] }>();
 export function markBots(sim: Sim, bots: Bot[]) { const r = BOTS.get(sim) ?? { ids: new Set<number>(), list: [] }; for (const b of bots) { r.ids.add(b.id); r.list.push(b); } BOTS.set(sim, r); }
-const BOT_AGGRO = [0.02, 0.05, 0.1, 0.2, 0.45];
+const BOT_AGGRO = [0.04, 0.08, 0.16, 0.3, 0.55];
 const ON_PERSON = 2;
 const PHASE_PEACE = 1e9; // a peace value from here up: until the storm moves on (PHASE_PEACE + the circle it was made in)
 
@@ -309,16 +309,17 @@ function hop(b: Bot, self: PlayerState, inp: Input, t: number) {
 // shields, which bots leave alone
 function gunValue(w: WeaponId, ups: number, mag: number | null, d: number, skill: number, air = false): number {
   const def = WEAPONS[w];
-  if (d > def.range * 0.95 || (def.proj && def.proj !== 'spell' && d < 11) || (w === 'stinger') !== air) return 0; // out of reach, our own blast, the wrong job
+  if (d > def.range * 0.95 || (def.proj && def.proj !== 'spell' && d < 11) || (w === 'stinger' && !air)) return 0; // out of reach, our own blast, the wrong job (a Stinger on foot)
   const scoped = w === 'heavy' || w === 'hunting', aim = d > 30;
   const spread = def.spread * (aim ? (scoped ? 0.02 : 0.5) : 1) * 1.3 + (1 - skill) * 0.03;
   const hit = def.proj ? 0.55 : Math.min(1, 0.4 / Math.max(0.01, d * spread));
   const fall = def.pellets > 1 ? pelletFall(d, def.range) : 1;
   const burst = def.burst ?? 1, shot = def.dmg * (1 + UPGRADE.perLevel * ups) * def.pellets * hit * fall * burst;
   const cycle = def.burst ? def.cd + 0.15 : def.cd, m = def.mag / burst;
-  const sustained = (shot * m) / (m * cycle + def.reload);
+  const k = air && w !== 'stinger' ? 0.5 : 1; // any gun can hurt an aircraft, only the Stinger is made for it
+  const sustained = ((shot * m) / (m * cycle + def.reload)) * k;
   if (mag === null) return sustained;
-  return mag > 0 ? Math.max(sustained, (shot / cycle) * 0.8) : sustained * 0.35;
+  return mag > 0 ? Math.max(sustained, ((shot / cycle) * 0.8) * k) : sustained * 0.35;
 }
 const worth = (w: WeaponId, ups: number, skill: number) => 0.3 * gunValue(w, ups, null, 8, skill) + 0.5 * gunValue(w, ups, null, 30, skill) + 0.2 * gunValue(w, ups, null, 70, skill);
 
@@ -360,7 +361,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   // (a storm that hurries as the field thins out closes faster than its countdown says: leave earlier for it)
   const hurry = sim.hurry(), waitLeft = g.closing ? 0 : g.nextAt - t, due = waitLeft < (10 + Math.max(0, dNext - g.nr * 0.6) / 6) * hurry;
   if (inStorm || dCur > g.r * 0.88 - 3 * hurry || (due && dNext > g.nr * 0.75)) b.rot = true;
-  else if (!due || dNext < g.nr * 0.62) b.rot = false;
+  else if ((!due && dCur < g.r * 0.8) || dNext < g.nr * 0.62) b.rot = false; // (a margin: off the moment it was back inside 0.88, loot out at the edge sent it out again, for ever)
   const rotate = b.rot;
   // the storm's edge is about to reach us (a hurried storm closes several meters a second): run, don't stop to fight or build.
   // Already where it's closing to (the last circles), there's nowhere to run: fight
@@ -517,6 +518,12 @@ export function botInput(b: Bot, sim: Sim): Input {
     else if (self.mats >= BUILD.cost * 4 && t - b.jobT > 3 && (b.job = wallJob(w, self, b.groundY, tgt, t))) { b.jobT = t; b.cover = { x: self.x, z: self.z, until: t + 7, at: true }; moved = build(b, sim, self, inp); }
     else { const ux = (self.x - tgt.x) / (td || 1), uz = (self.z - tgt.z) / (td || 1); b.cover = { x: self.x + ux * 25, z: self.z + uz * 25, until: t + 2.5, at: false }; } // nowhere to hide: run
   }
+  // ---- shot from a roof or a tower floor we can't build up to: get out of their sight instead of standing in it ----
+  if (!goal && !moved && fighting && tgt && !b.cover && tgt.y - b.groundY > 5 && t - b.hitT < 1.5 && !rotate && td > 6 && spend(coverBudget, sim, 2)) {
+    b.mode = 'retreat';
+    const c = coverFrom(w, self, b.groundY, tgt, R() * Math.PI * 2);
+    if (c) b.cover = { x: c.x, z: c.z, until: t + 1.5 + Math.hypot(c.x - self.x, c.z - self.z) / 6 + 4, at: false };
+  }
   // on the way to cover nothing turns us back (a retreat used to flip back to looting, toward them, the
   // moment they were out of sight, and back again); once there, a fight from it doesn't send us back to it
   if (b.cover && (t > b.cover.until || rotate)) b.cover = null;
@@ -577,7 +584,7 @@ export function botInput(b: Bot, sim: Sim): Input {
       b.scanT = t + 0.5 + R() * 0.2;
       // once the storm is coming, nothing farther from the next circle than we are; near the leader in a team
       const zone = waitLeft < 25 ? Math.max(dNext, g.nr * 0.7) : Infinity;
-      pickLoot(b, sim, self, (x, z) => Math.hypot(x - g.nx, z - g.ny) <= zone && (!lead || Math.hypot(x - lead.x, z - lead.z) < 30));
+      pickLoot(b, sim, self, (x, z, slack) => Math.hypot(x - g.nx, z - g.ny) <= zone + slack && (!lead || Math.hypot(x - lead.x, z - lead.z) < 30 + slack));
     }
     const lg = b.goal;
     if (lg) {
@@ -604,7 +611,12 @@ export function botInput(b: Bot, sim: Sim): Input {
         if (l.kind === 'weapon' && full && d < 4) {
           const worst = worstSlot(self, b.skill);
           if (self.cur !== worst) { inp.slot = worst + 1; b.slotT = t; }
-          else if (d < 0.9 && !caseNear(sim, self) && self.reloadT === 0) { inp.interact = true; b.goal = null; }
+          else if (d < 0.9 && !caseNear(sim, self) && self.reloadT === 0) {
+            // E takes the NEAREST gun: in a pile that may not be the one we came for, and swapping with each
+            // one in turn went on for ever. Not the nearest: leave it
+            const near = sim.loot.some((o) => o !== l && o.kind === 'weapon' && Math.abs(o.y - self.y) <= 1.6 && Math.hypot(o.x - self.x, o.z - self.z) < d);
+            if (near) { b.skip.set(l.id, t + 60); b.goal = null; } else { inp.interact = true; b.goal = null; }
+          }
         }
         goal = { x: l.x, z: l.z, y: l.y, sprint: d > 6 };
         if (d < 0.5) { moved = true; inp.fwd = 0; }
@@ -696,6 +708,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   if (self.use) { inp.slot = 0; inp.reload = false; inp.sprint = false; }
   // turn like a player on a mouse, and only fire once the turn gets there
   const want = inp.yaw;
+  if (!fighting && !b.job && !b.chop && b.mode !== 'hold' && b.mode !== 'cover') inp.pitch = 0; // walking: eyes on the horizon, not the floor
   turn(self, inp, b.job ? BUILD_TURN : fighting || b.mode === 'hold' || b.mode === 'cover' ? 7 + b.skill * 8 : 6);
   if (inp.fire && Math.abs(angDiff(want, inp.yaw)) > 0.1 && !(gun && WEAPONS[gun].spinUp && !self.axe)) inp.fire = false;
   return inp;
@@ -935,13 +948,13 @@ function bestSlot(self: PlayerState, skill: number) {
 }
 
 // the nearest thing worth having on this floor: an unopened case, a better gun, shields and heals we have room for
-function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number) => boolean) {
-  const out = (x: number, z: number) => !ok(x, z);
+function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number, slack: number) => boolean) {
+  const out = (x: number, z: number) => !ok(x, z, 0);
   const t = sim.t;
   for (const [id, until] of b.skip) if (until < t) b.skip.delete(id);
   if (b.goal) { // still there?
     const r = b.goal.ref;
-    if ((b.goal.kind === 'case' ? (r as Case).open : b.goal.kind === 'bench' ? b.benches.has(-1 - r.id) : !sim.loot.includes(r as Loot)) || out(r.x, r.z)) b.goal = null;
+    if ((b.goal.kind === 'case' ? (r as Case).open : b.goal.kind === 'bench' ? b.benches.has(-1 - r.id) : !sim.loot.includes(r as Loot)) || !ok(r.x, r.z, 12)) b.goal = null; // (the one we're walking to has 12 m of slack: at the edge of the zone it flipped between it and the storm, standing still)
   }
   const full = !self.slots.includes(null), wi = worstSlot(self, b.skill), wv = full ? worth(self.slots[wi]!, self.ups[wi], b.skill) : 0;
   let best: Loot | Case | Bench | null = null, kind: 'case' | 'loot' | 'bench' = 'loot', bd = 45;

@@ -131,7 +131,7 @@ function html() {
       <div class="lp-key lp-in"><div class="lp-caps"><kbd class="cap">G</kbd></div><span>Perk<small>grenades, C4, launch pads</small></span></div>
       <div class="lp-key lp-in"><div class="lp-caps"><div class="row"><kbd class="cap">5</kbd><kbd class="cap">6</kbd></div></div><span>Heal up<small>shield, medkit</small></span></div>
     </div>
-    <p class="lp-keys-more lp-in">Also: <b>Q</b> grapple, <b>C</b> slide, <b>P</b> first person. Press <b>H</b> in a match for every control.</p>
+    <p class="lp-keys-more lp-in">Also: <b>F</b> grapple, <b>C</b> slide, <b>P</b> first person. Press <b>H</b> in a match for every control.</p>
   </section>
 
   <section class="lp-end lp-in">

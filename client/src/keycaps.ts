@@ -13,10 +13,10 @@ const wasd = `<div class="kc-wasd"><span></span>${kc('W')}<span></span>${kc('A')
 export function controlsHTML(compact = false): string {
   const move = `<section class="kc-group"><h4>Move</h4><div class="kc-hero">${wasd}<span class="kc-cap">walk</span></div>`
     + row(kc('Shift', true), 'sprint') + row(kc('Space', true), 'jump, again for a double jump')
-    + row(kc('C'), 'slide while sprinting') + row(kc('Q'), 'hold to grapple') + '</section>';
+    + row(kc('C'), 'slide while sprinting') + row(kc('F'), 'hold to grapple') + '</section>';
   const fight = `<section class="kc-group"><h4>Fight</h4><div class="kc-hero">${mouse}<span class="kc-cap"><b class="l">left</b> shoot · <b class="r">right</b> aim</span></div>`
     + row(kc('R'), 'reload') + row(`${kc('1')}${kc('2')}${kc('3')}${kc('4')}`, 'guns, or the mouse wheel')
-    + row(kc('X'), 'pickaxe: break and build') + '</section>';
+    + row(kc('Q'), 'pickaxe: break and build') + '</section>';
   const use = `<section class="kc-group"><h4>Use</h4>`
     + row(kc('E'), 'open cases, pick up, drive, revive') + row(`${kc('5')}${kc('6')}`, 'shield · medkit')
     + row(kc('G'), 'throw or use your perk') + row(kc('Z'), 'hold for the item wheel')

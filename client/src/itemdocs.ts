@@ -41,7 +41,7 @@ export const PERK_DOCS: Record<PerkId, Doc> = {
   nuke: { name: PERKS.nuke.name, what: 'Wipes out everything where it lands.', how: 'Look at the spot, press G, run' },
 };
 
-export const AXE_DOC: Doc = { name: 'Diamond Pickaxe', what: 'Breaks walls, cars and people. Every block gives ▦ material.', how: 'X · left click break · right click or B build' };
+export const AXE_DOC: Doc = { name: 'Diamond Pickaxe', what: 'Breaks walls, cars and people. Every block gives ▦ material.', how: 'Q · left click break · right click or B build' };
 // ammo: which guns take it
 const AMMO_FOR: Record<AmmoId, string> = { light: 'Pistol, SMG and Minigun', medium: 'Assault Rifle, Burst Rifle and SCAR', heavy: 'Hunting Rifle and Heavy Sniper', shells: 'the shotguns', rockets: 'the launchers' };
 export const ammoDoc = (a: AmmoId): Doc => ({ name: AMMO[a].name, what: `Reloads for ${AMMO_FOR[a]}. You carry up to ${AMMO[a].max}.`, how: 'Walk over it · R reloads' });

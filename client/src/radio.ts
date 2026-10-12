@@ -74,7 +74,10 @@ class Radio {
       if (!say) return;
       say.cancel();
       const u = new SpeechSynthesisUtterance(tuned ? `${s.name}. ${s.tag}.` : s.lines[Math.floor(Math.random() * s.lines.length)]);
-      u.rate = 1.05; u.pitch = this.station === 2 ? 0.7 : 1.1; u.volume = 0.8 * sfx.musicLevel; u.lang = 'en-US';
+      // the DJ is a woman's voice when the system has one: the announcer (kills, streaks) is the deep man's, and the two must not sound alike
+      const djv = say.getVoices().find((v) => /^en/i.test(v.lang) && /zira|samantha|hazel|susan|karen|moira|victoria|aria|jenny|female/i.test(v.name));
+      if (djv) { u.voice = djv; u.lang = djv.lang; } else u.lang = 'en-US';
+      u.rate = 1.1; u.pitch = this.station === 2 ? 1 : 1.35; u.volume = 0.8 * sfx.musicLevel;
       say.speak(u);
     } catch { /* no speech: the toast is enough */ }
   }

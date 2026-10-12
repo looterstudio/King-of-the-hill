@@ -29,8 +29,19 @@ export class Inventory {
     addEventListener('keydown', (e) => {
       if (!this.active()) return;
       if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat) { this.held = true; this.render(); } }
-      if (e.code === 'KeyI' && !e.repeat) { this.pinned = !this.pinned; this.render(); }
+      if (e.code === 'KeyI' && !e.repeat) this.pin(!this.pinned);
       if (e.code === 'KeyZ' && !e.repeat && this.input.locked) this.openWheel();
+    });
+    // Esc closes the kept-open inventory (the cursor is already free, so the browser has no Esc to spend)
+    addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.pinned) this.pin(false); });
+    // kept open, the cursor is free: click a gun to hold it, a shield, medkit or perk to use it
+    panel.addEventListener('click', (e) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
+      if (!el || !this.me?.alive) return;
+      const [k, v] = el.dataset.a!.split(':');
+      if (k === 'slot') this.input.press({ slot: Number(v) });
+      else if (k === 'item') this.input.press({ item: Number(v) });
+      else this.input.press({ perk: true });
     });
     addEventListener('keyup', (e) => {
       if (e.code === 'Tab') { this.held = false; this.render(); }
@@ -48,6 +59,13 @@ export class Inventory {
   // a new match: forget what was picked up, close everything
   reset() { this.seen.clear(); this.primed = false; this.held = false; this.pinned = false; this.closeWheel(false); this.render(); }
   get open() { return this.held || this.pinned; }
+  get kept() { return this.pinned; } // open with the cursor free
+  private pin(on: boolean) {
+    if (on === this.pinned) return;
+    this.pinned = on;
+    if (on) this.input.unlock(); else this.input.lock();
+    this.render();
+  }
 
   // every frame with your own state
   update(me: SnapSelf | null) {
@@ -92,23 +110,23 @@ export class Inventory {
     const me = this.me;
     this.panel.classList.toggle('hidden', !this.open || !me);
     if (!this.open || !me) return;
-    const html = `<header><h3>Inventory</h3><span><kbd>Tab</kbd> hold · <kbd>I</kbd> ${this.pinned ? 'close' : 'keep open'} · <kbd>Z</kbd> item wheel</span></header>${this.html()}`;
+    const html = `<header><h3>Inventory</h3><span><kbd>Tab</kbd> hold · <kbd>I</kbd> ${this.pinned ? 'close (or Esc)' : 'open and click things'} · <kbd>Z</kbd> item wheel</span></header>${this.html()}`;
     if ((this.panel as HTMLElement & { _h?: string })._h !== html) { (this.panel as HTMLElement & { _h?: string })._h = html; this.panel.innerHTML = html; }
   }
   // the two columns: weapons on one side, shields, healing, perk and material on the other (the Esc menu shows them too)
   html(): string {
     const me = this.me;
     if (!me) return '<p class="inv-none">Nothing yet: you carry what you pick up in a match.</p>';
-    const row = (icon: string, doc: Doc, side: string, cls = '', color = '') =>
-      `<div class="inv-row ${cls}" ${color ? `style="--rc:${color}"` : ''}><i class="${icon}"></i><div><b>${doc.name}</b><span>${doc.what}</span><em>${keys(doc.how)}</em></div><strong>${side}</strong></div>`;
-    const guns = [row('ico ico-axe', AXE_DOC, `▦ ${me.mats}`, me.axe ? 'on' : '', '#0fa3c4')];
+    const row = (icon: string, doc: Doc, side: string, cls = '', color = '', act = '') =>
+      `<div class="inv-row ${cls}${act ? ' act' : ''}" ${color ? `style="--rc:${color}"` : ''} ${act ? `data-a="${act}"` : ''}><i class="${icon}"></i><div><b>${doc.name}</b><span>${doc.what}</span><em>${keys(doc.how)}</em></div><strong>${side}</strong></div>`;
+    const guns = [row('ico ico-axe', AXE_DOC, `▦ ${me.mats}`, me.axe ? 'on' : '', '#0fa3c4', 'slot:5')];
     me.slots.forEach((s, i) => {
       if (!s) { guns.push(`<div class="inv-row empty"><i></i><div><b>Slot ${i + 1}</b><span>Empty. Walk over a gun or press E to take it.</span></div><strong></strong></div>`); return; }
       const d = WEAPONS[s], ups = me.ups?.[i] ?? 0;
-      guns.push(row(`ico ico-gun-${s}`, { ...gunDoc(s), name: `<kbd>${i + 1}</kbd> ${d.name}${ups ? ` <small class="stars">${'★'.repeat(ups)}</small>` : ''} <small class="rar">${d.rarity}</small>` }, d.melee ? '∞' : `${me.mags[i]}/${d.ammo ? me.ammo?.[d.ammo] ?? 0 : d.mag}`, i === me.cur && !me.axe ? 'on' : '', RARITY_CSS[d.rarity]));
+      guns.push(row(`ico ico-gun-${s}`, { ...gunDoc(s), name: `<kbd>${i + 1}</kbd> ${d.name}${ups ? ` <small class="stars">${'★'.repeat(ups)}</small>` : ''} <small class="rar">${d.rarity}</small>` }, d.melee ? '∞' : `${me.mags[i]}/${d.ammo ? me.ammo?.[d.ammo] ?? 0 : d.mag}`, i === me.cur && !me.axe ? 'on' : '', RARITY_CSS[d.rarity], `slot:${i + 1}`));
     });
-    const items = (['big', 'mini', 'med'] as ItemId[]).map((k) => row(`pic ico-item-${k}`, ITEM_DOCS[k], `×${me.items[k]}`, me.items[k] ? '' : 'none'));
-    const perk = me.perk ? row(`pic ico-item-${me.perk.kind}`, PERK_DOCS[me.perk.kind], `×${me.perk.n}`, '', RARITY_CSS[PERKS[me.perk.kind].rarity])
+    const items = (['big', 'mini', 'med'] as ItemId[]).map((k) => row(`pic ico-item-${k}`, ITEM_DOCS[k], `×${me.items[k]}`, me.items[k] ? '' : 'none', '', me.items[k] ? `item:${ITEM_CODE[k]}` : ''));
+    const perk = me.perk ? row(`pic ico-item-${me.perk.kind}`, PERK_DOCS[me.perk.kind], `×${me.perk.n}`, '', RARITY_CSS[PERKS[me.perk.kind].rarity], 'perk:1')
       : `<div class="inv-row none"><i class="pic"></i><div><b>No perk</b><span>Pencil cases drop grenades, C4, launch pads, forts and more. One kind at a time.</span></div><strong></strong></div>`;
     return `<div class="inv-cols"><section><h4>Weapons</h4>${guns.join('')}</section>`
       + `<section><h4>Shields and healing</h4>${items.join('')}<h4>Perk</h4>${perk}<h4>Building</h4>${row('pic mats', MATS_DOC, `▦ ${me.mats}`)}<h4>Ammo</h4>${AMMO_IDS.map((a) => row(`pic ammo-${a}`, ammoDoc(a), `${me.ammo?.[a] ?? 0}`, me.ammo?.[a] ? '' : 'none')).join('')}</section></div>`;

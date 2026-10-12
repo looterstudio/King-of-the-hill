@@ -585,7 +585,7 @@ function unstuck(w: World, p: Body) {
       up = Math.max(up, b.y1 - p.y);
     }
     const m = Math.min(px, nx, pz, nz, up) + 1e-4;
-    if (m > 3) return; // deep inside a big box: nowhere sensible nearby
+    if (m > 80) return; // (a mountain terrace is a big box: deep inside one the shortest way out is still the way out; it used to give up at 3 m and leave you in the mountain)
     if (up + 1e-4 === m) { p.y += m; p.vy = Math.max(0, p.vy); p.grounded = true; }
     else if (px + 1e-4 === m) p.x += m; else if (nx + 1e-4 === m) p.x -= m; else if (pz + 1e-4 === m) p.z += m; else p.z -= m;
   }

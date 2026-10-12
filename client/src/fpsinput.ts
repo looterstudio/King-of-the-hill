@@ -27,8 +27,8 @@ export class FpsInput {
       if (e.code === 'KeyC' || e.code === 'ControlLeft') this.latched.slide = true;
       if (e.code === 'KeyR') this.latched.reload = true;
       const n = /^Digit([1-4])$/.exec(e.code); if (n) this.latched.slot = Number(n[1]);
-      if (e.code === 'KeyX') this.latched.slot = 5; // the axe
-      if (e.code === 'KeyE' || e.code === 'KeyF') this.latched.interact = true;
+      if (e.code === 'KeyQ' || e.code === 'KeyX') this.latched.slot = 5; // the axe (Q; X still works)
+      if (e.code === 'KeyE') this.latched.interact = true;
       if (e.code === 'KeyG') this.latched.perk = true;
       if (e.code === 'Digit5') this.latched.item = 1;
       if (e.code === 'Digit6') this.latched.item = 2;
@@ -85,7 +85,7 @@ export class FpsInput {
   }
   isDown(code: string) { return this.keys.has(code); }
   // a one-shot action from the UI (the item wheel): item 2 medkit, 3 mini shield, 4 shield potion
-  press(a: { item?: number; perk?: boolean }) { if (a.item) this.latched.item = a.item; if (a.perk) this.latched.perk = true; }
+  press(a: { item?: number; perk?: boolean; slot?: number }) { if (a.item) this.latched.item = a.item; if (a.perk) this.latched.perk = true; if (a.slot) this.latched.slot = a.slot; }
   private stop() { this.free = false; this.locked = false; this.keys.clear(); this.fire = false; this.aim = false; this.el.style.cursor = ''; this.onLockChange?.(false); }
   unlock() { if (this.free) this.stop(); else if (document.pointerLockElement) document.exitPointerLock(); }
   setSens(v: number) { this.sens = v; try { localStorage.setItem('pr_sens', String(v)); } catch { /* storage blocked */ } }
@@ -103,7 +103,7 @@ export class FpsInput {
       fwd: k('KeyW') + k('ArrowUp') * arrows - k('KeyS') - k('ArrowDown') * arrows,
       strafe: k('KeyD') + k('ArrowRight') * arrows - k('KeyA') - k('ArrowLeft') * arrows,
       sprint: !!(k('ShiftLeft') || k('ShiftRight')),
-      grapple: !!k('KeyQ'),
+      grapple: !!k('KeyF'),
       jump: this.latched.jump, slide: this.latched.slide, reload: this.latched.reload, slot: this.latched.slot,
       up: k('Space') - (k('KeyC') || k('ControlLeft') ? 1 : 0), // held: helicopter climb / descend
       interact: this.latched.interact, perk: this.latched.perk, item: this.latched.item, hold: !!k('KeyE'), build: !!k('KeyB'),

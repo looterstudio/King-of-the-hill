@@ -146,6 +146,8 @@ html:not(.has-icons) i.ico { visibility: hidden; }
 .inv-row { --rc: var(--ink); display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 4px 6px; border-radius: 8px; }
 .inv-row.on { background: color-mix(in srgb, var(--rc) 12%, transparent); box-shadow: inset 3px 0 0 var(--rc); }
 .inv-row.none, .inv-row.empty { opacity: .5; }
+.inv-row.act { cursor: pointer; }
+.inv-row.act:hover { background: color-mix(in srgb, var(--rc) 20%, transparent); }
 .inv-row > i { height: 34px; }
 .inv-row > i.ico { background: var(--rc); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center; mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
 .inv-row > i.pic { background-repeat: no-repeat; background-position: center; background-size: contain; }
