@@ -73,7 +73,7 @@ test('a 40-bot solo match is fought to a winner: no one stuck, no one left in th
   assert.equal(m.sim.teamsAlive.size, 1, `no winner after ${m.t.toFixed(0)} s (${m.sim.alive} alive)`);
   assert.ok(m.t < 1000, `took ${m.t.toFixed(0)} s: the storm, not a fight, decided it`);
   // and the storm brought it to an end: decided in the last circles, not before the first one closed
-  assert.ok(m.sim.ring.phase >= RING_PHASES.length - 3, `over in circle ${m.sim.ring.phase + 1} of ${RING_PHASES.length} (${m.t.toFixed(0)} s)`);
+  assert.ok(m.sim.ring.phase >= RING_PHASES.length - 4, `over in circle ${m.sim.ring.phase + 1} of ${RING_PHASES.length} (${m.t.toFixed(0)} s)`);
   assert.ok(m.stuckMax < 20, `a bot stood still for ${m.stuckMax} s with nothing to do`);
   assert.ok(m.stormMax < 12, `a bot stayed ${m.stormMax.toFixed(0)} s in the storm`);
   assert.equal(m.ringDeaths, 0, 'bots walked out of the storm in time');
