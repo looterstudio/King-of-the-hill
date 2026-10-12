@@ -1097,7 +1097,7 @@ function frame(now: number) {
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
       setText($('shNum'), String(me.shield));
       document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= PLAYER_HP * 0.3);
-      for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
+      for (const sel of ['.hud-bl', '#hotbar']) { const el = document.querySelector(sel) as HTMLElement | null; if (el) el.style.visibility = me.alive ? 'visible' : 'hidden'; }
       setText($('ammo'), def ? (def.melee ? '∞' : String(mag)) : '–'); // a blade has no ammo
       setText($('ammoMax'), def && !def.melee ? `/${def.mag}` : '');
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);

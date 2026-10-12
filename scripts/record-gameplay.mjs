@@ -141,6 +141,9 @@ await page.fill('#guestName', 'you');
 await page.click('#guestBtn');
 await page.waitForFunction(() => !document.querySelector('#playBtn')?.hasAttribute('disabled'));
 await page.click('#playBtn');
+// the pre-match card (controls, your name): one more click takes you in
+const enter = page.locator('[data-pm="go"]');
+if (await enter.isVisible({ timeout: 3000 }).catch(() => false)) await enter.click();
 log('queued; waiting for the match');
 for (let i = 0; i < 600 && !(await page.evaluate(() => !!window.__pr?.net?.room?.sim)); i++) await new Promise((r) => setTimeout(r, 100));
 pumping = false; await pump;
