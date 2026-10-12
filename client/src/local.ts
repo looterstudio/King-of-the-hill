@@ -124,6 +124,12 @@ export class LocalNet {
         this.emitProfile();
         break;
       }
+      case 'name': {
+        if (!this.me || this.room) break;
+        this.me.name = (String(m.name).replace(/[^\p{L}\p{N} _.-]/gu, '').trim() || 'guest').slice(0, 14);
+        this.emit({ t: 'authed', name: this.me.name, wallet: this.myWallet, num: this.me.num, eligible: TOKEN.mint ? null : `$${TOKEN.symbol} isn't live yet` });
+        break;
+      }
       case 'me': this.emitProfile(); break;
       case 'queue': {
         if (!this.me || this.room) break;

@@ -25,9 +25,8 @@ export class PreMatch {
   open(o: PreMatchOpts) {
     this.opts = o;
     const m = MODES[o.mode], team = o.mode === 'solo' ? 'Last one standing wins' : `Last ${o.mode === 'duo' ? 'pair' : 'squad'} standing wins`;
-    const who = o.wallet
-      ? `<div class="pm-who"><span>Playing as</span><b>${esc(o.name)}</b><small>wallet connected · your points count for the pig</small></div>`
-      : `<label class="pm-name"><span>Your name</span><input id="pmName" maxlength="14" autocomplete="off" spellcheck="false" placeholder="pick a name" value="${esc(o.name)}" /></label>`;
+    // a connected wallet picks its name too (the points stay with the wallet, only the name on the board changes)
+    const who = `<label class="pm-name"><span>Your name</span><input id="pmName" maxlength="14" autocomplete="off" spellcheck="false" placeholder="pick a name" value="${esc(o.name)}" />${o.wallet ? '<small>wallet connected · your points count for the pig</small>' : ''}</label>`;
     this.root.innerHTML = `<div class="pm-card" role="dialog" aria-modal="true" aria-label="ready to drop">`
       + `<div class="pm-top"><div><span class="pm-kicker">Ready to drop</span><h2>${m.name} <small>${o.mode === 'solo' ? `${POINTS.win.solo} points a win` : `${POINTS.win[o.mode]} points each a win`}</small></h2></div><button class="pm-x" data-pm="back" type="button" aria-label="back to the lobby">✕</button></div>`
       + `<ol class="pm-goal"><li><span><b>Jump</b> from the plane and glide down</span></li><li><span><b>Loot</b> guns, shields and perks</span></li><li><span><b>${team}</b>. The storm closes on the King's Tower</span></li></ol>`

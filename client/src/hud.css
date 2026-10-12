@@ -85,6 +85,7 @@
 .pm-name { display: grid; gap: 4px; font-size: 14px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); }
 .pm-name input { width: 100%; padding: 12px 14px; font: 700 20px var(--f-hand); text-transform: none; letter-spacing: 0; color: var(--ink); background: var(--paper); border: 2.5px solid var(--ink); border-radius: var(--wobble-2); outline: none; }
 .pm-name input:focus { box-shadow: 0 0 0 4px var(--hl-soft); }
+.pm-name small { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
 .pm-name input.shake { animation: shake .35s; border-color: var(--red); }
 @keyframes shake { 25% { translate: -6px 0; } 50% { translate: 5px 0; } 75% { translate: -3px 0; } }
 .pm-who { display: grid; gap: 2px; font-size: 14px; color: var(--ink-soft); }

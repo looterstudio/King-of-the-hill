@@ -242,7 +242,12 @@ $('playBtn').onclick = () => (party.view ? party.play() : openPrematch(state.mod
 const prematch = new PreMatch($('prematch'), {
   enter: (name) => {
     const t = state.after ?? { mode: state.mode };
-    if (state.authed && (state.authMode === 'wallet' || name === state.sentName)) return queueFor(t);
+    if (state.authed && state.authMode === 'wallet') {
+      // a wallet may rename itself before the match; the name is remembered for this wallet
+      if (name && name !== state.name) { net.send({ t: 'name', name }); try { localStorage.setItem(`pr_wname:${state.wallet}`, name); } catch { /* storage blocked */ } }
+      return queueFor(t);
+    }
+    if (state.authed && name === state.sentName) return queueFor(t);
     // not signed in yet (or a new name): sign in as a guest, then queue when the server answers
     try { localStorage.setItem('pr_name', name); } catch { /* storage blocked */ }
     $<HTMLInputElement>('guestName').value = name;
@@ -768,7 +773,11 @@ net.on((m: ServerMsg) => {
       $('me').textContent = `${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}${m.eligible ? ` · ${m.eligible}` : m.wallet && state.authMode !== 'guest' ? ' · scoring points for the pot' : ''}`;
       $('me').classList.add('on');
       // signed in with Phantom: the button says so (the profile chip up top has the details)
-      if (state.authMode === 'wallet') { $('connectBtn').textContent = `${walletName} connected ✓`; $<HTMLButtonElement>('connectBtn').disabled = true; }
+      if (state.authMode === 'wallet') {
+        $('connectBtn').textContent = `${walletName} connected ✓`; $<HTMLButtonElement>('connectBtn').disabled = true;
+        // signed in under the short wallet address: put back the name this wallet chose last time
+        if (m.wallet && m.name.includes('…')) { try { const saved = localStorage.getItem(`pr_wname:${m.wallet}`); if (saved) net.send({ t: 'name', name: saved }); } catch { /* storage blocked */ } }
+      }
       updatePlay();
       if (state.after && prematch.isOpen) queueFor(state.after); // signed in from the pre-match screen: straight into the queue
       break;

@@ -184,7 +184,7 @@ async function signIn(c: Client, msg: Extract<ClientMsg, { t: 'auth' }>) {
   const prev = byWallet.get(wallet);
   if (prev && prev !== c) { prev.send({ t: 'error', msg: 'signed in somewhere else' }); prev.ws.close(); }
   byWallet.set(wallet, c);
-  c.wallet = wallet; c.name = shortWallet(wallet); c.authed = true;
+  c.wallet = wallet; c.name = shortWallet(wallet); c.authed = true; c.eligible = eligible;
   c.send({ t: 'authed', name: c.name, wallet, num: c.num, eligible });
   return sendProfile(c);
 }
@@ -211,6 +211,12 @@ async function onMessage(c: Client, msg: ClientMsg) {
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);
       return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });
+    }
+    case 'name': {
+      // a connected wallet picks the name it plays under (guests rename through 'guest'); never mid-match
+      if (!c.authed || c.guest || !c.wallet || c.room || c.queued || !c.lobbyAction()) return;
+      c.name = cleanName(msg.name);
+      return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.eligible });
     }
     case 'me': {
       if (!c.lobbyAction()) return;

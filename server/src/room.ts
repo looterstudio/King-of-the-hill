@@ -32,6 +32,7 @@ export class Client {
   skin = 0;            // character picked in the lobby (looks only)
   authing = false;     // a sign-in is waiting on the balance read
   guest = false;       // signed in as a guest (may change name between matches)
+  eligible: string | null = null; // a wallet's hold status when it signed in (null: scores points, else why not)
   private lastLobbyAction = 0;
   private lobbyTokens = 5;
   constructor(public id: number, public ws: WebSocket, public num: string, public nonce: string, private rate: number) { this.tokens = rate; }

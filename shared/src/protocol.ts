@@ -134,6 +134,7 @@ export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
 export type ClientMsg =
   | { t: 'auth'; wallet: string; sig: string }
   | { t: 'guest'; name: string }
+  | { t: 'name'; name: string }               // a signed-in wallet changes the name it plays under (between matches)
   | { t: 'queue'; mode?: Mode; party?: string; room?: string; skin?: number }   // party: friends typing the same code drop on one team
   | { t: 'spec'; dir?: 1 | -1; target?: number; at?: [number, number] | null } // dead: switch who you watch, or fly a free camera
   | { t: 'leave' }
