@@ -1117,7 +1117,7 @@ function frame(now: number) {
       if (howtoAt && performance.now() - howtoAt > 20000) closeHowto();
       learnFrame(me, dt, w, mag);
       // the pickaxe: say what the buttons do and what you're aiming at
-      const axeOn = me.alive && me.axe && !game.me?.ride;
+      const axeOn = me.alive && me.axe && !game.me?.ride && !me.bus && !me.gliding; // (not aboard the plane or in the air: nothing to break there)
       $('axeHint').classList.toggle('hidden', !axeOn);
       $('blockHits').classList.toggle('hidden', !axeOn || !game.axeAim);
       if (axeOn && (input.aim || input.isDown('KeyB')) && me.mats < BUILD.cost) hint('not enough material ▦ · break something with left click first', 1200);
@@ -1125,8 +1125,9 @@ function frame(now: number) {
         const aim = game.axeAim;
         // under the crosshair: the hits this block still takes (or that it can't be broken)
         setHTML($('blockHits'), !aim ? '' : aim.hard ? '<b class="no">⛔ unbreakable</b>' : `<span class="pips">${Array.from({ length: aim.total }, (_, i) => `<i class="${i < aim.hits ? 'on' : ''}"></i>`).join('')}</span><small>${aim.hits} hit${aim.hits > 1 ? 's' : ''} · ${aim.mat}</small>`);
-        setHTML($('axeHint'), `<span class="red"><kbd>left click</kbd> break${aim ? ` ${aim.hard ? '<span class="dim">(rock: unbreakable)</span>' : aim.mat}` : ''}</span>`
-          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>right click</kbd> or <kbd>B</kbd> build a block at the blue cube (▦ ${BUILD.cost})</span><span>you have <b>▦ ${me.mats}</b></span><span class="dim"><kbd>1</kbd> gun</span>`);
+        // short: it sits between your health and the hotbar
+        setHTML($('axeHint'), `<span class="red"><kbd>left click</kbd> break${aim ? ` ${aim.hard ? '<span class="dim">(rock)</span>' : aim.mat}` : ''}</span>`
+          + `<span class="blue ${me.mats < BUILD.cost ? 'dim' : ''}"><kbd>right click</kbd> build ▦${BUILD.cost}</span><span><b>▦ ${me.mats}</b></span>${me.slots.some(Boolean) ? '<span class="dim"><kbd>1</kbd> gun</span>' : ''}`);
       }
       $('useBar').classList.toggle('hidden', !bar || !me.alive);
       if (bar) { setText($('useLabel'), bar.label); $('useFill').style.width = `${bar.k * 100}%`; $('useBar').dataset.kind = bar.cls; }
