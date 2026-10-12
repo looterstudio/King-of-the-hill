@@ -430,7 +430,7 @@ export function botInput(b: Bot, sim: Sim): Input {
           if (until !== undefined && (until >= PHASE_PEACE ? until - PHASE_PEACE === g.phase : t < until)) { near.splice(i, 1); continue; }
           // another bot: rarely early on, more as the storm closes, and much more when both carry guns and
           // they're close; a person: a fair chance from the start (but never everyone at once, above)
-          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) && near[i].d < 20 ? Math.min(1, base * 2) : base) : Math.min(1, 0.3 + base * 1.2);
+          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) && near[i].d < 20 ? Math.min(1, base * 2) : base) : Math.min(1, 0.85 + base * 0.3);
           if (R() >= chance) { b.peace.set(q.id, bot ? PHASE_PEACE + g.phase : t + 12); near.splice(i, 1); continue; }
           b.peace.set(q.id, -1);
         }
@@ -464,10 +464,13 @@ export function botInput(b: Bot, sim: Sim): Input {
   self.slots.forEach((x) => { if (x) reach = Math.max(reach, WEAPONS[x].melee ? 6 : x === 'pistol' ? 25 : WEAPONS[x].pellets > 1 ? 22 : WEAPONS[x].range < 70 ? 40 : WEAPONS[x].zoom >= 2.4 ? 110 : 65); });
   // early on people loot more than they fight: only the close ones (or whoever shoots at us) until the storm starts to bite
   reach = Math.min(reach, [8, 25, 40][g.phase] ?? Infinity);
+  // a person in sight is always worth a shot (a bot that walked past an armed player without firing read as broken)
+  const person = !!tgt && !BOTS.get(sim)?.ids.has(tgt.id);
+  if (person && reach > 0) reach = Math.max(reach, 45);
   // something to fight with: a melee gun, or one with rounds in it or to reload with (landing with only the pickaxe, we loot first)
   const armed = self.slots.some((x, i) => !!x && (!!WEAPONS[x].melee || self.mags[i] > 0 || !WEAPONS[x].ammo || self.ammo[WEAPONS[x].ammo!] > 0));
   // just landed: a while of looting first, like people do (unless someone starts it)
-  const settling = g.phase === 0 && t - b.landT < 30 + (1 - b.skill) * 30 && t - b.hitT > 3;
+  const settling = g.phase === 0 && t - b.landT < 30 + (1 - b.skill) * 30 && t - b.hitT > 3 && !(person && td < 40);
   const fighting = !!(tgt && b.los && armed && !settling && (td < reach || t - b.hitT < 3 || (td < reach * 1.6 && t - b.seenT < 0.5 && b.mode === 'fight')));
   if (fighting) b.engT = t;
   const alert = t - b.seenT < 2 || t - b.hitT < 2;
