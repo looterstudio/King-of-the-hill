@@ -3,7 +3,7 @@
 // Loot comes from the floor and from pencil cases; the fallen drop everything they carried.
 import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
-  PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_HURRY, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
+  PLAYER_H, PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_HURRY, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
   AMMO, AMMO_IDS, type AmmoId, AIR_CRASH, AXE, BOMB, BURST_GAP, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
@@ -1459,6 +1459,32 @@ export class Sim {
     }
   }
 
+  // bodies are solid: two people on foot can't stand in each other (they used to walk straight through). Each is
+  // pushed half the overlap along the line between them, never into a wall; knocked, flying and riding bodies are left alone
+  private separate() {
+    const cells = new Map<number, { cx: number; cz: number; list: PlayerState[] }>(), D = PLAYER_R * 2;
+    for (const p of this.players.values()) {
+      if (!p.alive || p.ride || p.bus || p.gliding || p.down > 0) continue;
+      const cx = Math.floor(p.x / 2), cz = Math.floor(p.z / 2), k = (cx + 1024) * 4096 + cz + 1024;
+      const c = cells.get(k); if (c) c.list.push(p); else cells.set(k, { cx, cz, list: [p] });
+    }
+    for (const { cx, cz, list } of cells.values()) {
+      const near: PlayerState[] = [...list];
+      for (const [dx, dz] of [[1, 0], [0, 1], [1, 1], [1, -1]]) { const c = cells.get((cx + dx + 1024) * 4096 + cz + dz + 1024); if (c) near.push(...c.list); }
+      for (const a of list) for (const b of near) {
+        if (a === b || (b.id < a.id && list.includes(b)) || Math.abs(a.y - b.y) > PLAYER_H * 0.8) continue;
+        let dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+        if (d >= D) continue;
+        if (d < 1e-3) { const ang = (a.id * 2.399) % (Math.PI * 2); dx = Math.cos(ang); dz = Math.sin(ang); d = 0; } else { dx /= d; dz /= d; }
+        const push = (D - d) * 0.5;
+        for (const [q, sgn] of [[a, -1], [b, 1]] as const) {
+          const nx = q.x + dx * push * sgn, nz = q.z + dz * push * sgn;
+          if (!this.world.overlaps(nx, q.y + 0.02, nz)) { q.x = nx; q.z = nz; }
+        }
+      }
+    }
+  }
+
   step(dt: number, inputs: TickInputs): SimEvent[] {
     const ev: SimEvent[] = [];
     this.t += dt; this.tick++;
@@ -1485,6 +1511,7 @@ export class Sim {
       }
     }
 
+    this.separate();
     this.stepVehicles(dt, ev);
     this.stepProjectiles(dt, ev);
     this.stepEffects(dt, ev);

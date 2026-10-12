@@ -42,7 +42,7 @@ export interface Bot {
 // (and a person never has more than two bots on them at once: a match is for the people in it)
 const BOTS = new WeakMap<Sim, { ids: Set<number>; list: Bot[] }>();
 export function markBots(sim: Sim, bots: Bot[]) { const r = BOTS.get(sim) ?? { ids: new Set<number>(), list: [] }; for (const b of bots) { r.ids.add(b.id); r.list.push(b); } BOTS.set(sim, r); }
-const BOT_AGGRO = [0.04, 0.08, 0.16, 0.3, 0.55];
+const BOT_AGGRO = [0.02, 0.04, 0.09, 0.18, 0.4];
 const ON_PERSON = 2;
 const PHASE_PEACE = 1e9; // a peace value from here up: until the storm moves on (PHASE_PEACE + the circle it was made in)
 
@@ -435,7 +435,7 @@ export function botInput(b: Bot, sim: Sim): Input {
           if (until !== undefined && (until >= PHASE_PEACE ? until - PHASE_PEACE === g.phase : t < until)) { near.splice(i, 1); continue; }
           // another bot: rarely early on, more as the storm closes, and much more when both carry guns and
           // they're close; a person: a fair chance from the start (but never everyone at once, above)
-          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) ? (near[i].d < 8 ? 1 : near[i].d < 25 ? Math.min(1, base * 2) : base) : base) : Math.min(1, 0.85 + base * 0.3);
+          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) ? (near[i].d < 8 ? 0.6 : near[i].d < 25 ? Math.min(1, base * 2) : base) : base) : Math.min(1, 0.85 + base * 0.3);
           if (R() >= chance) { b.peace.set(q.id, bot ? PHASE_PEACE + g.phase : t + 12); near.splice(i, 1); continue; }
           b.peace.set(q.id, -1);
         }
