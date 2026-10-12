@@ -71,7 +71,7 @@ export class ViewArms {
     if (key === this.skinKey) return;
     this.skinKey = key;
     const SUIT = [INK_IDS.RED, INK_IDS.PINK, INK_IDS.ORANGE, INK_IDS.GREEN, INK_IDS.BROWN];
-    const ink = skin === 1 || skin === 2 || skin === 5 || skin === 7 || skin === 13 ? INK_IDS.GRAPHITE : skin === 3 ? INK_IDS.BLUE : skin === 4 ? INK_IDS.RED : skin === 6 ? INK_IDS.GREEN : SUIT[id % SUIT.length];
+    const ink = skin === 1 || skin === 2 || skin === 5 || skin === 7 || skin === 13 ? INK_IDS.GRAPHITE : skin === 14 ? INK_IDS.BLACK : skin === 3 || skin === 15 ? INK_IDS.BLUE : skin === 4 ? INK_IDS.RED : skin === 6 ? INK_IDS.GREEN : SUIT[id % SUIT.length];
     for (const a of [this.r, this.l]) a.sleeve.material = this.ink.material(ink, true);
   }
   hide() { this.group.visible = false; }

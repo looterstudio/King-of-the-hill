@@ -433,6 +433,7 @@ const zf = (x: number, dy: number, r = HR) => -Math.sqrt(Math.max(0, r * r - x *
 const GLYPHS: Record<string, string> = {
   S: '111100111001111', T: '111010010010010', O: '111101101101111', P: '111101111100100', B: '110101110101110',
   E: '111100110100111', I: '111010010010111', N: '101111111101101', G: '111100101101111', R: '110101110101101',
+  C: '111100100100111', L: '100100100100111', D: '110101101101110',
 };
 
 function lookOf(skin: number, id: number): Look {
@@ -834,6 +835,74 @@ function lookOf(skin: number, id: number): Look {
       crown += 0.1;
       break;
     }
+    case 14: { // Faze Banks: a black cap with a little patch, a full dark beard and moustache, tattooed neck and arms, bead bracelets, a black STONE COLD tee
+      legs(I.BLACK, I.BLACK, I.WHITE, I.BLACK);
+      chest(I.BLACK);
+      r.put(torso, I.BLACK, new THREE.TorusGeometry(0.095, 0.02, 5, 12), 0, 0.585, -0.015, Math.PI / 2);
+      // STONE / COLD in white pixels, and a green print under it
+      ['STONE', 'COLD'].forEach((word, row) => {
+        const px = 0.0105, gap = 0.012, w = word.length * 3 * px + (word.length - 1) * gap, y0 = 0.5 - row * 0.078;
+        [...word].forEach((ch, k) => {
+          const gl = GLYPHS[ch];
+          for (let j = 0; j < 5; j++) for (let i = 0; i < 3; i++) {
+            if (gl[j * 3 + i] !== '1' || (i > 0 && gl[j * 3 + i - 1] === '1')) continue;
+            let n = 1; while (i + n < 3 && gl[j * 3 + i + n] === '1') n++;
+            const x = -w / 2 + k * (3 * px + gap) + (i + n / 2) * px, y = y0 - j * px * 1.3;
+            r.put(torso, I.WHITE, new THREE.PlaneGeometry(px * n + 0.001, px * 1.32), x, y, front(y, x) - 0.004);
+          }
+        });
+      });
+      r.box(torso, I.GREEN, 0.2, 0.15, 0.012, 0, 0.22, front(0.22) - 0.004);
+      r.box(torso, I.BLACK, 0.06, 0.05, 0.014, 0, 0.22, front(0.22) - 0.008);
+      arms(I.BLACK, 0.5, I.SKIN, I.SKIN);
+      for (const [a, f] of ARMS) {
+        for (const y of [-0.2, -0.25]) r.cyl(a, I.GRAPHITE, 0.066, 0.063, 0.018, 0, y, 0, 0, 0, 0, 8); // tattoo bands on the upper arm
+        for (const y of [-0.06, -0.1, -0.14, -0.18, -0.22]) r.cyl(f, I.GRAPHITE, 0.06, 0.059, 0.016, 0, y, 0, 0, 0, 0, 8); // and a sleeve down the forearm
+        r.cyl(f, I.BROWN, 0.063, 0.063, 0.03, 0, -fr.fore + 0.1, 0, 0, 0, 0, 10); r.cyl(f, I.RED, 0.064, 0.064, 0.02, 0, -fr.fore + 0.15, 0, 0, 0, 0, 10); // bead bracelets
+      }
+      skull(I.SKIN);
+      for (const [x, y, rot] of [[-0.03, 0.03, 0.4], [0.03, 0.06, -0.4], [0, 0.09, 0.1], [0.04, 0.0, 0.5], [-0.04, 0.075, -0.3]] as const) r.box(head, I.GRAPHITE, 0.035, 0.012, 0.012, x, y, -0.073, 0, 0, rot); // neck tattoos
+      r.box(head, I.GRAPHITE, 0.012, 0.014, 0.012, 0.11, HY - 0.065, zf(0.11, -0.065) - 0.002); // a face tattoo under the eye
+      eyes({ y: -0.005, sy: 0.9, r: 0.03 });
+      brows(0.07, 0.12, 0.03, 0.088);
+      nose(I.SKIN, -0.045, 0.034);
+      r.ball(head, I.BLACK, 0.145, 0, HY - 0.15, -0.08, 1.15, 0.85, 0.85);               // the beard
+      for (const s of [-1, 1]) r.box(head, I.BLACK, 0.085, 0.032, 0.03, s * 0.045, HY - 0.075, zf(s * 0.045, -0.075) + 0.004, 0, 0, s * -0.2); // the moustache
+      r.box(head, I.BLACK, 0.06, 0.011, 0.014, 0, HY - 0.11, zf(0, -0.11) - 0.012);       // a flat mouth in it
+      dome(I.BLACK, 0.264, Math.PI * 0.42, 0.04);                                         // the cap
+      peak(I.BLACK, 0.16, 0.115, -0.2, 0.12);
+      r.box(head, I.GREEN, 0.09, 0.06, 0.02, 0, HY + 0.22, zf(0, 0.18, 0.264) - 0.005, 0.75); // its patch
+      r.box(head, I.RED, 0.03, 0.03, 0.022, -0.03, HY + 0.215, zf(0, 0.18, 0.264) - 0.012, 0.75); r.box(head, I.YELLOW, 0.03, 0.03, 0.022, 0.03, HY + 0.225, zf(0, 0.18, 0.264) - 0.012, 0.75);
+      for (const s of [-1, 1]) r.box(head, I.BLACK, 0.05, 0.1, 0.16, s * 0.225, HY + 0.0, 0.03); // dark hair at the sides under the cap
+      crown += 0.08;
+      break;
+    }
+    case 15: { // Frank DeGods: a bleached curly crop with brown fades, a drooping brown moustache over a half grin, sleepy blue eyes, pink and teal bead necklaces, a blue tee
+      legs(I.BLUE, I.BLUE, I.WHITE, I.GRAPHITE);
+      chest(I.BLUE);
+      r.put(torso, I.BLUE, new THREE.TorusGeometry(0.095, 0.02, 5, 12), 0, 0.585, -0.015, Math.PI / 2);
+      // the bead strands, one over the other
+      r.put(torso, I.PINK, new THREE.TorusGeometry(0.15, 0.02, 5, 16), 0, 0.56, -0.06, Math.PI / 2 - 0.82);
+      r.put(torso, I.DIAMOND, new THREE.TorusGeometry(0.17, 0.02, 5, 16), 0, 0.53, -0.07, Math.PI / 2 - 0.95);
+      r.put(torso, I.PINK, new THREE.TorusGeometry(0.19, 0.02, 5, 16), 0, 0.5, -0.08, Math.PI / 2 - 1.07);
+      arms(I.BLUE, 0.5, I.SKIN, I.SKIN);
+      skull(I.SKIN, I.DEEP);                                                              // a darker neck
+      for (const s of [-1, 1]) {
+        r.ball(head, I.WHITE, 0.034, s * 0.085, HY - 0.005, zf(0.085, -0.005) + 0.008, 1.1, 0.75, 0.45);
+        r.ball(head, I.BLUE, 0.018, s * 0.085 + 0.01, HY - 0.008, zf(0.085, -0.008) - 0.003, 1, 1, 0.5); // blue irises
+        r.box(head, I.SKIN, 0.09, 0.026, 0.034, s * 0.085, HY + 0.018, zf(0.085, 0.018) - 0.002); // heavy lids
+        r.box(head, I.BROWN, 0.085, 0.02, 0.03, s * 0.09, HY + 0.07, zf(0.09, 0.07) + 0.008, 0, 0, s * 0.22); // brows sloping down to the outside
+      }
+      nose(I.SKIN, -0.05, 0.042);
+      for (const s of [-1, 1]) r.box(head, I.BROWN, 0.11, 0.04, 0.032, s * 0.058, HY - 0.092, zf(s * 0.058, -0.092) - 0.008, 0, 0, s * -0.3); // the drooping moustache
+      r.put(head, I.WHITE, new THREE.CircleGeometry(0.06, 10, Math.PI, Math.PI), 0, HY - 0.125, zf(0, -0.12) - 0.004, 0, Math.PI, 0.05);   // teeth
+      r.box(head, I.BLACK, 0.12, 0.011, 0.014, 0, HY - 0.125, zf(0, -0.12) - 0.002, 0, 0, 0.05);
+      dome(I.PAPER, 0.262, Math.PI * 0.5, 0.05, 0.1, 1.04, 1.04, 1.04);                   // the bleached crop (paper-pale: a bright yellow read as a helmet)
+      for (let k = 0; k < 24; k++) { const a = k * 2.399, rr = 0.06 + (k % 6) * 0.03; r.ball(head, I.PAPER, 0.05, Math.cos(a) * rr, HY + 0.2 + ((k * 7) % 3) * 0.02, Math.sin(a) * rr, 1, 0.8, 1, 6, 4); } // its curls
+      for (const s of [-1, 1]) r.box(head, I.BROWN, 0.045, 0.15, 0.17, s * 0.228, HY - 0.0, 0.01); // the brown fade above the ears
+      crown += 0.08;
+      break;
+    }
     case 0:
     default: { // Scribble: a hoodie (its colour changes player to player), jeans, a beanie with a pom-pom, a backpack
       legs(I.BLUE, I.BLUE, I.GRAPHITE, I.WHITE);
@@ -854,7 +923,7 @@ function lookOf(skin: number, id: number): Look {
       break;
     }
   }
-  const L: Look = { geo: r.geometry(true), fr, crownY: crown, nod, hat: skin === 0 ? hat : skin === 13 ? I.GRAPHITE : [I.RED, I.BLUE, I.RED, I.ORANGE, I.BLACK, I.BROWN, I.GREEN, I.ORANGE, I.BLACK, I.YELLOW, I.YELLOW][skin] ?? hat };
+  const L: Look = { geo: r.geometry(true), fr, crownY: crown, nod, hat: skin === 0 ? hat : skin === 13 ? I.GRAPHITE : skin === 14 ? I.BLACK : skin === 15 ? I.BLUE : [I.RED, I.BLUE, I.RED, I.ORANGE, I.BLACK, I.BROWN, I.GREEN, I.ORANGE, I.BLACK, I.YELLOW, I.YELLOW][skin] ?? hat };
   looks.set(key, L);
   return L;
 }
@@ -888,7 +957,8 @@ export interface Figure {
 // cream tee, silver chain), 9 Unipcs (a round yellow robot with headphones), 10 Alon (grey hair, cycling
 // cap, white shades, STOP BEING POOR), 11 Mitch (brown bob, painted clown face, red web tee, cash),
 // 12 Ansem (short black curls, yellow tee), 13 Slingoor (a wavy brown mop, grey polo, black suspenders, khaki
-// pleated chinos, white trainers). Every one has the same bones, so they all run, aim, glide, ride and
+// pleated chinos, white trainers), 14 Faze Banks (black cap, full beard, tattoos, a STONE COLD tee), 15 Frank
+// DeGods (bleached curly crop, a brown moustache, sleepy blue eyes, bead necklaces, a blue tee). Every one has the same bones, so they all run, aim, glide, ride and
 // fall the same way.
 export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.length): Figure {
   const L = lookOf(skin, id), fr = L.fr, rest = restOf(fr);
