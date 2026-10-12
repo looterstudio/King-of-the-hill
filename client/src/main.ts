@@ -32,6 +32,7 @@ initLanding(); // the landing page over the lobby, until Play
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const fmtSol = (v: number) => `◎ ${v.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
 const hms = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return [s / 3600, (s % 3600) / 60, s % 60].map((v) => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 // only touch the DOM when the markup really changed (the HUD rebuilds strings every frame)
@@ -209,8 +210,10 @@ function wallets(): { id: WalletId; name: string; w: SolWallet }[] {
   if (bp) out.push({ id: 'backpack', name: 'Backpack', w: bp });
   return out;
 }
-async function signInWith(w: SolWallet) {
+let walletName = 'Wallet'; // which one signed in (the button says so)
+async function signInWith(w: SolWallet, name: string) {
   try {
+    walletName = name;
     const r = await w.connect() as { publicKey?: { toString(): string } } | undefined;
     const pk = (r?.publicKey ?? w.publicKey)?.toString();
     if (!pk) throw new Error('the wallet did not share its address');
@@ -224,12 +227,12 @@ async function signInWith(w: SolWallet) {
 $('connectBtn').onclick = async () => {
   const list = wallets();
   if (!list.length) return err('No Solana wallet found. Install Phantom (phantom.app) and reload.');
-  if (list.length === 1) return signInWith(list[0].w);
+  if (list.length === 1) return signInWith(list[0].w, list[0].name);
   // several installed: pick one
   const pick = $('walletPick');
   pick.innerHTML = list.map((x) => `<button type="button" class="btn ghost small" data-wallet="${x.id}">${x.name}</button>`).join('');
   pick.classList.remove('hidden');
-  pick.onclick = (e) => { const id = (e.target as HTMLElement).closest<HTMLElement>('[data-wallet]')?.dataset.wallet; const w = list.find((x) => x.id === id); if (w) void signInWith(w.w); };
+  pick.onclick = (e) => { const id = (e.target as HTMLElement).closest<HTMLElement>('[data-wallet]')?.dataset.wallet; const w = list.find((x) => x.id === id); if (w) void signInWith(w.w, w.name); };
 };
 
 const touchOnly = () => matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
@@ -658,7 +661,7 @@ function drawDropMap() {
     if (g.nr > 0) { ctx.strokeStyle = '#1d33b8'; ctx.setLineDash([8, 8]); ctx.beginPath(); ctx.arc(X(g.nx), Y(g.ny), g.nr * k, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
     for (const id of game.mates) { const o = game.infoOf(id); if (!o || state.dead.has(id)) continue; ctx.fillStyle = '#13897f'; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(o[1]), Y(o[3]), 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
     const me = game.me;
-    if (me && game.self?.alive) { ctx.save(); ctx.translate(X(me.x), Y(me.z)); ctx.rotate(-input.yaw); ctx.fillStyle = '#d32336'; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(8, 8); ctx.lineTo(0, 3); ctx.lineTo(-8, 8); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+    if (me && game.self?.alive) { ctx.save(); ctx.translate(clamp(X(me.x), 12, S - 12), clamp(Y(me.z), 12, S - 12)); ctx.rotate(-input.yaw); ctx.fillStyle = '#d32336'; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(8, 8); ctx.lineTo(0, 3); ctx.lineTo(-8, 8); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
   }
   if (!state.marker) { ctx.font = '700 22px Caveat, cursive'; ctx.textAlign = 'center'; ctx.fillStyle = '#1d33b8'; ctx.fillText(!game.me?.bus ? 'click to mark a spot for your squad · M closes' : state.mapOpen ? 'click where you want to land' : 'M · mark where you want to land', S / 2, S - 16); }
 }
@@ -729,7 +732,7 @@ function drawMinimap() {
   }
   const me = game.me;
   if (me && game.self?.alive) {
-    mini.save(); mini.translate(toX(me.x), toY(me.z)); mini.rotate(-input.yaw);
+    mini.save(); mini.translate(clamp(toX(me.x), 8, S - 8), clamp(toY(me.z), 8, S - 8)); mini.rotate(-input.yaw); // (kept inside the frame: at the island's edge the arrow was cut off)
     mini.fillStyle = '#d32336'; mini.beginPath(); mini.moveTo(0, -7); mini.lineTo(5, 5); mini.lineTo(0, 2); mini.lineTo(-5, 5); mini.closePath(); mini.fill();
     mini.restore();
   }
@@ -765,7 +768,7 @@ net.on((m: ServerMsg) => {
       $('me').textContent = `${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}${m.eligible ? ` · ${m.eligible}` : m.wallet && state.authMode !== 'guest' ? ' · scoring points for the pot' : ''}`;
       $('me').classList.add('on');
       // signed in with Phantom: the button says so (the profile chip up top has the details)
-      if (state.authMode === 'wallet') { $('connectBtn').textContent = 'Phantom connected ✓'; $<HTMLButtonElement>('connectBtn').disabled = true; }
+      if (state.authMode === 'wallet') { $('connectBtn').textContent = `${walletName} connected ✓`; $<HTMLButtonElement>('connectBtn').disabled = true; }
       updatePlay();
       if (state.after && prematch.isOpen) queueFor(state.after); // signed in from the pre-match screen: straight into the queue
       break;
