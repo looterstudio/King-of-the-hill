@@ -33,7 +33,7 @@ export class Inventory {
       if (e.code === 'KeyZ' && !e.repeat && this.input.locked) this.openWheel();
     });
     // Esc closes the kept-open inventory (the cursor is already free, so the browser has no Esc to spend)
-    addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.pinned) this.pin(false); });
+    addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.pinned) this.pin(false); }); // (Esc is no gesture: lock(false))
     // kept open, the cursor is free: click a gun to hold it, a shield, medkit or perk to use it
     panel.addEventListener('click', (e) => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
@@ -63,7 +63,7 @@ export class Inventory {
   private pin(on: boolean) {
     if (on === this.pinned) return;
     this.pinned = on;
-    if (on) this.input.unlock(); else this.input.lock();
+    if (on) this.input.unlock(); else this.input.lock(false);
     this.render();
   }
 

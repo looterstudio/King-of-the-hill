@@ -70,12 +70,15 @@ export class FpsInput {
   }
 
   // call from a click. If the browser refuses pointer lock (or never answers), fall back to free mode
-  lock() {
+  // gesture: called from a click or a key the browser counts as one. Esc doesn't count: the browser then refuses the
+  // mouse, which is no reason to give up on it (that dropped you into the free mode, a cursor with edges: no turning past them).
+  // Without a gesture a refusal just leaves the game paused, and your next click takes the mouse
+  lock(gesture = true) {
     if (this.locked) return;
     let answered = false;
     const onChange = () => { answered = true; };
     document.addEventListener('pointerlockchange', onChange, { once: true });
-    const fallback = () => { if (!answered && !this.locked) { this.free = true; this.locked = true; this.el.style.cursor = 'crosshair'; this.onLockChange?.(true); } };
+    const fallback = () => { if (!answered && !this.locked) { if (!gesture) { this.onLockChange?.(false); return; } this.free = true; this.locked = true; this.el.style.cursor = 'crosshair'; this.onLockChange?.(true); } };
     try {
       const r = this.el.requestPointerLock?.() as unknown as Promise<void> | undefined;
       if (!this.el.requestPointerLock) return fallback();

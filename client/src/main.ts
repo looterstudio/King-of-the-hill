@@ -108,7 +108,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyU' && voice.active) { voice.setDeaf(!voice.deaf); hint(voice.deaf ? 'squad voice muted (U)' : 'squad voice on', 1500); }
   if (e.code === 'KeyN' && radio.on) radio.nextStation();
   if (e.code === 'KeyM' && !e.repeat) { toggleMap(); return; } // M: the map, any time (the radio's on/off is the button at the top)
-  if (e.code === 'Escape' && state.mapOpen) { toggleMap(); return; }
+  if (e.code === 'Escape' && state.mapOpen) { toggleMap(false); return; }
   if (e.code === 'KeyP' && !e.repeat) { // third person (over the shoulder) or first person, remembered
     setSetting('view', game.thirdPerson ? 'fp' : 'tp');
     hint(game.thirdPerson ? 'third person · P for first person' : 'first person · P for third person', 1500);
@@ -641,11 +641,11 @@ function drawDrop(ctx: CanvasRenderingContext2D, S: number, line: ReturnType<typ
 // you want to land (and gives the mouse back to the game), M or Esc closes it
 const dropMap = $<HTMLCanvasElement>('dropMap'), dropLayer = document.createElement('canvas');
 let dropFor: World | null = null, lineFor: World | null = null, line: ReturnType<typeof busLine> | null = null;
-function toggleMap() {
+function toggleMap(gesture = true) {
   state.mapOpen = !state.mapOpen;
   dropMap.classList.toggle('open', state.mapOpen);
   $('tags').style.visibility = state.mapOpen ? 'hidden' : ''; // names and tags over the world, not over the map
-  if (state.mapOpen) input.unlock(); else input.lock();
+  if (state.mapOpen) input.unlock(); else input.lock(gesture);
 }
 dropMap.addEventListener('mousedown', (e) => { if (!state.mapOpen) return; e.stopPropagation(); markAt(dropMap, e); toggleMap(); });
 addEventListener('mousedown', () => { if (state.mapOpen) toggleMap(); }); // a click off the map closes it

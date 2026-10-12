@@ -35,7 +35,7 @@ export interface Bot {
   job: Job | null; jobT: number; perch: { x: number; y: number; z: number } | null; // building, the last build, standing on our own pillar
   chop: { yaw: number; until: number } | null; chopT: number; benches: Set<number>; // gathering material with the axe; benches used
   rush: number; flank: { side: number; until: number }; burst: { n: number; pause: number }; // how forward it plays (0 hangs back, 1 charges), a way round the target, bursts and pauses of fire
-  sep: Pt; // a push away from whoever is walking right on top of us (updated with the scan)
+  mv: Pt; // the fight's movement, smoothed (a strafe flips over a few ticks, not in one)
 }
 
 // which players in a match are bots: between bots fights start rarely early on and more as the storm closes
@@ -55,7 +55,7 @@ export function newBot(id: number, rand: () => number): Bot {
     plan: null, navT: 0, direct: true, forcePlan: 0, groundY: 0, jumpT: -9, jumps: 0,
     goal: null, scanT: (id % 20) * 0.03, skip: new Map(), prog: { x: 0, z: 0, t: 0 }, gp: null, escape: null, blockT: 0,
     life: 500, hitT: -99, slotT: -99, rot: false, car: null,
-    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(), peace: new Map(), sep: { x: 0, z: 0 }, rush: 0.2 + rand() * 0.8, flank: { side: 0, until: 0 }, burst: { n: 0, pause: 0 },
+    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(), peace: new Map(), mv: { x: 0, z: 0 }, rush: 0.2 + rand() * 0.8, flank: { side: 0, until: 0 }, burst: { n: 0, pause: 0 },
   };
 }
 
@@ -404,18 +404,14 @@ export function botInput(b: Bot, sim: Sim): Input {
     // (at the end of a match the nearest anywhere, to go and find: two bots must not wait out the storm apart)
     const near: { q: PlayerState; d: number }[] = [], reg = BOTS.get(sim), armedSelf = self.slots.some(Boolean);
     let far: { q: PlayerState; d: number } | null = null;
-    let sepX = 0, sepZ = 0;
     // what a person sees: about 70 m of open ground, 110 with a scope in hand; farther away only whoever is shooting at us
     const seeR = self.slots.some((x) => !!x && WEAPONS[x].zoom >= 2.4) ? 110 : 70, shooter = t - b.hitT < 2 ? self.hitBy : undefined;
     for (const q of sim.players.values()) {
-      if (!q.alive || q.id === self.id || q.gliding || q.ride) continue;
+      if (!q.alive || q.team === self.team || q.gliding) continue; // gliders can't shoot back
       const d = Math.hypot(q.x - self.x, q.z - self.z);
-      if (d < 3.5 && Math.abs(q.y - self.y) < 2) { const k = (3.5 - d) / 3.5 / (d || 1); sepX += (self.x - q.x) * k; sepZ += (self.z - q.z) * k; } // too close: step away
-      if (q.team === self.team) continue; // (gliders can't shoot back)
       if (d < seeR || (q.id === shooter && d < 150)) near.push({ q, d });
       else if (late && (!far || d < far.d)) far = { q, d };
     }
-    b.sep = { x: sepX, z: sepZ };
     if (!near.length && far) near.push(far);
     near.sort((a, c) => a.d - c.d);
     // who we'd take on (or keep tracking): someone new is only noticed in front of us (a person's field of
@@ -439,8 +435,9 @@ export function botInput(b: Bot, sim: Sim): Input {
           // they're close; a person: a fair chance from the start (but never everyone at once, above)
           // like a player: an enemy in sight is a fight when we carry a gun (bots and people alike); far ones less
           // often, and with nothing to shoot with we keep out of it unless they start it
-          const dq = near[i].d, chance = !armedSelf ? 0.1 : dq < 40 ? 0.85 : 0.35;
-          if (R() >= chance) { b.peace.set(q.id, t + 5); near.splice(i, 1); continue; }
+          // a fight at arm's length (3 m) is always on; a longer one warms up with the match (looting first, then the hunt), as in a real game
+          const warm = clamp((t - b.landT - 45) / 300, 0, 1), dq = near[i].d, chance = !armedSelf ? (near[i].d < 8 ? (bot ? 0 : 0.9) : 0.05) : dq < 3 ? 1 : 0.04 + 0.96 * warm * warm; // (with only the pickaxe: a person close by is a fight; other bots rarely, or every landing is a brawl)
+          if (R() >= chance) { b.peace.set(q.id, t + 20); near.splice(i, 1); continue; }
           b.peace.set(q.id, -1);
         }
       }
@@ -479,7 +476,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   // something to fight with: a melee gun, or one with rounds in it or to reload with (landing with only the pickaxe, we loot first)
   const armed = self.slots.some((x, i) => !!x && (!!WEAPONS[x].melee || self.mags[i] > 0 || !WEAPONS[x].ammo || self.ammo[WEAPONS[x].ammo!] > 0));
   // just landed: a while of looting first, like people do (unless someone starts it)
-  const settling = g.phase === 0 && t - b.landT < 30 + (1 - b.skill) * 30 && t - b.hitT > 3 && !(td < 12);
+  const settling = false; // armed and an enemy in sight: shoot (no waiting to finish looting)
   const fighting = !!(tgt && b.los && armed && !settling && (td < reach || t - b.hitT < 3 || (td < reach * 1.6 && t - b.seenT < 0.5 && b.mode === 'fight')));
   if (fighting) b.engT = t;
   const alert = t - b.seenT < 2 || t - b.hitT < 2;
@@ -547,6 +544,15 @@ export function botInput(b: Bot, sim: Sim): Input {
     b.mode = 'fight';
     fight(b, sim, self, tgt, td, inp, rotate ? safe : null, perched);
     moved = true;
+  }
+
+  // ---- only the pickaxe, and someone close: go at them with it (nobody walks past a person and does nothing) ----
+  if (!goal && !moved && !armed && tgt && tgt.down === 0 && b.los && td < 8 && !flee && !self.use) {
+    b.mode = 'fight'; b.engT = t; moved = true;
+    if (!self.axe) inp.slot = SLOTS + 1;
+    aimAt(inp, self, tgt.x, tgt.y + 1.0, tgt.z);
+    moveDir(inp, tgt.x - self.x, tgt.z - self.z); inp.sprint = td > 3;
+    inp.fire = self.axe && td < AXE.reach && self.axeCd <= DT;
   }
 
   // ---- behind cover: heal up, reload, look where they were (they come to us) ----
@@ -665,7 +671,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   }
 
   // ---- the axe back for the gun once nothing needs it ----
-  if (self.axe && !b.job && !b.chop && !inp.slot) { inp.slot = self.cur + 1; inp.fire = false; }
+  if (self.axe && !b.job && !b.chop && !inp.slot && !(b.mode === 'fight' && !armed)) { inp.slot = self.cur + 1; inp.fire = false; }
 
   // ---- reloads: never mid-fight unless empty (then another loaded gun first) ----
   if (!fighting && !b.los && gun && !self.use && !self.axe && self.reloadT === 0 && !inp.slot) {
@@ -688,18 +694,11 @@ export function botInput(b: Bot, sim: Sim): Input {
     const d = steer(b, sim, self, goal.x, goal.z, goal.y);
     // no way to it from here: forget it (a case up on a ledge, a car behind a fence)
     if (d.stuck) { if (b.goal && (b.mode === 'case' || b.mode === 'loot' || b.mode === 'bench')) { b.skip.set(b.goal.ref.id, t + 60); b.goal = null; } else if (b.mode === 'car') b.skip.set(b.carId, t + 60); else if (b.mode === 'roam') b.wpT = 0; }
-    const dl = Math.hypot(d.x, d.z) || 1, sl = Math.hypot(b.sep.x, b.sep.z);
-    const wy = sl > 0.05 && dl > 2 ? Math.atan2(-(d.x / dl + b.sep.x * 1.2), -(d.z / dl + b.sep.z * 1.2)) : Math.atan2(-d.x, -d.z);
-    inp.sprint = goal.sprint && !self.use;
-    // walking, the head turns to look around (checking corners, the sky, behind) while the feet keep to the way
-    const glance = alert || !b.direct || b.groundY > 1.5 || b.mode === 'retreat' || b.mode === 'push' ? 0 : Math.sin(t * 0.7 + b.id * 1.7) * Math.sin(t * 0.23 + b.id) * (inp.sprint ? 0.5 : 0.9);
-    inp.yaw = wy + glance; moveDir(inp, -Math.sin(wy), -Math.cos(wy));
-    if (Math.hypot(goal.x - self.x, goal.z - self.z) < 0.4) { inp.fwd = 0; inp.strafe = 0; }
+    inp.yaw = Math.atan2(-d.x, -d.z); inp.fwd = 1; inp.sprint = goal.sprint && !self.use;
+    if (Math.hypot(goal.x - self.x, goal.z - self.z) < 0.4) inp.fwd = 0;
     if (d.hop) hop(b, self, inp, t);
   }
   if (b.jumps === 1 && !self.grounded && !b.job) hop(b, self, inp, t);
-  // like a person on a keyboard: now and then a hop while running across open ground
-  else if (goal && !moved && inp.sprint && self.grounded && !fighting && R() < 0.004 * b.skill) inp.jump = true;
 
   // ---- stuck: hop it, cut through it, plan around it, then give up on that goal and step aside ----
   const wants = Math.abs(inp.fwd) + Math.abs(inp.strafe) > 0.3;
@@ -901,7 +900,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   if (b.reaction <= 0) {
     // a person's aim is off by a little most of the time and by a lot now and then, worse far away and on a moving target
     b.aimErr = (R() - 0.5) * (0.05 + (1 - b.skill) * 0.14) * (0.7 + Math.min(1.5, d / 40) + Math.hypot(tgt.vx, tgt.vz) * 0.05) * (R() < 0.18 ? 2.8 : 1.8);
-    b.reaction = 0.3 + R() * 0.4; if (R() < 0.15) b.strafe *= -1;
+    b.reaction = 0.3 + R() * 0.4; if (R() < 0.06) b.strafe *= -1;
     if (b.flank.until < t && d > 14 && R() < 0.12 + 0.35 * b.rush) b.flank = { side: R() < 0.5 ? -1 : 1, until: t + 2.5 + R() * 3 }; // go round them
   }
   b.reaction -= DT;
@@ -949,12 +948,12 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
     if (b.flank.until > t && d > 12) { const a = Math.atan2(self.z - tgt.z, self.x - tgt.x) + b.flank.side * 0.9; gx = tgt.x + Math.cos(a) * d * 0.8; gz = tgt.z + Math.sin(a) * d * 0.8; }
     const s = steer(b, sim, self, gx, gz, tgt.y); const l = Math.hypot(s.x, s.z) || 1, k = push ? 3 : 1.5 + b.rush; mx += (s.x / l) * k; mz += (s.z / l) * k; if (s.hop) hop(b, self, inp, t); }
   else if (d < want * 0.5) { mx -= ux; mz -= uz; }
-  moveDir(inp, mx, mz);
+  { const l = Math.hypot(mx, mz) || 1; b.mv.x += (mx / l - b.mv.x) * 0.15; b.mv.z += (mz / l - b.mv.z) * 0.15; } // steady: a change of side is a curve
+  moveDir(inp, b.mv.x, b.mv.z, Math.min(1, Math.hypot(b.mv.x, b.mv.z) * 1.6));
   inp.sprint = (!!safe || push || (b.rush > 0.5 && d > want + 10)) && inp.fwd > 0.3 && !inp.aim;
   if (still) b.blockT = 0;
   else if (Math.hypot(self.vx, self.vz) < 1 && self.grounded) { if ((b.blockT += DT) > 0.35) { b.strafe *= -1; b.blockT = 0; } } else b.blockT = 0;
   // the better ones jump while they strafe, now and then (harder to hit, and over what's in the way)
-  if (!still && !safe && self.grounded && d > 8 && R() < 0.012 * b.skill) inp.jump = true;
   if (self.perk && !inp.slot) {
     const k = self.perk.kind;
     if ((k === 'grenade' || k === 'molotov') && d > 8 && d < 24 && R() < 0.03) { inp.perk = true; inp.pitch += 0.25; }
