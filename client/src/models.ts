@@ -13,7 +13,9 @@ type Mat = THREE.Material;
 const shared = new Map<string, THREE.BufferGeometry>();
 function geoKey(g: THREE.BufferGeometry) {
   const pos = g.getAttribute('position'), a = pos.array as ArrayLike<number>;
-  let h = 0; for (let i = 0; i < a.length; i += 7) h = (h * 31 + Math.round(a[i] * 1000)) | 0; // baked rotations/offsets too
+  // every coordinate: sampling one in seven took the paper plane's right wing for its left (mirror images agree
+  // on the ones sampled), so the plane flew with two left wings and its right half missing
+  let h = 0; for (let i = 0; i < a.length; i++) h = (h * 31 + Math.round(a[i] * 1000)) | 0; // baked rotations/offsets too
   return `${g.type}|${JSON.stringify((g as unknown as { parameters?: unknown }).parameters ?? null)}|${a.length}|${h}`;
 }
 export function intern<T extends THREE.Object3D>(root: T): T {
@@ -1092,13 +1094,7 @@ export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | nu
 }
 
 // a flat triangle (or a strip of them) from a flat list of corners: paper is folded, not modelled
-// both faces: paper has two sides, and the ink materials draw one (seen from behind, half the plane and the
-// glider's wing were missing)
-const sheet = (pts: number[], m: Mat) => {
-  const both = [...pts];
-  for (let i = 0; i < pts.length; i += 9) both.push(...pts.slice(i, i + 3), ...pts.slice(i + 6, i + 9), ...pts.slice(i + 3, i + 6));
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(both, 3)); g.computeVertexNormals(); return new THREE.Mesh(g, m);
-};
+const sheet = (pts: number[], m: Mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.computeVertexNormals(); return new THREE.Mesh(g, m); };
 type V3 = [number, number, number];
 const lerp3 = (a: V3, b: V3, k: number): V3 => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
 // a ruled ink line across a paper panel (a, b, c): from the a-b edge to the a-c edge at k, lifted off the paper
