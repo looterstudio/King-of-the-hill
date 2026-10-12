@@ -5,6 +5,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'n
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import nacl from 'tweetnacl';
+import { execSync } from 'node:child_process';
 import bs58 from 'bs58';
 import { MAP_HALF, SKINS, playerNumber } from '../../shared/src/constants.ts';
 import { loginMessage, type ClientMsg, type PotView, type ProfileView, type ServerMsg } from '../../shared/src/protocol.ts';
@@ -18,6 +19,8 @@ import { Profiles } from './profile.ts';
 import { Parties } from './party.ts';
 import { InProcessHost, WorkerHost } from './host.ts';
 
+// which commit this server runs (GIT_COMMIT in production, the checkout's HEAD locally): /health shows it
+const BUILD = process.env.GIT_COMMIT?.slice(0, 7) || (() => { try { return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return 'unknown'; } })();
 const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requireWallet ? 4 : 1));
 
 const pot = makePot(config);
@@ -89,7 +92,7 @@ function handleHttp(req: IncomingMessage, res: ServerResponse) {
 
 function serveHttp(req: IncomingMessage, res: ServerResponse) {
   const url = new URL('http://x' + (req.url?.startsWith('/') ? req.url : '/'));
-  if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
+  if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, build: BUILD, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
   if (url.pathname === '/api/pot') return json(res, 200, potView());
   if (url.pathname === '/api/rooms') return json(res, 200, mm.lobby(Date.now()));
   if (url.pathname === '/api/admin/flags') {
