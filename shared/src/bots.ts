@@ -322,10 +322,13 @@ export function botInput(b: Bot, sim: Sim): Input {
   // turn back at its edge (rotating out to 0.75 of it, back in from 0.62)
   const dNext = Math.hypot(self.x - g.nx, self.z - g.ny), dCur = Math.hypot(self.x - g.x, self.z - g.y);
   const inStorm = dCur > g.r - 1;
-  const waitLeft = g.closing ? 0 : g.nextAt - t, due = waitLeft < 10 + Math.max(0, dNext - g.nr * 0.6) / 6;
-  if (inStorm || dCur > g.r * 0.88 - 3 || (due && dNext > g.nr * 0.75)) b.rot = true;
+  // (a storm that hurries as the field thins out closes faster than its countdown says: leave earlier for it)
+  const hurry = sim.hurry(), waitLeft = g.closing ? 0 : g.nextAt - t, due = waitLeft < (10 + Math.max(0, dNext - g.nr * 0.6) / 6) * hurry;
+  if (inStorm || dCur > g.r * 0.88 - 3 * hurry || (due && dNext > g.nr * 0.75)) b.rot = true;
   else if (!due || dNext < g.nr * 0.62) b.rot = false;
   const rotate = b.rot;
+  // the storm's edge is about to reach us (a hurried storm closes several meters a second): run, don't stop to fight or build
+  const flee = rotate && dCur > g.r - 6 * hurry;
   // shot at (the storm only eats health, a little each tick, and only out there)
   const life = self.hp + self.shield, lost = b.life - life;
   if (lost > 0.5 && !(dCur > g.r - 2 && lost <= g.dps * DT + 0.5)) b.hitT = t;
@@ -425,7 +428,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   }
 
   // ---- shot at in the open and not winning it: wall up between us (an instant fort, if we carry one) ----
-  if (!goal && !moved && fighting && tgt && tgt.down === 0 && t - b.hitT < 0.4 && td > 7 && t - b.jobT > 6 && self.grounded && !self.use && !inStorm && !perched
+  if (!goal && !moved && fighting && tgt && tgt.down === 0 && t - b.hitT < 0.4 && td > 7 && t - b.jobT > 6 && self.grounded && !self.use && !inStorm && !rotate && !perched
     && (life < (PLAYER_HP + SHIELD_MAX) * 0.32 || life + (PLAYER_HP + SHIELD_MAX) * 0.08 < foe) && R() < 0.3 + b.skill * 0.6) {
     b.jobT = t;
     if (self.perk?.kind === 'fort') { inp.perk = true; b.cover = { x: self.x, z: self.z, until: t + 6, at: true }; b.mode = 'fort'; moved = true; }
@@ -453,7 +456,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   if (!goal && !moved && b.cover && !b.cover.at) { b.mode = 'retreat'; goal = { x: b.cover.x, z: b.cover.z, y: b.groundY, sprint: true }; }
 
   // ---- fighting ----
-  if (!goal && !moved && fighting && tgt) {
+  if (!goal && !moved && fighting && tgt && !flee) {
     b.mode = 'fight';
     fight(b, sim, self, tgt, td, inp, rotate ? safe : null, perched);
     moved = true;
