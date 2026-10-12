@@ -226,6 +226,8 @@ export class Sim {
   private phaseStart = 0;   // on the storm's clock
   private clock = 0;        // the storm's clock: the match's, run faster as the field thins out
   private field = 0;        // teams at the start
+  botIds: Set<number> | null = null; // who is a bot (set by markBots), and how much of a gun's damage one bot does to another: duels between bots last longer
+  botDmg = 1;
   private from = { x: 0, y: 0, r: RING_START_R };
   private history: { tick: number; pos: Map<number, { x: number; y: number; z: number }> }[] = [];
   private nextId = 1;
@@ -512,7 +514,8 @@ export class Sim {
     this.shots.push({ ox, oy, oz, ex: ox + dx * t, ey: oy + dy * t, ez: oz + dz * t, by: p.id, hit: !!hit || !!vhit });
     if (vhit) { this.damageVehicle(vhit, Math.round(dmgAt(t, false)), p.id, ev); return; }
     if (hit && hit.q.alive) {
-      const dmg = Math.round(dmgAt(t, hit.head));
+      let dmg = Math.round(dmgAt(t, hit.head));
+      if (this.botDmg < 1 && this.botIds?.has(p.id) && this.botIds.has(hit.q.id)) dmg = Math.max(1, Math.round(dmg * this.botDmg));
       const h = this.hurt(hit.q, dmg);
       ev.push({ kind: 'hit', victim: hit.q.id, by: p.id, dmg, head: hit.head, ...h });
       if (hit.q.hp <= 0) this.fall(hit.q, p.id, 'shot', ev, hit.head);

@@ -42,7 +42,8 @@ export interface Bot {
 // (99 bots fighting everything they saw ended a match in four minutes); against people a bot always fights
 // (and a person never has more than two bots on them at once: a match is for the people in it)
 const BOTS = new WeakMap<Sim, { ids: Set<number>; list: Bot[] }>();
-export function markBots(sim: Sim, bots: Bot[]) { const r = BOTS.get(sim) ?? { ids: new Set<number>(), list: [] }; for (const b of bots) { r.ids.add(b.id); r.list.push(b); } BOTS.set(sim, r); }
+const BOT_VS_BOT = 0.5; // a bot's gun does this much to another bot (to a person: all of it)
+export function markBots(sim: Sim, bots: Bot[]) { const r = BOTS.get(sim) ?? { ids: new Set<number>(), list: [] }; for (const b of bots) { r.ids.add(b.id); r.list.push(b); } BOTS.set(sim, r); sim.botIds = r.ids; sim.botDmg = BOT_VS_BOT; }
 const ON_PERSON = 2;
 const PHASE_PEACE = 1e9; // a peace value from here up: until the storm moves on (PHASE_PEACE + the circle it was made in)
 
