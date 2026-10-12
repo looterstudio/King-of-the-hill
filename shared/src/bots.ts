@@ -328,8 +328,9 @@ export function botInput(b: Bot, sim: Sim): Input {
   if (inStorm || dCur > g.r * 0.88 - 3 * hurry || (due && dNext > g.nr * 0.75)) b.rot = true;
   else if (!due || dNext < g.nr * 0.62) b.rot = false;
   const rotate = b.rot;
-  // the storm's edge is about to reach us (a hurried storm closes several meters a second): run, don't stop to fight or build
-  const flee = rotate && dCur > g.r - 6 * hurry;
+  // the storm's edge is about to reach us (a hurried storm closes several meters a second): run, don't stop to fight or build.
+  // Already where it's closing to (the last circles), there's nowhere to run: fight
+  const flee = rotate && dCur > g.r - 6 * hurry && dNext > Math.max(g.nr * 0.75, 8);
   // shot at (the storm only eats health, a little each tick, and only out there)
   const life = self.hp + self.shield, lost = b.life - life;
   if (lost > 0.5 && !(dCur > g.r - 2 && lost <= g.dps * DT + 0.5)) b.hitT = t;
