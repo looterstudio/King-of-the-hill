@@ -443,7 +443,7 @@ test('epoch rollover settles points into a claim file', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let now = EPOCH_MS * 100 + 1000;
   const pot = new MockPot(3_000_000_000n);
-  const ep = new Epochs({ ...config, dataDir: dir, payoutMode: 'prorata', rolloverBps: 1000 }, pot, () => now);
+  const ep = new Epochs({ ...config, dataDir: dir, payoutMode: 'prorata', rolloverBps: 1000, holdTokens: 50_000 }, pot, () => now);
   const w1 = wallet(), w2 = wallet();
   ep.recordWin(w1, 'a'); ep.recordWin(w1, 'a'); ep.recordWin(w2, 'b');
   let settled: unknown = null;
@@ -466,10 +466,10 @@ test('an epoch missed while the server was down settles on boot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let now = EPOCH_MS * 200 + 5;
   const pot = new MockPot(1_000_000_000n);
-  const ep = new Epochs({ ...config, dataDir: dir }, pot, () => now);
+  const ep = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000 }, pot, () => now);
   ep.recordWin(wallet(), 'x');
   now += EPOCH_MS * 2; // down for two boundaries
-  const ep2 = new Epochs({ ...config, dataDir: dir }, pot, () => now);
+  const ep2 = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000 }, pot, () => now);
   await ep2.catchUp();
   const rec = JSON.parse(readFileSync(join(dir, 'epochs', '200.json'), 'utf8'));
   assert.equal(rec.claims.length, 1);
@@ -854,6 +854,16 @@ test('the hold requirement is min(HOLD_TOKENS, $HOLD_MIN_USD) and fixed for the 
   assert.equal(ep.requirement(), 50_000);
   const ep2 = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 50_000, holdMinUsd: 50 }, new MockPot(), () => EPOCH_MS * 301 + 5, () => 0.01);
   assert.equal(ep2.requirement(), 5_000, 'pumped 10x: $50 is 5K tokens, new players need less');
+});
+
+test('dollars only (no token cap): without a price the requirement is never 0', () => {
+  let price: number | null = null, now = EPOCH_MS * 500 + 5;
+  const ep = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 0, holdMinUsd: 25 }, new MockPot(), () => now, () => price);
+  assert.equal(ep.requirement(500), Number.MAX_SAFE_INTEGER, 'no price yet: nobody qualifies for free');
+  price = 0.0005;
+  assert.equal(ep.requirement(500), 50_000, '$25 at $0.0005 is 50K tokens, fixed for the hour');
+  price = null; now += EPOCH_MS;
+  assert.equal(ep.requirement(501), 50_000, 'the price feed is down next hour: last hour\'s requirement, not 0');
 });
 
 test('selling before a hidden snapshot voids your points; holders keep theirs', async () => {
@@ -1241,5 +1251,42 @@ test('the live pot is exactly what the vault program will accept', async () => {
     const again = new SolanaPot(cfg); await again.poll();
     assert.equal(again.balance(), 11n * SOL - 1_000_000n);
     assert.throws(() => new SolanaPot({ ...cfg, configAddress: '' }), /CONFIG_ADDRESS/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('the team wallet pot never counts what the team still owes, and remembers what it paid', async () => {
+  const { WalletPot } = await import('../src/pot.ts');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'pr-wallet-'));
+  const cfg = { ...config, dataDir: dir, potSource: 'wallet' as const, potWallet: 'W', holdMinUsd: 0, vaultReserveLamports: 1_000_000n };
+  const SOL = 1_000_000_000n;
+  let wallet = 10n * SOL;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ json: async () => ({ result: { value: Number(wallet) } }) } as Response)) as typeof fetch;
+  try {
+    const pot = new WalletPot(cfg);
+    const inflows: bigint[] = []; pot.on('inflow', (f: { lamports: bigint }) => inflows.push(f.lamports));
+    assert.equal(pot.balance(), 0n, 'nothing before the wallet was read');
+    await pot.poll();
+    assert.equal(pot.balance(), 10n * SOL - 1_000_000n);
+    wallet += 2n * SOL; await pot.poll();
+    assert.deepEqual(inflows, [2n * SOL], 'claimed fees show up as an inflow');
+    // hour 7 settles: 9 SOL owed; the next pot is only what is left
+    pot.markPaid(7, 9n * SOL);
+    mkdirSync(join(dir, 'epochs'), { recursive: true }); writeFileSync(join(dir, 'epochs', '7.json'), JSON.stringify({ paid: (9n * SOL).toString() }));
+    assert.equal(pot.balance(), 3n * SOL - 1_000_000n);
+    assert.deepEqual(pot.unpaid(), [{ epoch: 7, lamports: 9n * SOL }]);
+    // a restart before the team pays still holds it
+    const again = new WalletPot(cfg); await again.poll();
+    assert.equal(again.balance(), 3n * SOL - 1_000_000n, 'owed survives a restart');
+    // the team sends it and marks it paid
+    wallet -= 9n * SOL; await again.poll();
+    assert.equal(again.settlePaid(7, 'sig'), true);
+    assert.equal(again.balance(), 3n * SOL - 1_000_000n, 'paid once: the transfer and the reservation do not both count');
+    assert.equal(again.settlePaid(7, 'sig'), false, 'and only once');
+    const third = new WalletPot(cfg); await third.poll();
+    assert.deepEqual(third.unpaid(), [], 'paid survives a restart');
+    assert.equal(third.paidTx(7), 'sig');
+    assert.throws(() => new WalletPot({ ...cfg, potWallet: '' }), /POT_WALLET/);
   } finally { globalThis.fetch = realFetch; }
 });

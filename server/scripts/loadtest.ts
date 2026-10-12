@@ -11,7 +11,7 @@ const MODE = arg('mode', 'mix'); // solo | duo | squad | mix
 const health = URL_.replace(/^ws/, 'http').replace(/\/ws$/, '/health');
 
 const modeOf = (i: number) => (MODE === 'mix' ? ['solo', 'duo', 'squad'][i % 3] : MODE);
-let snaps = 0, results = 0, open = 0, errors = 0;
+let snaps = 0, results = 0, open = 0, errors = 0, bytes = 0; // bytes: what the server sent, for egress per player
 
 function bot(i: number) {
   const ws = new WebSocket(URL_);
@@ -21,6 +21,7 @@ function bot(i: number) {
   ws.on('open', () => { open++; });
   ws.on('error', () => { errors++; });
   ws.on('message', (raw) => {
+    bytes += (raw as Buffer).length;
     const m = JSON.parse(raw.toString()) as ServerMsg;
     if (m.t === 'hello') send({ t: 'guest', name: `bot${i}` });
     else if (m.t === 'authed') send({ t: 'queue', mode: modeOf(i) });
@@ -47,8 +48,8 @@ const t0 = Date.now();
 const iv = setInterval(async () => {
   try {
     const h = (await (await fetch(health)).json()) as { clients: number; rooms: number; queued: number; tickMs: number };
-    console.log(`t=${Math.round((Date.now() - t0) / 1000)}s open=${open} rooms=${h.rooms} queued=${h.queued} tickMs=${h.tickMs} snaps/s=${Math.round(snaps / 5)} rounds=${results} errors=${errors}`);
-    snaps = 0;
+    console.log(`t=${Math.round((Date.now() - t0) / 1000)}s open=${open} rooms=${h.rooms} queued=${h.queued} tickMs=${h.tickMs} snaps/s=${Math.round(snaps / 5)} kB/s per bot=${(bytes / 5 / 1024 / Math.max(1, open)).toFixed(1)} rounds=${results} errors=${errors}`);
+    snaps = 0; bytes = 0;
   } catch (e) { console.log('health failed', (e as Error).message); }
 }, 5000);
 

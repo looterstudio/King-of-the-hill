@@ -769,6 +769,7 @@ net.on((m: ServerMsg) => {
       break;
     }
     case 'settled': {
+      if (state.pot?.live === false) break; // nothing was paid: no pot before launch
       const s = m.settled;
       $('lastDraw').className = 'draw-sum';
       // which hour it was: the pot that closed at HH:00, your local time

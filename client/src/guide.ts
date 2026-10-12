@@ -92,7 +92,7 @@ export const GUIDE: Card[] = [
   { tab: 'prize', art: ghost, title: 'Connect Phantom', keys: 'top right: Connect Phantom', tone: 'pink', text: 'Your wallet is how we check you hold the token and where the prize goes. Signing in costs nothing.' },
   { tab: 'prize', art: chain, title: 'Hold $50 all hour', keys: `at least $${TOKEN.holdMinUsd} of $${TOKEN.symbol}`, tone: 'green', text: 'Balances are checked at secret moments through the hour. Dip under and your points for that hour don\'t count.' },
   { tab: 'prize', art: clock, title: 'The close', keys: 'a random minute in the last 10', tone: 'blue', text: 'Scoring closes at a random minute so nobody can time it; later points count for the next hour.' },
-  { tab: 'prize', art: hand, title: 'Paid on-chain', keys: 'claim with your wallet', tone: 'teal', text: 'Every payout is a merkle root on Solana: the winner claims it to their wallet, and anyone can verify it.' },
+  { tab: 'prize', art: hand, title: 'Paid to your wallet', keys: 'the wallet you play with', tone: 'teal', text: 'When the hour closes the winner is sent the pot in SOL. Every hour\'s result, and the transfer that paid it, is public.' },
 ];
 
 const cardHTML = (c: Card) => `<article class="guide-card ${c.tone}">${c.art}<div><h4>${c.title}</h4><div class="g-keys">${c.keys}</div><p>${c.text}</p></div></article>`;

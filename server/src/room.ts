@@ -87,6 +87,9 @@ export class Room {
   private dirty = false; // the seat list changed: sent once per lobby tick, not once per join/leave
   flagged = new Map<number, string>();
   private botSeats: RoomSeat[] = [];
+  // bots that turn up while the room fills, a few at a time, so it fills like a real room and is full at the drop
+  private arriving: number[] = [];
+  private nextArrival = 0;
   private get minPlayers() { return this.hooks.fillWithBots ? 1 : ROOM_MIN; }
 
   constructor(private hooks: RoomHooks, private host: MatchHost, readonly mode: Mode = 'solo') {}
@@ -98,6 +101,24 @@ export class Room {
     for (const c of this.seats) if (c.room === this) c.sendRaw(s, droppable);
   }
 
+  private botSeat(id: number, i: number, team: number): RoomSeat {
+    return { id, num: playerNumber(id * 7 + this.seed), name: BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? String(Math.floor(i / BOT_NAMES.length)) : ''), verified: false, team, skin: id % SKINS.length, bot: true };
+  }
+  // pace the arrivals so the room reaches 100 when it drops: small groups, at uneven intervals
+  private fillWithArrivals(now: number) {
+    const room = ROOM_MAX - this.seats.length;
+    if (this.arriving.length > room) { this.arriving.length = Math.max(0, room); this.botSeats = this.arriving.map((id, i) => this.botSeat(id, i, id)); this.announce(); }
+    if (this.fillDeadline === null || now < this.nextArrival) return;
+    const from = this.fillDeadline - BOT_FILL_WAIT_MS, end = this.startsAt ?? this.fillDeadline + COUNTDOWN_MS;
+    const p = Math.min(1, Math.max(0, (now - from) / (end - from)));
+    const target = Math.floor(room * Math.pow(p, 0.85));
+    const add = Math.min(target - this.arriving.length, 1 + Math.floor(Math.random() * 7));
+    this.nextArrival = now + 400 + Math.random() * 600;
+    if (add <= 0) return;
+    for (let k = 0; k < add; k++) this.arriving.push(nextBot++);
+    this.botSeats = this.arriving.map((id, i) => this.botSeat(id, i, id));
+    this.announce();
+  }
   private seatList(): RoomSeat[] { return [...this.seats.map((c) => ({ id: c.id, num: c.num, name: c.name, verified: !!c.wallet, team: c.team, skin: c.skin })), ...this.botSeats]; }
   // queue/leave spam used to send the whole seat list to every seat on every toggle (one attacker
   // turned 1.7 KB/s into 11.6 MB/s for a full room): now at most once per lobby tick, serialized once
@@ -113,7 +134,7 @@ export class Room {
   private teamCount() { return new Set(makeTeams(this.seats.map((c) => ({ id: c.id, party: c.party })), MODES[this.mode].size).values()).size; }
   view(now: number): LobbyRoom {
     const at = this.startsAt ?? (this.fillDeadline !== null ? this.fillDeadline + COUNTDOWN_MS : null);
-    return { id: this.id, mode: this.mode, n: this.seats.length, state: this.phase, startsIn: at === null ? null : Math.max(0, Math.ceil((at - now) / 1000)) };
+    return { id: this.id, mode: this.mode, n: this.seats.length + this.arriving.length, state: this.phase, startsIn: at === null ? null : Math.max(0, Math.ceil((at - now) / 1000)) };
   }
   hasParty(p: string) { return !!p && this.seats.some((c) => c.party === p); }
 
@@ -150,18 +171,22 @@ export class Room {
       if ((this.seats.length >= ROOM_MAX || (this.fillDeadline !== null && now >= this.fillDeadline)) && (this.hooks.fillWithBots || this.teamCount() >= 2)) {
         this.phase = 'countdown'; this.startsAt = now + COUNTDOWN_MS; this.announce();
       }
+      if (this.hooks.fillWithBots) this.fillWithArrivals(now);
     } else if (this.phase === 'countdown') {
+      if (this.hooks.fillWithBots) this.fillWithArrivals(now);
       if (this.startsAt !== null && now >= this.startsAt) {
         // the empty seats go to bots: a full 100 every match
-        const bots = this.hooks.fillWithBots ? Array.from({ length: Math.max(0, ROOM_MAX - this.seats.length) }, () => nextBot++) : [];
+        const room = Math.max(0, ROOM_MAX - this.seats.length);
+        const bots = this.hooks.fillWithBots ? [...this.arriving.slice(0, room), ...Array.from({ length: Math.max(0, room - this.arriving.length) }, () => nextBot++)] : [];
         const teams = makeTeams([...this.seats.map((c) => ({ id: c.id, party: c.party })), ...bots.map((id) => ({ id, party: '' }))], MODES[this.mode].size);
         this.teamsAtStart = new Set(teams.values()).size;
-        if (this.teamsAtStart < 2) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; this.announce(); } // someone left: wait for more
+        if (this.teamsAtStart < 2) { this.phase = 'waiting'; this.startsAt = null; this.fillDeadline = null; this.arriving = []; this.botSeats = []; this.announce(); } // someone left: wait for more
         else {
           this.phase = 'live';
           this.verifiedAtStart = this.seats.filter((c) => c.wallet).length;
           for (const c of this.seats) c.team = teams.get(c.id) ?? c.id;
-          this.botSeats = bots.map((id, i) => ({ id, num: playerNumber(id * 7 + this.seed), name: BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? String(Math.floor(i / BOT_NAMES.length)) : ''), verified: false, team: teams.get(id) ?? id, skin: id % SKINS.length, bot: true }));
+          this.arriving = [];
+          this.botSeats = bots.map((id, i) => this.botSeat(id, i, teams.get(id) ?? id));
           this.host.start(this.id, this.seed, this.seats.map((c) => c.id), Object.fromEntries([...this.seats.map((c) => [c.id, c.team]), ...this.botSeats.map((b) => [b.id, b.team])]), bots);
           this.announce();
         }

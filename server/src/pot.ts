@@ -2,7 +2,7 @@
 // transfer fee harvested and swapped to SOL) are claimed into the vault PDA by a keeper; this
 // module only observes the vault and turns balance increases into "inflow" events for the UI.
 import { EventEmitter } from 'node:events';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from './config.ts';
 
@@ -47,8 +47,60 @@ export class MockPot extends EventEmitter implements PotSource {
   async holderTokens(_wallet?: string, _fresh?: boolean): Promise<Holding> { return { raw: 1n << 62n, decimals: 6 }; }
 }
 
-// Production: poll the vault over JSON-RPC. No @solana/web3.js dependency; two calls is all we need.
-export class SolanaPot extends EventEmitter implements PotSource {
+// Before the token launches: matches are real, the pot is empty and never fills, nobody holds anything.
+export class OffPot extends EventEmitter implements PotSource {
+  start() {}
+  stop() {}
+  balance() { return 0n; }
+  markPaid() {}
+  ready() { return true; }
+  async holderTokens(): Promise<Holding> { return { raw: 0n, decimals: 6 }; }
+}
+
+// JSON-RPC reads shared by the on-chain pots: holders' token balances. No @solana/web3.js dependency.
+abstract class RpcPot extends EventEmitter {
+  private holderCache = new Map<string, { at: number; v: Holding }>();
+  private decimals = -1;
+  constructor(protected cfg: Config) { super(); }
+
+  protected async rpc<T>(method: string, params: unknown[]): Promise<T> {
+    const res = await fetch(this.cfg.rpcUrl, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const body = (await res.json()) as { result?: T; error?: { message: string } };
+    if (body.error) throw new Error(`${method}: ${body.error.message}`);
+    return body.result as T;
+  }
+
+  // sums every account of the mint the wallet owns (works for SPL Token and Token-2022 mints)
+  // the cache only serves sign-in messages: a sweep reads fresh, or a wallet could sign in holding the
+  // tokens, pass them on, and still pass the close on the cached balance
+  async holderTokens(wallet: string, fresh = false): Promise<Holding> {
+    const hit = this.holderCache.get(wallet);
+    if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.v;
+    type Acc = { account: { data: { parsed: { info: { tokenAmount: { amount: string; decimals: number } } } } } };
+    const r = await this.rpc<{ value: Acc[] }>('getTokenAccountsByOwner', [
+      wallet, { mint: this.cfg.tokenMint }, { encoding: 'jsonParsed', commitment: 'confirmed' },
+    ]);
+    let raw = 0n, decimals = this.decimals;
+    for (const a of r.value) { const t = a.account.data.parsed.info.tokenAmount; raw += BigInt(t.amount); decimals = t.decimals; }
+    if (r.value.length === 0 && decimals < 0) {
+      // no account yet: read decimals from the mint so the comparison is still exact
+      const m = await this.rpc<{ value: { data: { parsed: { info: { decimals: number } } } } | null }>('getAccountInfo', [this.cfg.tokenMint, { encoding: 'jsonParsed' }]);
+      decimals = m.value?.data.parsed.info.decimals ?? 6;
+    }
+    this.decimals = decimals;
+    const v = { raw, decimals };
+    this.holderCache.delete(wallet); this.holderCache.set(wallet, { at: Date.now(), v });
+    if (this.holderCache.size > 20_000) this.holderCache.delete(this.holderCache.keys().next().value!); // oldest first
+    return v;
+  }
+}
+
+// Production: poll the vault over JSON-RPC; two calls is all we need.
+export class SolanaPot extends RpcPot implements PotSource {
   private raw = 0n;            // last observed vault lamports
   // epochs this server settled -> total reserved. Until the keeper posts an epoch on chain its total
   // is not in Config.reserved yet, so it is held here; posted epochs are dropped (the chain counts
@@ -57,10 +109,8 @@ export class SolanaPot extends EventEmitter implements PotSource {
   private chain = { reserved: 0n, lastSettled: 0n, settledAny: false, read: false };
   private polledAt = 0;          // last poll that read both the vault and the config account
   private timer: NodeJS.Timeout | null = null;
-  private holderCache = new Map<string, { at: number; v: Holding }>();
-  private decimals = -1;
-  constructor(private cfg: Config) {
-    super();
+  constructor(cfg: Config) {
+    super(cfg);
     if (!cfg.vaultAddress) throw new Error('VAULT_ADDRESS is required for POT_SOURCE=solana');
     // without the config account the server can't see what is already reserved and would allocate it twice
     if (!cfg.configAddress) throw new Error('CONFIG_ADDRESS is required for POT_SOURCE=solana');
@@ -72,17 +122,6 @@ export class SolanaPot extends EventEmitter implements PotSource {
       if (!m) continue;
       try { this.local.set(Number(m[1]), BigInt((JSON.parse(readFileSync(join(dir, f), 'utf8')) as { paid: string }).paid)); } catch { /* unreadable file: the chain still counts it once posted */ }
     }
-  }
-
-  private async rpc<T>(method: string, params: unknown[]): Promise<T> {
-    const res = await fetch(this.cfg.rpcUrl, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-      signal: AbortSignal.timeout(8000),
-    });
-    const body = (await res.json()) as { result?: T; error?: { message: string } };
-    if (body.error) throw new Error(`${method}: ${body.error.message}`);
-    return body.result as T;
   }
 
   async poll() {
@@ -118,30 +157,69 @@ export class SolanaPot extends EventEmitter implements PotSource {
     return free > 0n ? free : 0n;
   }
   markPaid(epoch: number, l: bigint) { this.local.set(epoch, l); }
-
-  // sums every account of the mint the wallet owns (works for SPL Token and Token-2022 mints)
-  // the cache only serves sign-in messages: a sweep reads fresh, or a wallet could sign in holding the
-  // tokens, pass them on, and still pass the close on the cached balance
-  async holderTokens(wallet: string, fresh = false): Promise<Holding> {
-    const hit = this.holderCache.get(wallet);
-    if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.v;
-    type Acc = { account: { data: { parsed: { info: { tokenAmount: { amount: string; decimals: number } } } } } };
-    const r = await this.rpc<{ value: Acc[] }>('getTokenAccountsByOwner', [
-      wallet, { mint: this.cfg.tokenMint }, { encoding: 'jsonParsed', commitment: 'confirmed' },
-    ]);
-    let raw = 0n, decimals = this.decimals;
-    for (const a of r.value) { const t = a.account.data.parsed.info.tokenAmount; raw += BigInt(t.amount); decimals = t.decimals; }
-    if (r.value.length === 0 && decimals < 0) {
-      // no account yet: read decimals from the mint so the comparison is still exact
-      const m = await this.rpc<{ value: { data: { parsed: { info: { decimals: number } } } } | null }>('getAccountInfo', [this.cfg.tokenMint, { encoding: 'jsonParsed' }]);
-      decimals = m.value?.data.parsed.info.decimals ?? 6;
-    }
-    this.decimals = decimals;
-    const v = { raw, decimals };
-    this.holderCache.delete(wallet); this.holderCache.set(wallet, { at: Date.now(), v });
-    if (this.holderCache.size > 20_000) this.holderCache.delete(this.holderCache.keys().next().value!); // oldest first
-    return v;
-  }
 }
 
-export const makePot = (cfg: Config): PotSource => (cfg.potSource === 'solana' ? new SolanaPot(cfg) : new MockPot());
+// Launch without the vault program: the token's creator fees are claimed into a wallet the team holds,
+// its balance is the pot, and the team sends each hour's prizes by hand. What this server settled stays
+// reserved (owed) until the team marks it paid, so the next pot never counts money that is already owed.
+export class WalletPot extends RpcPot implements PotSource {
+  private raw = 0n;
+  private read = false;
+  private polledAt = 0;
+  private timer: NodeJS.Timeout | null = null;
+  private owed = new Map<number, bigint>();   // settled epochs not paid yet -> lamports
+  private paidLog: { epoch: number; tx: string; at: number }[] = [];
+  constructor(cfg: Config) {
+    super(cfg);
+    if (!cfg.potWallet) throw new Error('POT_WALLET is required for POT_SOURCE=wallet');
+    if (cfg.holdMinUsd > 0 && !cfg.tokenMint) throw new Error('TOKEN_MINT is required when HOLD_MIN_USD > 0');
+    const paidFile = this.paidFile();
+    if (existsSync(paidFile)) this.paidLog = JSON.parse(readFileSync(paidFile, 'utf8')) as typeof this.paidLog;
+    const paid = new Set(this.paidLog.map((p) => p.epoch));
+    const dir = join(cfg.dataDir, 'epochs');
+    if (existsSync(dir)) for (const f of readdirSync(dir)) {
+      const m = /^(\d+)\.json$/.exec(f);
+      if (!m || paid.has(Number(m[1]))) continue;
+      try { const l = BigInt((JSON.parse(readFileSync(join(dir, f), 'utf8')) as { paid: string }).paid); if (l > 0n) this.owed.set(Number(m[1]), l); } catch { /* unreadable: nothing reserved for it */ }
+    }
+  }
+  private paidFile() { return join(this.cfg.dataDir, 'paid.json'); }
+
+  async poll() {
+    const r = await this.rpc<{ value: number }>('getBalance', [this.cfg.potWallet, { commitment: 'confirmed' }]);
+    const now = BigInt(r.value);
+    if (this.read && now > this.raw) this.emit('inflow', { lamports: now - this.raw, source: 'trading fees' });
+    this.raw = now; this.read = true; this.polledAt = Date.now();
+  }
+  ready() { return this.read && Date.now() - this.polledAt < 30_000; }
+  start() {
+    const tick = async () => {
+      try { await this.poll(); } catch (e) { console.warn('[pot] poll failed:', (e as Error).message); }
+      this.timer = setTimeout(tick, 10_000);
+    };
+    void tick();
+  }
+  stop() { if (this.timer) clearTimeout(this.timer); }
+  balance() {
+    if (!this.read) return 0n;
+    let held = this.cfg.vaultReserveLamports;
+    for (const l of this.owed.values()) held += l;
+    const free = this.raw - held;
+    return free > 0n ? free : 0n;
+  }
+  markPaid(epoch: number, l: bigint) { if (l > 0n) this.owed.set(epoch, l); }
+  // what the team still has to send, oldest first
+  unpaid() { return [...this.owed.entries()].sort((a, b) => a[0] - b[0]).map(([epoch, lamports]) => ({ epoch, lamports })); }
+  // the team sent epoch's prizes (tx: the transfer signature, for the public record)
+  settlePaid(epoch: number, tx: string): boolean {
+    if (!this.owed.has(epoch)) return false;
+    this.owed.delete(epoch);
+    this.paidLog.push({ epoch, tx, at: Date.now() });
+    writeFileSync(this.paidFile(), JSON.stringify(this.paidLog, null, 2));
+    return true;
+  }
+  paidTx(epoch: number) { return this.paidLog.find((p) => p.epoch === epoch)?.tx ?? null; }
+}
+
+export const makePot = (cfg: Config): PotSource =>
+  cfg.potSource === 'solana' ? new SolanaPot(cfg) : cfg.potSource === 'wallet' ? new WalletPot(cfg) : cfg.potSource === 'off' ? new OffPot() : new MockPot();

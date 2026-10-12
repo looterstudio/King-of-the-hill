@@ -230,3 +230,39 @@ test('with bots on, one player is enough: the room fills to 100 and the bots nev
   }
   assert.equal(scored, 0, 'bots have no wallet and the player finished 37th with no kills');
 });
+
+test('with bots on, the room fills a few at a time while it waits and is full at the drop; people take a bot\'s place', () => {
+  const started: { ids: number[]; bots?: number[] }[] = [];
+  const host = { start: (_r: string, _s: number, ids: number[], _t?: Record<number, number>, bots?: number[]) => started.push({ ids, bots }), input() {}, spectate() {}, leave() {}, stats: () => ({ tickMs: 0, workers: 0 }) } as MatchHost;
+  const room = new Room({ ...hooks, fillWithBots: true }, host, 'solo');
+  room.add(fakeClient(1).c);
+  let now = Date.now(), last = 0, shown: number[] = [], joined = false;
+  for (let t = 0; t < 400 && room.phase !== 'live'; t++) {
+    room.update(now);
+    const n = room.view(now).n;
+    assert.ok(n - last <= 7, `no more than a small group at once (${last} -> ${n})`);
+    if (!joined) assert.ok(n >= last, 'the count only goes up while nobody leaves');
+    shown.push(n); last = n;
+    if (!joined && n >= 50) { room.add(fakeClient(2).c); joined = true; last = room.view(now).n; assert.equal(last, n + 1, 'a person takes an empty seat') }
+    assert.ok(n <= 100, 'never more than 100');
+    now += 100;
+  }
+  assert.equal(room.phase, 'live');
+  assert.ok(shown.filter((n) => n > 1 && n < 90).length > 50, 'the room is seen filling, not jumping from 1 to 100');
+  assert.ok(Math.max(...shown) >= 90, 'nearly full by the drop');
+  const s = started.at(-1)!;
+  assert.equal(s.ids.length, 2); assert.equal(s.ids.length + s.bots!.length, 100, '100 in the match');
+});
+
+test('a person who joins a room the bots have filled takes a bot\'s seat', () => {
+  const host = { start() {}, input() {}, spectate() {}, leave() {}, stats: () => ({ tickMs: 0, workers: 0 }) } as unknown as MatchHost;
+  const room = new Room({ ...hooks, fillWithBots: true }, host, 'solo');
+  room.add(fakeClient(1).c);
+  let now = Date.now();
+  while (room.view(now).n < 90 && room.phase !== 'live') { room.update(now); now += 100; }
+  const n = room.view(now).n;
+  assert.ok(n >= 90 && n <= 100, `nearly full before the drop (${n})`);
+  for (let id = 2; id <= 13; id++) room.add(fakeClient(id).c); // 12 people walk into a room with at most 10 free seats
+  room.update(now);
+  assert.equal(room.view(now).n, 100, 'still 100: bots made room for them');
+});
