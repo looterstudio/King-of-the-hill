@@ -25,6 +25,9 @@ import { Announcer } from './announcer.ts';
 import { hotbarHTML } from './hotbar.ts';
 import { renderIcons } from './icons.ts';
 import './hud.css';
+import { initLanding } from './landing.ts';
+
+initLanding(); // the landing page over the lobby, until Play
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
@@ -129,7 +132,7 @@ applySettings(settings, null);
 // the inventory (Tab / I), the item wheel (hold Z) and the notes on what you just picked up
 const inventory = new Inventory($('inventory'), $('wheel'), $('pickToasts'), input, () => state.screen === 'game' && !state.over && !!game.self?.alive);
 // headless test runs can't take pointer lock; #autotest pretends it was granted (demo build only)
-if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input }; }
+if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input, autopilot: () => import('./autopilot.ts') }; }
 
 type Screen = 'lobby' | 'waiting' | 'game';
 const state = {

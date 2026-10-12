@@ -125,6 +125,29 @@ The game has two parts, and they deploy to different places:
   `data/` on a persistent volume: it holds the points log and the epoch secret. The server also
   serves the page itself, so it can run alone without Vercel.
 
+## The landing page and its gameplay video
+
+The first screen is a landing page over the lobby (`client/src/landing.ts`, `landing.css`): what the
+game is, how to win, the hourly pot, the modes, the controls as keycaps, a minute of gameplay and a
+big Play button that lifts it off the lobby. `#play` in the URL skips it; the lobby's logo brings it back.
+
+The video is recorded from the offline demo, in one command:
+
+```bash
+npm run record:gameplay            # builds the demo, plays a match headlessly, writes client/public/media/
+npm run record:gameplay -- --seconds 60 --max-mb 8 --no-build --keep
+```
+
+It joins as a guest and lets the bots' brain play your seat (`client/src/autopilot.ts`, loaded only on
+`#autotest` in the demo build) through the normal input path: the paper plane, the glide, looting and
+fights, in third person. The page runs on a virtual clock that the recorder steps one frame at a time
+and screenshots at 1280x720, so the clip is a smooth 30 fps however slow the machine is (it takes a
+few minutes). ffmpeg encodes `gameplay.mp4` (H.264), `gameplay.webm` (VP9) and the poster
+`gameplay.jpg`, raising compression until each file fits the size budget. Needs ffmpeg and
+Playwright (`playwright` or `playwright-core`, or `PLAYWRIGHT_CORE=/path`); the browser is
+`CHROME_PATH`, Playwright's Chromium, a Puppeteer Chrome or the system Chrome. Re-run it whenever the
+game looks different.
+
 ## Checks
 
 ```bash
