@@ -1,4 +1,4 @@
-import type { ItemId, Mode, PerkId, WeaponId } from './constants.ts';
+import type { AmmoId, ItemId, Mode, PerkId, WeaponId } from './constants.ts';
 import type { Input } from './sim.ts';
 import type { Body, Box } from './world.ts';
 
@@ -52,7 +52,7 @@ export interface SettledView {
 // your own player, in full: the client replays unacknowledged inputs from this exact state
 export interface SnapSelf extends Body {
   yaw: number; pitch: number; hp: number; shield: number; alive: boolean;
-  slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[];
+  slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[]; ammo: Record<AmmoId, number>;
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; spin: number; ack: number; kills: number; vhp: number; rideV: number; // vhp: your vehicle's health, 0 on foot

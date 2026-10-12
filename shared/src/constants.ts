@@ -64,19 +64,20 @@ export const VIEW_RANGE = 170;          // players farther than this are not sen
 // dps applies once the phase's circle is reached; the storm hits health only.
 export interface RingPhase { wait: number; shrink: number; radius: number; dps: number }
 export const RING_START_R = 580;        // covers the corners of the island
-export const RING_PHASES: RingPhase[] = [
-  { wait: 30, shrink: 40, radius: 280, dps: 2 },
-  { wait: 15, shrink: 30, radius: 170, dps: 3 },
-  { wait: 12, shrink: 25, radius: 100, dps: 5 },
-  { wait: 10, shrink: 22, radius: 55, dps: 8 },
-  { wait: 10, shrink: 18, radius: 28, dps: 12 },
-  { wait: 8, shrink: 15, radius: 12, dps: 18 },
-  { wait: 6, shrink: 15, radius: 0, dps: 30 },
-];
+export const RING_PHASES: RingPhase[] = [ // about 18 minutes from the first wait to the last close, a classic battle royale's length
+  { wait: 90, shrink: 120, radius: 300, dps: 1 },
+  { wait: 120, shrink: 90, radius: 190, dps: 1 },
+  { wait: 90, shrink: 75, radius: 120, dps: 2 },
+  { wait: 75, shrink: 60, radius: 75, dps: 4 },
+  { wait: 60, shrink: 50, radius: 40, dps: 6 },
+  { wait: 45, shrink: 45, radius: 18, dps: 8 },
+  { wait: 30, shrink: 40, radius: 6, dps: 10 },
+  { wait: 20, shrink: 40, radius: 0, dps: 12 },
+]
 export const RING_DPS_START = 1;
 // the storm hurries as the field thins out: its clock runs at normal pace while half the teams are
 // still in, then faster and faster, up to max times as fast with a tenth of them left
-export const RING_HURRY = { from: 0.6, to: 0.1, max: 4 };
+export const RING_HURRY = { from: 0.25, to: 0.05, max: 1.5 };
 
 // ---- loot ----
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
@@ -94,23 +95,35 @@ export interface WeaponDef {
   sight: Sight; // what aiming down sights (right click) shows: see SIGHTS
   proj?: 'rocket' | 'missile' | 'guided' | 'spell'; // fires a projectile instead of a bullet
   melee?: { reach: number; arc: number; block: number }; // swung, not fired: everyone in the arc in front of you (no ammo)
+  ammo?: AmmoId; // what a reload takes from your reserve (none: the blade, and the wand recharging itself)
 }
+// ammo: everyone drops with only the pickaxe, guns come with one box of their ammo, and a reload takes from
+// what you carry (boxes on the floor and in cases, and whatever the fallen leave behind)
+export type AmmoId = 'light' | 'medium' | 'heavy' | 'shells' | 'rockets';
+export const AMMO: Record<AmmoId, { name: string; box: number; max: number }> = {
+  light: { name: 'Light Ammo', box: 36, max: 360 },
+  medium: { name: 'Medium Ammo', box: 30, max: 300 },
+  heavy: { name: 'Heavy Ammo', box: 6, max: 30 },
+  shells: { name: 'Shells', box: 10, max: 60 },
+  rockets: { name: 'Rockets', box: 2, max: 8 },
+};
+export const AMMO_IDS = Object.keys(AMMO) as AmmoId[];
 // a burst gun fires its rounds this far apart (3 ticks: 0.1 s), then waits its cd before the next burst
 export const BURST_GAP = 0.075;
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
-  pistol: { name: 'Pistol', rarity: 'common', dmg: 16, cd: 0.25, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.15, sight: 'iron', auto: false },
-  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.2, sight: 'iron', auto: true },
-  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 12, cd: 0.6, range: 24, pellets: 9, spread: 0.06, mag: 8, reload: 2.6, zoom: 1.08, sight: 'iron', auto: false },
-  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 15, cd: 0.9, range: 28, pellets: 10, spread: 0.048, mag: 5, reload: 2.8, zoom: 1.08, sight: 'iron', auto: false },
-  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.35, sight: 'dot', auto: true },
-  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.45, sight: 'dot', auto: false, burst: 3 },
-  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, sight: 'scope', auto: false, headMult: 2 },
-  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.05, sight: 'hip', auto: true, spinUp: 0.7 },
-  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.45, sight: 'dot', auto: true },
-  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 150, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, sight: 'scope', auto: false },
-  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.12, sight: 'ring', auto: false, proj: 'rocket' },
-  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.15, sight: 'ring', auto: false, proj: 'missile' },
-  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 120, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.12, sight: 'ring', auto: false, proj: 'guided' },
+  pistol: { name: 'Pistol', rarity: 'common', dmg: 16, cd: 0.25, range: 90, pellets: 1, spread: 0.016, mag: 16, reload: 1.2, zoom: 1.15, sight: 'iron', auto: false, ammo: 'light' },
+  smg: { name: 'SMG', rarity: 'common', dmg: 13, cd: 0.07, range: 60, pellets: 1, spread: 0.034, mag: 30, reload: 1.6, zoom: 1.2, sight: 'iron', auto: true, ammo: 'light' },
+  tac: { name: 'Tactical Shotgun', rarity: 'common', dmg: 12, cd: 0.6, range: 24, pellets: 9, spread: 0.06, mag: 8, reload: 2.6, zoom: 1.08, sight: 'iron', auto: false, ammo: 'shells' },
+  pump: { name: 'Pump Shotgun', rarity: 'uncommon', dmg: 15, cd: 0.9, range: 28, pellets: 10, spread: 0.048, mag: 5, reload: 2.8, zoom: 1.08, sight: 'iron', auto: false, ammo: 'shells' },
+  ar: { name: 'Assault Rifle', rarity: 'uncommon', dmg: 17, cd: 0.11, range: 150, pellets: 1, spread: 0.022, mag: 30, reload: 1.9, zoom: 1.35, sight: 'dot', auto: true, ammo: 'medium' },
+  burst: { name: 'Burst Rifle', rarity: 'rare', dmg: 21, cd: 0.45, range: 150, pellets: 1, spread: 0.015, mag: 24, reload: 2.0, zoom: 1.45, sight: 'dot', auto: false, burst: 3, ammo: 'medium' },
+  hunting: { name: 'Hunting Rifle', rarity: 'rare', dmg: 74, cd: 1.1, range: 320, pellets: 1, spread: 0.004, mag: 1, reload: 1.5, zoom: 2.4, sight: 'scope', auto: false, headMult: 2, ammo: 'heavy' },
+  minigun: { name: 'Minigun', rarity: 'epic', dmg: 11, cd: 0.055, range: 100, pellets: 1, spread: 0.05, mag: 140, reload: 4.2, zoom: 1.05, sight: 'hip', auto: true, spinUp: 0.7, ammo: 'light' },
+  scar: { name: 'SCAR', rarity: 'legendary', dmg: 25, cd: 0.11, range: 180, pellets: 1, spread: 0.011, mag: 30, reload: 1.8, zoom: 1.45, sight: 'dot', auto: true, ammo: 'medium' },
+  heavy: { name: 'Heavy Sniper', rarity: 'legendary', dmg: 150, cd: 2.0, range: 500, pellets: 1, spread: 0.035, mag: 4, reload: 3.0, zoom: 5, sight: 'scope', auto: false, ammo: 'heavy' },
+  rocket: { name: 'Rocket Launcher', rarity: 'epic', dmg: 115, cd: 1.1, range: 400, pellets: 1, spread: 0.004, mag: 1, reload: 2.6, zoom: 1.12, sight: 'ring', auto: false, proj: 'rocket', ammo: 'rockets' },
+  stinger: { name: 'Stinger', rarity: 'rare', dmg: 200, cd: 1.6, range: 500, pellets: 1, spread: 0, mag: 2, reload: 3.2, zoom: 1.15, sight: 'ring', auto: false, proj: 'missile', ammo: 'rockets' },
+  guided: { name: 'Guided Missile', rarity: 'legendary', dmg: 120, cd: 1.4, range: 450, pellets: 1, spread: 0, mag: 1, reload: 3.4, zoom: 1.12, sight: 'ring', auto: false, proj: 'guided', ammo: 'rockets' },
   blade: { name: 'Plasma Blade', rarity: 'epic', dmg: 40, cd: 0.42, range: 3.6, pellets: 1, spread: 0, mag: 1, reload: 0, zoom: 1, sight: 'hip', auto: true, melee: { reach: 3.4, arc: 0.8, block: 75 } },
   wand: { name: 'Magic Wand', rarity: 'rare', dmg: 30, cd: 0.55, range: 220, pellets: 1, spread: 0.006, mag: 6, reload: 2.4, zoom: 1.15, sight: 'hip', auto: false, proj: 'spell' },
 };

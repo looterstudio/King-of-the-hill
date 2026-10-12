@@ -7,18 +7,19 @@ import { Sim, emptyInput, type Input } from '../../shared/src/sim.ts';
 import { MODES, RING_PHASES, TICK_HZ, type Mode } from '../../shared/src/constants.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
 import { rng } from '../../shared/src/rng.ts';
-import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
+import { botInput, markBots, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
 
 const DT = 1 / TICK_HZ;
 
 // a full match like the demo plays it (40 bots, real map, same-team drop spots), with what went wrong
-function match(seed: number, mode: Mode, capS = 600) {
+function match(seed: number, mode: Mode, capS = 1200) {
   const sim = new Sim(seed);
   const ids = Array.from({ length: 40 }, (_, i) => i + 1);
   const teams = makeTeams(ids.map((id) => ({ id, party: '' })), MODES[mode].size);
-  sim.spawn(ids, teams);
+  sim.spawn(ids, teams, { bus: true }); // as a real match: the paper plane, the pickaxe only, bots that know each other
   const bots = ids.map((id) => newBot(id, rng(seed * 1000 + id)));
-  teamDrops(bots, teams, rng(seed ^ 0xabc));
+  teamDrops(bots, teams, rng(seed ^ 0xabc), sim.bus);
+  markBots(sim, ids);
   const out = { stuckMax: 0, stormMax: 0, mateHits: 0, blind: 0, shots: 0, ringDeaths: 0, staleView: 0, botMs: 0, ticks: 0 };
   const trail = new Map<number, { x: number; z: number; free: boolean }[]>(), busy = new Set<number>();
   const storm = new Map<number, number>();
@@ -70,7 +71,7 @@ function match(seed: number, mode: Mode, capS = 600) {
 test('a 40-bot solo match is fought to a winner: no one stuck, no one left in the storm, no stalemate', () => {
   const m = match(1, 'solo');
   assert.equal(m.sim.teamsAlive.size, 1, `no winner after ${m.t.toFixed(0)} s (${m.sim.alive} alive)`);
-  assert.ok(m.t < 420, `took ${m.t.toFixed(0)} s: the storm, not a fight, decided it`);
+  assert.ok(m.t < 1000, `took ${m.t.toFixed(0)} s: the storm, not a fight, decided it`);
   // and the storm brought it to an end: decided in the last circles, not before the first one closed
   assert.ok(m.sim.ring.phase >= RING_PHASES.length - 3, `over in circle ${m.sim.ring.phase + 1} of ${RING_PHASES.length} (${m.t.toFixed(0)} s)`);
   assert.ok(m.stuckMax < 20, `a bot stood still for ${m.stuckMax} s with nothing to do`);

@@ -1,11 +1,11 @@
 // Everything you carry, explained: the inventory (hold Tab, or I to keep it open), the item wheel
 // (hold Z or the mouse wheel button, point, let go) and a short note the first few times you pick
 // something up.
-import { PERKS, WEAPONS, type ItemId, type WeaponId } from '../../shared/src/constants.ts';
+import { AMMO_IDS, PERKS, WEAPONS, type ItemId, type WeaponId } from '../../shared/src/constants.ts';
 import type { SnapSelf } from '../../shared/src/protocol.ts';
 import { RARITY_CSS } from './game3d.ts';
 import type { FpsInput } from './fpsinput.ts';
-import { AXE_DOC, ITEM_DOCS, MATS_DOC, PERK_DOCS, gunDoc, type Doc } from './itemdocs.ts';
+import { AXE_DOC, ITEM_DOCS, MATS_DOC, PERK_DOCS, ammoDoc, gunDoc, type Doc } from './itemdocs.ts';
 
 // what the wheel can pick, clockwise from the top
 type Pick = 'big' | 'med' | 'perk' | 'mini';
@@ -64,6 +64,7 @@ export class Inventory {
     for (const s of me.slots) if (s) now.push([`gun:${s}`, gunDoc(s), `ico ico-gun-${s}`]);
     for (const k of ['big', 'mini', 'med'] as ItemId[]) if (me.items[k] > 0) now.push([`item:${k}`, ITEM_DOCS[k], `pic ico-item-${k}`]);
     if (me.perk) now.push([`perk:${me.perk.kind}`, PERK_DOCS[me.perk.kind], `pic ico-item-${me.perk.kind}`]);
+    for (const a of AMMO_IDS) if (me.ammo?.[a] > 0) now.push([`ammo:${a}`, ammoDoc(a), `pic ammo-${a}`]);
     for (const [key, doc, icon] of now) {
       if (this.seen.has(key)) continue;
       this.seen.add(key);
@@ -104,13 +105,13 @@ export class Inventory {
     me.slots.forEach((s, i) => {
       if (!s) { guns.push(`<div class="inv-row empty"><i></i><div><b>Slot ${i + 1}</b><span>Empty. Walk over a gun or press E to take it.</span></div><strong></strong></div>`); return; }
       const d = WEAPONS[s], ups = me.ups?.[i] ?? 0;
-      guns.push(row(`ico ico-gun-${s}`, { ...gunDoc(s), name: `<kbd>${i + 1}</kbd> ${d.name}${ups ? ` <small class="stars">${'★'.repeat(ups)}</small>` : ''} <small class="rar">${d.rarity}</small>` }, d.melee ? '∞' : `${me.mags[i]}/${d.mag}`, i === me.cur && !me.axe ? 'on' : '', RARITY_CSS[d.rarity]));
+      guns.push(row(`ico ico-gun-${s}`, { ...gunDoc(s), name: `<kbd>${i + 1}</kbd> ${d.name}${ups ? ` <small class="stars">${'★'.repeat(ups)}</small>` : ''} <small class="rar">${d.rarity}</small>` }, d.melee ? '∞' : `${me.mags[i]}/${d.ammo ? me.ammo?.[d.ammo] ?? 0 : d.mag}`, i === me.cur && !me.axe ? 'on' : '', RARITY_CSS[d.rarity]));
     });
     const items = (['big', 'mini', 'med'] as ItemId[]).map((k) => row(`pic ico-item-${k}`, ITEM_DOCS[k], `×${me.items[k]}`, me.items[k] ? '' : 'none'));
     const perk = me.perk ? row(`pic ico-item-${me.perk.kind}`, PERK_DOCS[me.perk.kind], `×${me.perk.n}`, '', RARITY_CSS[PERKS[me.perk.kind].rarity])
       : `<div class="inv-row none"><i class="pic"></i><div><b>No perk</b><span>Pencil cases drop grenades, C4, launch pads, forts and more. One kind at a time.</span></div><strong></strong></div>`;
     return `<div class="inv-cols"><section><h4>Weapons</h4>${guns.join('')}</section>`
-      + `<section><h4>Shields and healing</h4>${items.join('')}<h4>Perk</h4>${perk}<h4>Building</h4>${row('pic mats', MATS_DOC, `▦ ${me.mats}`)}</section></div>`;
+      + `<section><h4>Shields and healing</h4>${items.join('')}<h4>Perk</h4>${perk}<h4>Building</h4>${row('pic mats', MATS_DOC, `▦ ${me.mats}`)}<h4>Ammo</h4>${AMMO_IDS.map((a) => row(`pic ammo-${a}`, ammoDoc(a), `${me.ammo?.[a] ?? 0}`, me.ammo?.[a] ? '' : 'none')).join('')}</section></div>`;
   }
 
   // ---------- the item wheel ----------

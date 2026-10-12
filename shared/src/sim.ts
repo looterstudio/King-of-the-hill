@@ -5,7 +5,7 @@ import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
   PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_HURRY, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AIR_CRASH, AXE, BOMB, BURST_GAP, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AMMO, AMMO_IDS, type AmmoId, AIR_CRASH, AXE, BOMB, BURST_GAP, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
 import { moveVehicle, tankAim } from './vehicles.ts';
 import { rng } from './rng.ts';
@@ -13,7 +13,7 @@ import { INK, World, moveBody, newBody, rayBox, type Body, type Box, type Struct
 
 export { rng };
 
-export type LootKind = 'weapon' | 'item' | 'perk';
+export type LootKind = 'weapon' | 'item' | 'perk' | 'ammo';
 export interface Loot { id: number; x: number; y: number; z: number; kind: LootKind; what: string; n: number; mag?: number; up?: number }
 export interface Case { id: number; x: number; y: number; z: number; golden: boolean; open: boolean; supply?: boolean }
 export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'guided' | 'spell' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; r?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
@@ -25,6 +25,7 @@ export interface Build { id: number; owner: number; idx: number[]; boxes: Box[];
 export interface PlayerState extends Body {
   id: number; yaw: number; pitch: number; hp: number; shield: number; alive: boolean;
   slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[]; // upgrade level per slot
+  ammo: Record<AmmoId, number>; // reserve ammo by type: what reloads take from
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; fireCd: number; spin: number; burstLeft: number; burstT: number;
@@ -32,6 +33,7 @@ export interface PlayerState extends Body {
   downBy: number | null; reviveT: number; reviver: number; // knocked: who did it, revive progress, by whom
   axe: boolean; axeCd: number; mats: number; // axe out (instead of a gun), its swing cooldown, building material
   tp: boolean; // playing in third person: aims down the shoulder camera's ray (aimFrom)
+  hitBy?: number; // who hit us last (the bots answer that one)
 }
 export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
@@ -165,6 +167,8 @@ const FLOOR_RARITY: [Rarity, number][] = [['common', 50], ['uncommon', 30], ['ra
 const CASE_RARITY: [Rarity, number][] = [['common', 34], ['uncommon', 34], ['rare', 21], ['epic', 9], ['legendary', 2]];
 const GOLD_RARITY: [Rarity, number][] = [['epic', 55], ['legendary', 45]];
 const ITEM_TABLE: [ItemId, number][] = [['mini', 50], ['big', 25], ['med', 25]];
+// loose ammo boxes: mostly what the common guns take
+const AMMO_TABLE: [AmmoId, number][] = [['light', 32], ['medium', 30], ['shells', 24], ['heavy', 8], ['rockets', 6]];
 const PERK_TABLE: [PerkId, number][] = [['grenade', 30], ['molotov', 22], ['shock', 14], ['smoke', 14], ['launch', 14], ['fort', 11], ['kit', 12], ['c4', 12]];
 
 // ray vs player hitboxes (vertical cylinder body + head sphere); returns {t, head} or null
@@ -235,7 +239,8 @@ export class Sim {
     for (const s of this.world.caseSpots) this.cases.push({ id: this.nextId++, x: s.x, y: s.y, z: s.z, golden: !!s.golden, open: false });
     for (const s of this.world.lootSpots) {
       const roll = lr();
-      if (roll < 0.6 || (s.rich && roll < 0.8)) this.drop(s.x, s.y, s.z, 'weapon', this.rollWeapon(lr, s.rich ? CASE_RARITY : FLOOR_RARITY));
+      if (roll < 0.6 || (s.rich && roll < 0.8)) this.dropGun(s.x, s.y, s.z, this.rollWeapon(lr, s.rich ? CASE_RARITY : FLOOR_RARITY), lr() * Math.PI * 2);
+      else if (roll < 0.74) this.drop(s.x, s.y, s.z, 'ammo', weighted(lr, AMMO_TABLE));
       else if (roll < 0.9) this.drop(s.x, s.y, s.z, 'item', weighted(lr, ITEM_TABLE));
       else this.drop(s.x, s.y, s.z, 'perk', weighted(lr, PERK_TABLE));
     }
@@ -260,11 +265,18 @@ export class Sim {
     return list[Math.floor(r() * list.length)];
   }
 
+  // a gun on the floor, with a box of its ammo next to it
+  private dropGun(x: number, y: number, z: number, w: WeaponId, a = 0) {
+    this.drop(x, y, z, 'weapon', w);
+    const ammo = WEAPONS[w].ammo;
+    if (ammo) this.drop(x + Math.cos(a) * 0.9, y, z + Math.sin(a) * 0.9, 'ammo', ammo);
+  }
+
   drop(x: number, y: number, z: number, kind: LootKind, what: string, n = 1, mag?: number, up = 0) {
     const def = kind === 'weapon' ? WEAPONS[what as WeaponId] : null;
     const at = this.world.settle(x, y, z) ?? { x, y: this.world.groundAt(x, z, y + 0.6), z };
     x = at.x; y = at.y; z = at.z;
-    this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : n, mag: def ? (mag ?? def.mag) : undefined, up: up || undefined });
+    this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : kind === 'ammo' && n === 1 ? AMMO[what as AmmoId].box : n, mag: def ? (mag ?? def.mag) : undefined, up: up || undefined });
     this.lootVer++;
   }
 
@@ -278,6 +290,7 @@ export class Sim {
   // drop spot (the tests, a training ground)
   spawn(ids: number[], teamOf?: Map<number, number>, opts: { bus?: boolean } = {}) {
     if (opts.bus) this.bus = { ...busLine(this.world), t: this.t };
+    const bare = !!opts.bus;
     const drop = new Map<number, { x: number; z: number; n: number }>();
     ids.forEach((id) => {
       const team = teamOf?.get(id) ?? id;
@@ -287,10 +300,12 @@ export class Sim {
       this.players.set(id, {
         ...newBody(x, 95 + this.rand() * 15, z), gliding: true, id,
         yaw: Math.atan2(x, z), pitch: -0.5, hp: PLAYER_HP, shield: 0, alive: true,
-        slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
+        // a match: the pickaxe and nothing else. The training ground (and the tests): a pistol and full ammo
+        slots: [bare ? null : 'pistol', null, null, null], mags: [bare ? 0 : WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
+        ammo: bare ? { light: 0, medium: 0, heavy: 0, shells: 0, rockets: 0 } : { light: AMMO.light.max, medium: AMMO.medium.max, heavy: AMMO.heavy.max, shells: AMMO.shells.max, rockets: AMMO.rockets.max },
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
-        downBy: null, reviveT: 0, reviver: 0, axe: false, axeCd: 0, mats: BUILD.startMats, tp: false,
+        downBy: null, reviveT: 0, reviver: 0, axe: bare, axeCd: 0, mats: BUILD.startMats, tp: false,
       });
       if (this.bus) Object.assign(this.players.get(id)!, { x: this.bus.x, y: BUS.y, z: this.bus.z, vx: this.bus.dx * BUS.speed, vy: 0, vz: this.bus.dz * BUS.speed, gliding: false, bus: 1, yaw: Math.atan2(-this.bus.dx, -this.bus.dz), pitch: -0.3 });
     });
@@ -320,7 +335,8 @@ export class Sim {
     // everything they carried spills on the floor in a little ring
     const gy = this.world.groundAt(p.x, p.z, p.y + 0.1);
     const spill: [LootKind, string, number, number | undefined, number][] = [];
-    p.slots.forEach((w, i) => { if (w && w !== 'pistol') spill.push(['weapon', w, 1, p.mags[i], p.ups[i]]); });
+    p.slots.forEach((w, i) => { if (w) spill.push(['weapon', w, 1, p.mags[i], p.ups[i]]); });
+    for (const a of AMMO_IDS) if (p.ammo[a] > 0) spill.push(['ammo', a, p.ammo[a], undefined, 0]);
     for (const it of Object.keys(p.items) as ItemId[]) if (p.items[it] > 0) spill.push(['item', it, p.items[it], undefined, 0]);
     if (p.perk && p.perk.n > 0) spill.push(['perk', p.perk.kind, p.perk.n, undefined, 0]); // an empty perk would block picking up a real one
     spill.forEach(([k, what, n, mag, up], i) => {
@@ -1127,6 +1143,8 @@ export class Sim {
       }
       // loot spills out the far side of the case, fanned out, so you choose what to grab
       const away = Math.atan2(best.x - p.x, best.z - p.z);
+      for (const [k, what] of [...out]) if (k === 'weapon' && WEAPONS[what as WeaponId].ammo) out.push(['ammo', WEAPONS[what as WeaponId].ammo!]); // each gun with its ammo
+      out.push(['ammo', weighted(r, AMMO_TABLE)]);
       out.forEach(([k, what], i) => { const a = away + (i - (out.length - 1) / 2) * 0.55; this.drop(best!.x + Math.sin(a) * 1.4, best!.y, best!.z + Math.cos(a) * 1.4, k, what); });
       ev.push({ kind: 'open', caseId: best.id, by: p.id, golden: best.golden });
       return;
@@ -1155,7 +1173,7 @@ export class Sim {
       const held = p.slots[slot];
       if (held) this.drop(p.x, this.world.groundAt(p.x, p.z, p.y + 0.1), p.z, 'weapon', held, 1, p.mags[slot], p.ups[slot]);
     }
-    p.slots[slot] = gun.what as WeaponId; p.mags[slot] = gun.mag ?? WEAPONS[gun.what as WeaponId].mag; p.ups[slot] = gun.up ?? 0; p.cur = slot; p.reloadT = 0;
+    p.slots[slot] = gun.what as WeaponId; p.mags[slot] = gun.mag ?? WEAPONS[gun.what as WeaponId].mag; p.ups[slot] = gun.up ?? 0; p.cur = slot; p.reloadT = 0; p.axe = false;
     this.loot.splice(this.loot.indexOf(gun), 1); this.lootVer++;
   }
 
@@ -1187,6 +1205,11 @@ export class Sim {
         const take = Math.min(room, l.n);
         p.items[it] += take; l.n -= take;
         if (l.n > 0) { this.lootVer++; continue; }
+      } else if (l.kind === 'ammo') {
+        const a = l.what as AmmoId, take = Math.min(AMMO[a].max - p.ammo[a], l.n);
+        if (take <= 0) continue;
+        p.ammo[a] += take; l.n -= take;
+        if (l.n > 0) { this.lootVer++; continue; }
       } else if (l.kind === 'perk') {
         if (p.perk && p.perk.kind !== l.what) continue;
         const cap = PERKS[l.what as PerkId].count * 2;
@@ -1196,6 +1219,7 @@ export class Sim {
         const slot = p.slots.findIndex((s) => s === null);
         if (slot < 0 || p.slots.includes(l.what as WeaponId)) continue;
         p.slots[slot] = l.what as WeaponId; p.mags[slot] = l.mag ?? WEAPONS[l.what as WeaponId].mag; p.ups[slot] = l.up ?? 0;
+        if (p.axe && p.slots.filter(Boolean).length === 1) { p.axe = false; p.cur = slot; } // your first gun goes straight to your hands
       }
       this.loot.splice(i, 1); this.lootVer++;
     }
@@ -1370,8 +1394,12 @@ export class Sim {
     const w = p.axe ? null : this.weaponOf(p);
     if (w) {
       const def = WEAPONS[w];
-      if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) { p.reloadT = 0; p.mags[p.cur] = def.mag; } }
-      else if ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0)) { p.reloadT = def.reload; p.use = null; }
+      // a reload fills the magazine from your reserve of its ammo (as far as it goes); with none left there's no reload
+      const spare = def.ammo ? p.ammo[def.ammo] : Infinity;
+      if (p.reloadT > 0) {
+        p.reloadT -= dt;
+        if (p.reloadT <= 0) { const take = Math.min(def.mag - p.mags[p.cur], spare); p.reloadT = 0; p.mags[p.cur] += take; if (def.ammo) p.ammo[def.ammo] -= take; }
+      } else if (spare > 0 && ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0))) { p.reloadT = def.reload; p.use = null; }
     }
 
     const vx0 = p.vx, vy0 = p.vy, vz0 = p.vz, was = p.grounded;
@@ -1443,6 +1471,7 @@ export class Sim {
     for (const p of this.players.values()) if (p.alive) pos.set(p.id, { x: p.x, y: p.y, z: p.z });
     this.history.push({ tick: this.tick, pos });
     if (this.history.length > REWIND_MAX_TICKS + 2) this.history.shift();
+    for (const e of ev) if (e.kind === 'hit' && e.by && e.by !== e.victim) { const v = this.players.get(e.victim); if (v) v.hitBy = e.by; }
     return ev;
   }
 }

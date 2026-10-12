@@ -8,7 +8,7 @@ import { Sim, emptyInput, sanitizeInput, type TickInputs } from '../../shared/sr
 import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
 import { makeTeams } from '../../shared/src/teams.ts';
-import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
+import { botInput, newBot, markBots, teamDrops, type Bot } from '../../shared/src/bots.ts';
 import { TOKEN } from '../../shared/src/token.ts';
 
 type Handler = (m: ServerMsg) => void;
@@ -174,7 +174,8 @@ export class LocalNet {
     const teams = makeTeams(r.seats.map((s) => ({ id: s.id, party: s.id === 1 || r.mates.has(s.id) ? (r.mates.size ? 'PARTY' : '') : '' })), MODES[r.mode].size);
     r.seats = r.seats.map((s) => ({ ...s, team: teams.get(s.id)! }));
     r.sim.spawn(r.seats.map((s) => s.id), teams, { bus: true });
-    teamDrops(r.bots, teams, Math.random);
+    teamDrops(r.bots, teams, Math.random, r.sim.bus);
+    markBots(r.sim, r.bots.map((b) => b.id));
     this.mine = new InputQueue(emptyInput(), TICK_HZ); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     // your bot teammates show where they mean to land, like a squad would

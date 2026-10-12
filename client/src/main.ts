@@ -1099,7 +1099,7 @@ function frame(now: number) {
       document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= PLAYER_HP * 0.3);
       for (const sel of ['.hud-bl', '#hotbar']) { const el = document.querySelector(sel) as HTMLElement | null; if (el) el.style.visibility = me.alive ? 'visible' : 'hidden'; }
       setText($('ammo'), def ? (def.melee ? '∞' : String(mag)) : '–'); // a blade has no ammo
-      setText($('ammoMax'), def && !def.melee ? `/${def.mag}` : '');
+      setText($('ammoMax'), def && !def.melee ? `/${def.ammo ? me.ammo?.[def.ammo] ?? 0 : def.mag}` : ''); // what's left to reload with
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
       setHTML($('magTally'), def && !def.melee ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
       // the hotbar (hidden in a vehicle, where the vehicle card takes the bottom of the screen)

@@ -148,10 +148,16 @@ export function upgradeGun(g: THREE.Group, level: number, gold: Mat, gem: Mat) {
 }
 
 // ---------------- loot, cases, gadgets ----------------
+// ammo boxes: the colour band and how many rounds stand on the lid
+const AMMO_LOOK: Record<string, [number, number]> = { light: [INK_IDS.BLUE, 4], medium: [INK_IDS.GREEN, 3], heavy: [INK_IDS.RED, 2], shells: [INK_IDS.ORANGE, 3], rockets: [INK_IDS.PURPLE, 1] };
 export function buildItem(what: string, ink: InkRenderer): THREE.Group {
   const g = new THREE.Group();
   const blue = ink.material(INK_IDS.BLUE), dark = ink.material(INK_IDS.GRAPHITE), red = ink.material(INK_IDS.RED), paper = ink.material(INK_IDS.PAPER), orange = ink.material(INK_IDS.ORANGE), green = ink.material(INK_IDS.GREEN);
-  if (what === 'mini' || what === 'big') {
+  if (what in AMMO_LOOK) { // an ammo box: a paper crate with its colour band, rounds standing on the lid
+    const [band, n] = AMMO_LOOK[what], c = ink.material(band);
+    g.add(box(0.46, 0.22, 0.3, paper, 0, 0.11, 0), box(0.47, 0.07, 0.31, c, 0, 0.12, 0), box(0.47, 0.02, 0.31, dark, 0, 0.225, 0));
+    for (let k = 0; k < n; k++) g.add(tube(0.035, 0.14, c, -0.12 + (k * 0.24) / Math.max(1, n - 1), 0.31, 0).rotateX(Math.PI / 2));
+  } else if (what === 'mini' || what === 'big') {
     const s = what === 'big' ? 1.3 : 0.9;
     const bottle = new THREE.Mesh(new THREE.SphereGeometry(0.16 * s, 10, 8), blue); bottle.position.y = 0.16 * s;
     g.add(bottle, tube(0.05 * s, 0.14 * s, paper, 0, 0.33 * s, 0).rotateX(Math.PI / 2), box(0.08 * s, 0.05 * s, 0.08 * s, dark, 0, 0.42 * s, 0));

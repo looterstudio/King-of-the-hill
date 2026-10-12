@@ -1,6 +1,6 @@
 // One line on everything you can carry: what it does and how to use it. The hotbar, the inventory,
 // the item wheel and the "picked up" toasts all read from here.
-import { C4, ITEMS, MOLOTOV, PERKS, UPGRADE, WEAPONS, type ItemId, type PerkId, type WeaponId } from '../../shared/src/constants.ts';
+import { C4, ITEMS, MOLOTOV, PERKS, UPGRADE, WEAPONS, type ItemId, type PerkId, type WeaponId, AMMO, type AmmoId } from '../../shared/src/constants.ts';
 
 export interface Doc { name: string; what: string; how: string }
 
@@ -42,4 +42,7 @@ export const PERK_DOCS: Record<PerkId, Doc> = {
 };
 
 export const AXE_DOC: Doc = { name: 'Diamond Pickaxe', what: 'Breaks walls, cars and people. Every block gives ▦ material.', how: 'X · left click break · right click or B build' };
+// ammo: which guns take it
+const AMMO_FOR: Record<AmmoId, string> = { light: 'Pistol, SMG and Minigun', medium: 'Assault Rifle, Burst Rifle and SCAR', heavy: 'Hunting Rifle and Heavy Sniper', shells: 'the shotguns', rockets: 'the launchers' };
+export const ammoDoc = (a: AmmoId): Doc => ({ name: AMMO[a].name, what: `Reloads for ${AMMO_FOR[a]}. You carry up to ${AMMO[a].max}.`, how: 'Walk over it · R reloads' });
 export const MATS_DOC: Doc = { name: 'Material ▦', what: 'Building blocks. Break things with the pickaxe for more.', how: 'Pickaxe out, right click to place a block' };

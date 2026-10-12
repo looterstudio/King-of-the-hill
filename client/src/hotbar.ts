@@ -12,7 +12,7 @@ export function hotbarHTML(me: SnapSelf): string {
   me.slots.forEach((s, i) => {
     if (!s) { guns.push(`<div class="hb-slot empty"><kbd>${i + 1}</kbd><span class="hb-name">empty</span></div>`); return; }
     const d = WEAPONS[s], on = i === me.cur && !me.axe, ups = me.ups?.[i] ?? 0;
-    const ammo = d.melee ? '∞' : `${me.mags[i]}<small>/${d.mag}</small>`;
+    const ammo = d.melee ? '∞' : `${me.mags[i]}<small>/${d.ammo ? me.ammo?.[d.ammo] ?? 0 : d.mag}</small>`; // in the magazine / left to reload with
     guns.push(slot(String(i + 1), `${on ? 'on' : ''} ${!d.melee && me.mags[i] === 0 ? 'dry' : ''} r-${d.rarity}`, RARITY_CSS[d.rarity], `ico-gun-${s}`, d.name, ups ? `<b class="hb-stars">${'★'.repeat(ups)}</b>` : '', ammo));
   });
   const item = (key: string, n: number, what: string, name: string, color = '') =>

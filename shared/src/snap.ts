@@ -9,7 +9,7 @@ const r2 = (v: number) => Math.round(v * 100) / 100;
 const r1 = (v: number) => Math.round(v * 10) / 10;
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const LOOT_R = 60, CASE_R = 120;
-const KIND = { weapon: 0, item: 1, perk: 2 } as const;
+const KIND = { weapon: 0, item: 1, perk: 2, ammo: 3 } as const;
 
 export interface Frame {
   tick: number; time: number; alive: number; ring: SnapRing; others: Map<number, SnapOther>; shots: number[][];
@@ -76,7 +76,7 @@ function selfOf(p: PlayerState, sim: Sim): SnapSelf {
     dashReady: p.dashReady, hook: p.hook, gx: p.gx, gy: p.gy, gz: p.gz, hookCd: p.hookCd, launchT: p.launchT,
     mantleT: r2(p.mantleT), mantleX: p.mantleX, mantleY: p.mantleY, mantleZ: p.mantleZ, bus: p.bus, fall: p.fall,
     yaw: p.yaw, pitch: p.pitch, hp: Math.max(0, Math.ceil(p.hp)), shield: Math.ceil(p.shield), alive: p.alive,
-    slots: [...p.slots], mags: [...p.mags], cur: p.cur, ups: [...p.ups], items: { ...p.items }, perk: p.perk ? { ...p.perk } : null,
+    slots: [...p.slots], mags: [...p.mags], cur: p.cur, ups: [...p.ups], ammo: { ...p.ammo }, items: { ...p.items }, perk: p.perk ? { ...p.perk } : null,
     use: p.use ? { item: p.use.item, t: r2(p.use.t) } : null, reloadT: r2(p.reloadT), spin: r2(p.spin), ack: p.ack, kills: p.kills,
   };
 }

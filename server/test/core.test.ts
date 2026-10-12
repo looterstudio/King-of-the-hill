@@ -108,8 +108,8 @@ test('lag compensation: a shot lands where the shooter saw the target', () => {
 test('the storm eventually kills anyone outside it', () => {
   const sim = arena([1]);
   const p = sim.players.get(1)!;
-  for (let i = 0; i < TICK_HZ * 500 && p.alive; i++) {
-    const g = sim.ring, a = Math.atan2(-g.y, -g.x), r = Math.min(155, g.r + 20);
+  for (let i = 0; i < TICK_HZ * 1100 && p.alive; i++) {
+    const g = sim.ring, a = Math.atan2(-g.y, -g.x), r = g.r + 20; // always just outside it
     p.x = g.x + Math.cos(a) * r; p.z = g.y + Math.sin(a) * r;
     sim.step(DT, new Map());
   }
@@ -122,20 +122,20 @@ test('the storm hurries as the field thins out', () => {
   const lastCircle = (left: number) => {
     const sim = arena(Array.from({ length: 20 }, (_, i) => i + 1));
     for (let id = left + 1; id <= 20; id++) sim.players.get(id)!.alive = false;
-    while (sim.ring.phase < RING_PHASES.length - 2 && sim.t < 600) { for (const p of sim.players.values()) p.hp = PLAYER_HP; sim.step(DT, new Map()); } // nobody dies of the storm here
+    while (sim.ring.phase < RING_PHASES.length - 2 && sim.t < 1500) { for (const p of sim.players.values()) p.hp = PLAYER_HP; sim.step(DT, new Map()); } // nobody dies of the storm here
     return sim.t;
   };
   const full = lastCircle(20), few = lastCircle(2);
   const plan = RING_PHASES.slice(0, -2).reduce((s, p) => s + p.wait + p.shrink, 0);
   assert.ok(Math.abs(full - plan) < 0.5, `a full field keeps the schedule (${full.toFixed(1)} s, planned ${plan} s)`);
-  assert.ok(few < full * 0.4, `2 of 20 left: ${few.toFixed(1)} s against ${full.toFixed(1)} s`);
+  assert.ok(few < full * 0.85, `2 of 20 left: ${few.toFixed(1)} s against ${full.toFixed(1)} s`);
 });
 
 test('each storm circle sits inside the previous one', () => {
   for (let seed = 1; seed < 20; seed++) {
     const sim = new Sim(seed, World.custom([]));
     let prevR = sim.ring.r;
-    for (let i = 0; i < TICK_HZ * 480; i++) {
+    for (let i = 0; i < TICK_HZ * 1100; i++) {
       sim.step(DT, new Map());
       const g = sim.ring;
       assert.ok(Math.hypot(g.nx - g.x, g.ny - g.y) + g.nr <= g.r + 1e-6, `seed ${seed} next circle escapes`);
@@ -342,8 +342,9 @@ test('the fallen drop everything they carried', () => {
   b.items.mini = 3; b.perk = { kind: 'smoke', n: 2 }; b.slots = ['scar', 'pump', 'pistol', null];
   const before = sim.loot.length;
   sim.eliminate(b.id, a.id, 'shot', []);
-  const dropped = sim.loot.slice(before).map((l) => l.what).sort();
-  assert.deepEqual(dropped, ['mini', 'pump', 'scar', 'smoke']);
+  const dropped = sim.loot.slice(before);
+  assert.deepEqual(dropped.filter((l) => l.kind !== 'ammo').map((l) => l.what).sort(), ['mini', 'pistol', 'pump', 'scar', 'smoke']);
+  assert.deepEqual(dropped.filter((l) => l.kind === 'ammo').map((l) => l.what).sort(), ['heavy', 'light', 'medium', 'rockets', 'shells'], 'and all their ammo');
 });
 
 test('movement kit: double jump, air dash, slide, wall jump, grapple', () => {
@@ -553,7 +554,7 @@ test('teams: no friendly fire, grenades spare teammates, the last team standing 
   const sim = m.sim, [a, b, c] = [1, 2, 3].map((id) => sim.players.get(id)!);
   for (const p of sim.players.values()) { p.gliding = false; p.bus = 0; p.y = 0; p.grounded = true; }
   a.x = 0; a.z = 0; b.x = 0; b.z = -6; c.x = 0; c.z = -12;
-  a.slots[0] = 'scar'; a.mags[0] = 30; a.fireCd = 0;
+  a.slots[0] = 'scar'; a.mags[0] = 30; a.fireCd = 0; a.axe = false; // (a match starts with the pickaxe in hand)
   const ev = sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.05, fire: true })]]));
   assert.ok(!ev.some((e) => e.kind === 'hit' && e.victim === 2), 'teammate in the line of fire takes nothing');
   assert.ok(ev.some((e) => e.kind === 'hit' && e.victim === 3), 'the bullet goes through to the enemy behind');

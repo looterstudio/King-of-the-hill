@@ -1,10 +1,11 @@
 // The offline demo's bots: a pure function of the bot's memory and the simulation (no DOM), so the
 // same brain runs in the browser and in headless tests (server/test/bots.test.ts); the server fills its rooms with them too.
-import { AXE, BUILD, EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
+import { AMMO, BUS, type AmmoId, AXE, BUILD, EYE_H, HEAD_Y, INTERACT_R, ITEMS, KNOCK, PERKS, PLAYER_HP, SHIELD_MAX, SLOTS, TICK_HZ, UPGRADE, WEAPONS, isAir, type ItemId, type PerkId, type WeaponId } from './constants.ts';
 import { emptyInput, pelletFall, type Case, type Input, type Loot, type PlayerState, type Sim } from './sim.ts';
 import { rayBox, type World } from './world.ts';
 
 const DT = 1 / TICK_HZ;
+const DROP_REACH = 240; // how far to the side of the plane's line a bot glides to its spot
 interface Pt { x: number; z: number }
 interface Waypoint { x: number; z: number; hop: number; drop: boolean }
 interface Plan { gx: number; gz: number; y: number; at: number; pts: Waypoint[]; i: number; noWay: boolean } // noWay: can't get any closer than here
@@ -22,7 +23,8 @@ export const BOT_NAMES = ['degen', 'wagmi', 'ser_pump', 'rugless', 'bonkbro', 'p
 export interface Bot {
   id: number; rand: () => number; skill: number; strafe: number; aimErr: number; reaction: number;
   target: number | null; los: boolean; vis: number; losT: number; seenT: number; acqT: number; // target visible at the last check (2 head, 1 chest), last seen, first seen
-  wp: Pt; wpT: number; carId: number; carT: number; seq: number; dropX: number; dropZ: number; landed: boolean; mode: string; dest: Pt;
+  wp: Pt; wpT: number; carId: number; carT: number; seq: number; dropX: number; dropZ: number; landed: boolean; landT: number; mode: string; dest: Pt;
+  peace: Map<number, number>; // other bots we decided to leave alone, until when
   plan: Plan | null; navT: number; direct: boolean; forcePlan: number; groundY: number; jumpT: number; jumps: number;
   goal: { ref: Loot | Case | Bench; kind: 'case' | 'loot' | 'bench'; t0: number; arrived: number } | null; scanT: number; skip: Map<number, number>;
   prog: { x: number; z: number; t: number }; gp: { x: number; z: number; best: number; t: number } | null; escape: { yaw: number; until: number } | null; blockT: number;
@@ -34,23 +36,52 @@ export interface Bot {
   chop: { yaw: number; until: number } | null; chopT: number; benches: Set<number>; // gathering material with the axe; benches used
 }
 
+// which players in a match are bots: between bots fights start rarely early on and more as the storm closes
+// (99 bots fighting everything they saw ended a match in four minutes); against people a bot always fights
+const BOTS = new WeakMap<Sim, Set<number>>();
+export function markBots(sim: Sim, ids: Iterable<number>) { const s = BOTS.get(sim) ?? new Set<number>(); for (const id of ids) s.add(id); BOTS.set(sim, s); }
+const BOT_AGGRO = [0.05, 0.1, 0.2, 0.35, 0.6];
+
 export function newBot(id: number, rand: () => number): Bot {
   // normal players, not aimbots: the best of them plays like a decent human
   const skill = 0.25 + rand() * 0.45, strafe = rand() < 0.5 ? 1 : -1, dropX = (rand() - 0.5) * 640, dropZ = (rand() - 0.5) * 640;
   return {
     id, rand, skill, strafe, aimErr: 0, reaction: 0, target: null, los: false, vis: 0, losT: (id % 10) * 0.04, seenT: -99, acqT: 0,
-    wp: { x: dropX, z: dropZ }, wpT: 0, carId: 0, carT: 0, seq: 0, dropX, dropZ, landed: false, mode: 'glide', dest: { x: dropX, z: dropZ },
+    wp: { x: dropX, z: dropZ }, wpT: 0, carId: 0, carT: 0, seq: 0, dropX, dropZ, landed: false, landT: 0, mode: 'glide', dest: { x: dropX, z: dropZ },
     plan: null, navT: 0, direct: true, forcePlan: 0, groundY: 0, jumpT: -9, jumps: 0,
     goal: null, scanT: (id % 20) * 0.03, skip: new Map(), prog: { x: 0, z: 0, t: 0 }, gp: null, escape: null, blockT: 0,
     life: 500, hitT: -99, slotT: -99, rot: false, car: null,
-    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(),
+    seen: null, engT: -99, cover: null, job: null, jobT: -99, perch: null, chop: null, chopT: 0, benches: new Set(), peace: new Map(),
   };
 }
 
 // a team glides to the same spot
-export function teamDrops(bots: Bot[], teams: Map<number, number>, rand: () => number) {
+// line: the paper plane's flight, when the match starts on it: the spots are spread over what you can glide to
+export function teamDrops(bots: Bot[], teams: Map<number, number>, rand: () => number, line?: { x: number; z: number; dx: number; dz: number } | null) {
   const spot = new Map<number, { x: number; z: number }>();
-  for (const b of bots) { const t = teams.get(b.id)!; const at = spot.get(t) ?? { x: b.dropX, z: b.dropZ }; spot.set(t, at); b.dropX = at.x + (rand() - 0.5) * 8; b.dropZ = at.z + (rand() - 0.5) * 8; }
+  // each team's spot is the best of a few random picks: the farthest from the spots already taken, so the
+  // island fills evenly (uniform picks put three or four people within 40 m of each other, and every match
+  // opened with a pistol massacre at the drop)
+  const taken: { x: number; z: number }[] = [];
+  const pick = (b: Bot) => {
+    let best = { x: b.dropX, z: b.dropZ }, far = -1;
+    for (let k = 0; k < 12; k++) {
+      const c = k === 0 && !line ? best : line ? strip(line, rand) : { x: (rand() - 0.5) * 660, z: (rand() - 0.5) * 660 };
+      let d = Infinity; for (const o of taken) d = Math.min(d, Math.hypot(o.x - c.x, o.z - c.z));
+      if (d > far) { far = d; best = c; }
+    }
+    taken.push(best); return best;
+  };
+  for (const b of bots) { const t = teams.get(b.id)!; const at = spot.get(t) ?? pick(b); spot.set(t, at); b.dropX = at.x + (rand() - 0.5) * 8; b.dropZ = at.z + (rand() - 0.5) * 8; }
+}
+
+// a random spot within gliding reach of the plane's line, on the island
+function strip(l: { x: number; z: number; dx: number; dz: number }, rand: () => number) {
+  for (let k = 0; k < 20; k++) {
+    const s = 60 + rand() * (BUS.len - 120), side = (rand() - 0.5) * 2 * DROP_REACH, x = l.x + l.dx * s - l.dz * side, z = l.z + l.dz * s + l.dx * side;
+    if (Math.abs(x) < 330 && Math.abs(z) < 330) return { x, z };
+  }
+  return { x: (rand() - 0.5) * 300, z: (rand() - 0.5) * 300 };
 }
 
 const yawTo = (p: Pt, x: number, z: number) => Math.atan2(-(x - p.x), -(z - p.z));
@@ -298,11 +329,11 @@ export function botInput(b: Bot, sim: Sim): Input {
   // view: the tick we're looking at. A bot sees the world as it is; 0 meant the oldest lag-compensated
   // positions (300 ms back), so every bullet was tested against where its target used to be
   const inp: Input = { ...emptyInput(), seq: ++b.seq, yaw: self.yaw, pitch: self.pitch, view: sim.tick };
-  // aboard the paper plane: pull our drop spot within gliding reach of the flight line (150 m to the side
+  // aboard the paper plane: pull our drop spot within gliding reach of the flight line (DROP_REACH to the side
   // at most), and jump when the plane is level with it (a little before: we glide on forward)
   if (self.bus && sim.bus) {
     const B = sim.bus, at = { s: (self.x - B.x) * B.dx + (self.z - B.z) * B.dz }, rx = b.dropX - B.x, rz = b.dropZ - B.z;
-    const along = rx * B.dx + rz * B.dz, side = -rx * B.dz + rz * B.dx, reach = 150;
+    const along = rx * B.dx + rz * B.dz, side = -rx * B.dz + rz * B.dx, reach = DROP_REACH;
     if (Math.abs(side) > reach) {
       const k = side - Math.sign(side) * reach;
       b.dropX += B.dz * k; b.dropZ -= B.dx * k; b.wp = { x: b.dropX, z: b.dropZ }; b.dest = { x: b.dropX, z: b.dropZ };
@@ -338,6 +369,7 @@ export function botInput(b: Bot, sim: Sim): Input {
   const sr = g.nr * 0.5, safe = dNext > sr ? { x: g.nx + ((self.x - g.nx) / dNext) * sr, z: g.ny + ((self.z - g.ny) / dNext) * sr } : { x: g.nx, z: g.ny };
 
   if (self.gliding) { b.job = null; b.perch = null; glide(b, sim, self, inp, rotate ? safe : null); return turn(self, inp, 4, false); }
+  if (!b.landed) b.landT = t;
   b.landed = true;
   if (self.ride) { b.job = null; b.chop = null; drive(b, sim, self, inp, safe); return inp; }
   b.car = null;
@@ -365,7 +397,7 @@ export function botInput(b: Bot, sim: Sim): Input {
     // the few nearest enemies: shoot the nearest one we can see (standing first), else keep track of the
     // nearest; stay on the one we're shooting unless another is much closer
     // (at the end of a match the nearest anywhere, to go and find: two bots must not wait out the storm apart)
-    const near: { q: PlayerState; d: number }[] = [];
+    const near: { q: PlayerState; d: number }[] = [], bots = BOTS.get(sim);
     let far: { q: PlayerState; d: number } | null = null;
     for (const q of sim.players.values()) {
       if (!q.alive || q.team === self.team || q.gliding) continue; // gliders can't shoot back
@@ -375,6 +407,24 @@ export function botInput(b: Bot, sim: Sim): Input {
     }
     if (!near.length && far) near.push(far);
     near.sort((a, c) => a.d - c.d);
+    // who we'd take on (or keep tracking): someone new is only noticed in front of us (a person's field of
+    // view), close enough to hear, or once we're shot at (a bot saw all round, so every bot met at a loot
+    // spot started a fight); another bot is a fight or not, decided once in a while
+    const hit = t - b.hitT < 2 ? self.hitBy : undefined;
+    for (let i = near.length - 1; i >= 0; i--) {
+      const q = near[i].q;
+      if (q.id === hit) { b.peace.set(q.id, -1); continue; } // whoever shot us: always
+      if (q === tgt && b.los) continue;
+      if (bots?.has(q.id)) {
+        const until = b.peace.get(q.id);
+        if (until !== undefined && t < until) { near.splice(i, 1); continue; }
+        if (until === undefined || t >= until) {
+          if (R() >= (BOT_AGGRO[g.phase] ?? 1)) { b.peace.set(q.id, t + 30); near.splice(i, 1); continue; }
+          b.peace.set(q.id, -1); // a fight: stays one until it's over
+        }
+      }
+      if (near[i].d > 4 && Math.abs(angDiff(yawTo(self, q.x, q.z), self.yaw)) > 1.2 && q !== tgt) near.splice(i, 1);
+    }
     let pick: PlayerState | null = null, vis = 0, knocked: PlayerState | null = null, kv = 0;
     const keep = tgt && b.los ? sight(w, self, tgt) : 0, kd = keep && tgt ? Math.hypot(tgt.x - self.x, tgt.z - self.z) : Infinity;
     for (let i = 0; i < Math.min(3, near.length); i++) {
@@ -400,8 +450,13 @@ export function botInput(b: Bot, sim: Sim): Input {
   // would rather loot than trade shots across a field), or shooting at us
   let reach = 0;
   self.slots.forEach((x) => { if (x) reach = Math.max(reach, WEAPONS[x].melee ? 6 : x === 'pistol' ? 25 : WEAPONS[x].pellets > 1 ? 22 : WEAPONS[x].range < 70 ? 40 : WEAPONS[x].zoom >= 2.4 ? 110 : 65); });
-  if (g.phase === 0) reach = Math.min(reach, 40);
-  const fighting = !!(tgt && b.los && (td < reach || t - b.hitT < 3 || (td < reach * 1.6 && t - b.seenT < 0.5 && b.mode === 'fight')));
+  // early on people loot more than they fight: only the close ones (or whoever shoots at us) until the storm starts to bite
+  reach = Math.min(reach, [8, 25, 40][g.phase] ?? Infinity);
+  // something to fight with: a melee gun, or one with rounds in it or to reload with (landing with only the pickaxe, we loot first)
+  const armed = self.slots.some((x, i) => !!x && (!!WEAPONS[x].melee || self.mags[i] > 0 || !WEAPONS[x].ammo || self.ammo[WEAPONS[x].ammo!] > 0));
+  // just landed: a while of looting first, like people do (unless someone starts it)
+  const settling = g.phase === 0 && t - b.landT < 30 + (1 - b.skill) * 30 && t - b.hitT > 3;
+  const fighting = !!(tgt && b.los && armed && !settling && (td < reach || t - b.hitT < 3 || (td < reach * 1.6 && t - b.seenT < 0.5 && b.mode === 'fight')));
   if (fighting) b.engT = t;
   const alert = t - b.seenT < 2 || t - b.hitT < 2;
   const gun = self.slots[self.cur];
@@ -792,14 +847,15 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   const R = b.rand, t = sim.t;
   // the gun for the range: switch when another is clearly better (not back and forth), or the mag ran dry
   const air = isAir(tgt.ride) && !tgt.seat;
-  const vals = self.slots.map((x, i) => (x ? gunValue(x, self.ups[i], self.mags[i], d, b.skill, air) : -1));
+  // a gun that's empty with nothing to reload it is worth nothing
+  const vals = self.slots.map((x, i) => (!x ? -1 : self.mags[i] === 0 && WEAPONS[x].ammo && self.ammo[WEAPONS[x].ammo!] === 0 ? 0 : gunValue(x, self.ups[i], self.mags[i], d, b.skill, air)));
   let best = self.cur;
   vals.forEach((v, i) => { if (v > vals[best]) best = i; });
   const cur = self.slots[self.cur], empty = !!cur && self.mags[self.cur] === 0;
   const reloading = self.reloadT > 0 && self.reloadT < 0.9;
   if (best !== self.cur && vals[best] > 0 && !reloading && ((empty && self.mags[best] > 0) || (vals[best] > vals[self.cur] * 1.35 + 2 && t - b.slotT > 1.5))) { inp.slot = best + 1; b.slotT = t; }
   else if (empty && self.reloadT === 0) inp.reload = true;
-  if (b.reaction <= 0) { b.aimErr = (R() - 0.5) * (0.025 + (1 - b.skill) * 0.1); b.reaction = 0.3 + R() * 0.4; if (R() < 0.15) b.strafe *= -1; }
+  if (b.reaction <= 0) { b.aimErr = (R() - 0.5) * (0.06 + (1 - b.skill) * 0.16); b.reaction = 0.3 + R() * 0.4; if (R() < 0.15) b.strafe *= -1; }
   b.reaction -= DT;
   const def = cur ? WEAPONS[cur] : null;
   // aim where the target was a moment ago (reaction: 0.12 s for the best, 0.26 s for the worst); rockets lead
@@ -890,6 +946,7 @@ function pickLoot(b: Bot, sim: Sim, self: PlayerState, ok: (x: number, z: number
     let useful = false;
     if (l.kind === 'weapon') { const x = l.what as WeaponId; useful = !self.slots.includes(x) && (!full || worth(x, l.up ?? 0, b.skill) > wv * 1.15 + 3); }
     else if (l.kind === 'item') useful = self.items[l.what as ItemId] < ITEMS[l.what as ItemId].max;
+    else if (l.kind === 'ammo') { const a = l.what as AmmoId; useful = self.ammo[a] < AMMO[a].max && (self.ammo[a] < AMMO[a].box * 3 || self.slots.some((x) => !!x && WEAPONS[x].ammo === a)); } // what our guns take, and a little of anything
     else useful = !self.perk || (self.perk.kind === l.what && self.perk.n < PERKS[l.what as PerkId].count * 2);
     if (useful) { bd = d; best = l; kind = 'loot'; }
   }

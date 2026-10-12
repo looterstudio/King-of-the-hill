@@ -4,7 +4,7 @@
 // grenades, smoke, pads, forts and incoming nukes. You play in third person by default (the camera
 // over your right shoulder, aiming down its ray: aimFrom), or first person (P).
 import * as THREE from 'three';
-import { AXE, BUILD, BURST_GAP, BUS, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TANK, TANK_MG, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
+import { AMMO, type AmmoId, AXE, BUILD, BURST_GAP, BUS, covered, isAir, EYE_H, GUIDED, KNOCK, MATERIAL, MISSILE, SPELL, PLAYER_HP, ROCKET, SKINS, WRECK_BUDGET, INTERACT_R, ITEMS, MAP_HALF, NUKE, PERKS, TANK, TANK_MG, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, WEAPON_IDS, type Rarity, type WeaponId } from '../../shared/src/constants.ts';
 import { OTHER_ALIVE, OTHER_AXE, OTHER_BUS, OTHER_DOWN, OTHER_FALL, OTHER_GLIDE, OTHER_HOOK, OTHER_RIDE, OTHER_SLIDE, OTHER_UPS, type SnapVehicle, type RoomSeat, type ServerMsg, type SnapCase, type SnapLoot, type SnapOther, type SnapSelf } from '../../shared/src/protocol.ts';
 import { aimFrom, moveStep, spreadFor, TP, type Input } from '../../shared/src/sim.ts';
 import { World, type Body, type Box } from '../../shared/src/world.ts';
@@ -24,8 +24,8 @@ const copyBody = (from: Body, to: Body) => { for (const k of BODY_KEYS) (to as u
 export const RARITY_INK: Record<Rarity, number> = { common: INK_IDS.GRAPHITE, uncommon: INK_IDS.GREEN, rare: INK_IDS.BLUE, epic: INK_IDS.PURPLE, legendary: INK_IDS.ORANGE };
 export const RARITY_CSS: Record<Rarity, string> = { common: '#6b7080', uncommon: '#2a8a4a', rare: '#1d33b8', epic: '#7b3fb0', legendary: '#e8a317' };
 const RARITY_RGB: Record<Rarity, [number, number, number]> = { common: [0.45, 0.47, 0.52], uncommon: [0.16, 0.6, 0.3], rare: [0.11, 0.25, 0.85], epic: [0.48, 0.25, 0.69], legendary: [0.95, 0.65, 0.08] };
-export const lootRarity = (kind: number, what: string): Rarity => kind === 0 ? WEAPONS[what as WeaponId].rarity : kind === 1 ? ITEMS[what as keyof typeof ITEMS].rarity : PERKS[what as keyof typeof PERKS].rarity;
-export const lootName = (kind: number, what: string): string => kind === 0 ? WEAPONS[what as WeaponId].name : kind === 1 ? ITEMS[what as keyof typeof ITEMS].name : PERKS[what as keyof typeof PERKS].name;
+export const lootRarity = (kind: number, what: string): Rarity => kind === 3 ? 'common' : kind === 0 ? WEAPONS[what as WeaponId].rarity : kind === 1 ? ITEMS[what as keyof typeof ITEMS].rarity : PERKS[what as keyof typeof PERKS].rarity;
+export const lootName = (kind: number, what: string): string => kind === 3 ? AMMO[what as AmmoId].name : kind === 0 ? WEAPONS[what as WeaponId].name : kind === 1 ? ITEMS[what as keyof typeof ITEMS].name : PERKS[what as keyof typeof PERKS].name;
 
 interface Tracer { start: THREE.Vector3; end: THREE.Vector3; life: number; mine: boolean }
 interface LootView { g: THREE.Group; d: SnapLoot; phase: number }
