@@ -1,4 +1,4 @@
-import type { ItemId, Mode, PerkId, WeaponId } from './constants.ts';
+import type { AmmoId, ItemId, Mode, PerkId, WeaponId } from './constants.ts';
 import type { Input } from './sim.ts';
 import type { Body, Box } from './world.ts';
 
@@ -52,7 +52,7 @@ export interface SettledView {
 // your own player, in full: the client replays unacknowledged inputs from this exact state
 export interface SnapSelf extends Body {
   yaw: number; pitch: number; hp: number; shield: number; alive: boolean;
-  slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[];
+  slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[]; ammo: Record<AmmoId, number>;
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; spin: number; ack: number; kills: number; vhp: number; rideV: number; // vhp: your vehicle's health, 0 on foot
@@ -66,6 +66,7 @@ export type SnapOther = number[];
 export const OTHER_ALIVE = 1, OTHER_SLIDE = 2, OTHER_HOOK = 4, OTHER_GLIDE = 8, OTHER_HEAL = 16, OTHER_RIDE = 32, OTHER_DOWN = 64, OTHER_AXE = 128;
 export const OTHER_UPS = 8; // flags >> OTHER_UPS & 3: the upgrade stars on the gun in hand
 export const OTHER_BUS = 1024; // still aboard the paper plane (drawn as the plane, not as a person)
+export const OTHER_FALL = 2048; // free falling out of it, glider shut (OTHER_GLIDE is set too)
 // vehicles: [id, kind (0 car, 1 heli, 2 plane), x, y, z, heading, pitch, hp %, driver id or 0, passengers]
 // [id, kind, x, y, z, heading, pitch, hp %, driver id (0: none), passengers, ...passenger ids by seat]
 export type SnapVehicle = number[];
@@ -82,6 +83,17 @@ export interface SnapRing { x: number; y: number; r: number; nx: number; ny: num
 export interface RoomSeat { id: number; num: string; name: string; verified: boolean; team: number; skin?: number; bot?: boolean }
 // rooms filling or playing right now, for the lobby's room list
 export interface LobbyRoom { id: string; mode: Mode; n: number; state: RoomPhase; startsIn: number | null }
+
+// the party pre-lobby: friends gather in one party (2 slots for duos, 4 for squads), each picks a
+// character and ticks ready, and the leader queues the whole party into one room, on one team.
+// away: the socket dropped, the slot is held for a reconnect; busy: in a room right now
+export interface PartyMember { id: number; name: string; num: string; skin: number; ready: boolean; away?: boolean; busy?: boolean; bot?: boolean }
+export interface PartyView {
+  code: string; mode: Mode; size: number; leader: number; you: number;
+  members: PartyMember[];
+  state: 'idle' | 'queued' | 'playing'; // queued: finding a room or waiting in one; playing: a match is live
+}
+export type PartyOp = 'create' | 'join' | 'leave' | 'ready' | 'mode' | 'skin' | 'play' | 'kick';
 
 export type ServerMsg =
   | { t: 'hello'; nonce: string; requireWallet: boolean; allowGuests: boolean; holdMinUsd: number }
@@ -111,7 +123,9 @@ export type ServerMsg =
   | { t: 'event'; kind: 'unbuild'; id: number }
   | { t: 'event'; kind: 'nuke'; x: number; z: number; by: number; at: number }
   | { t: 'event'; kind: 'open'; caseId: number; by: number; golden: boolean }
+  | { t: 'party'; party: PartyView | null; token?: string; msg?: string } // token: reclaims your slot after a reconnect; msg: why you are out (or not in)
   | { t: 'rtc'; from: number; data: unknown } // squad voice: WebRTC signalling relayed from a teammate
+  | { t: 'mark'; from: number; at: [number, number] | null } // a teammate's landing marker on the map (null: taken off)
   | { t: 'result'; winner: number | null; winners: number[]; points: Record<number, number>; awarded: boolean; epoch: number }; // points: what each player scored
 
 export type RoomPhase = 'waiting' | 'countdown' | 'live' | 'over';
@@ -122,8 +136,10 @@ export type ClientMsg =
   | { t: 'queue'; mode?: Mode; party?: string; room?: string; skin?: number }   // party: friends typing the same code drop on one team
   | { t: 'spec'; dir?: 1 | -1; target?: number; at?: [number, number] | null } // dead: switch who you watch, or fly a free camera
   | { t: 'leave' }
+  | { t: 'party'; op: PartyOp; code?: string; token?: string; mode?: Mode; skin?: number; ready?: boolean; id?: number }
   | { t: 'me' }                               // ask for your profile again
   | { t: 'rtc'; to: number; data: unknown }   // squad voice signalling, only ever relayed to a teammate in your match
+  | { t: 'mark'; at: [number, number] | null } // where you want to land (the map), shown to your teammates only
   | ({ t: 'in' } & Input);
 
 export const loginMessage = (nonce: string) => `Pot Royale login\nnonce: ${nonce}`;

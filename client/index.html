@@ -11,6 +11,9 @@
 <body>
 <canvas id="arena"></canvas>
 
+<!-- ============ LANDING (client/src/landing.ts) ============ -->
+<section id="landing" class="screen" aria-label="King of the Hill Royale"></section>
+
 <!-- ============ LOBBY ============ -->
 <section id="lobby" class="screen paper">
   <div class="doodles" aria-hidden="true">
@@ -107,10 +110,11 @@
         <div class="skins"><div class="skins-label">your character <small>looks only</small></div><div id="skinList" class="skin-list"></div></div>
         <div id="partyRow" class="party hidden">
           <div class="party-line">
-            <input id="party" maxlength="8" placeholder="party code" autocomplete="off" aria-label="party code" />
-            <button id="partyNew" class="btn ghost small" type="button">new code</button>
+            <button id="partyCreate" class="btn ink small" type="button">Create party</button>
+            <input id="party" maxlength="8" placeholder="friend's code" autocomplete="off" aria-label="party code" />
+            <button id="partyJoin" class="btn ghost small" type="button">Join</button>
           </div>
-          <p class="party-hint">Friends who type the same code drop on your team. Empty spots get filled.</p>
+          <p class="party-hint">Create a party and send the link, or join a friend's. Empty spots get filled.</p>
         </div>
 
         <div class="who">
@@ -155,7 +159,7 @@
       <article class="wall-card red"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M8 44 V18 H20 V44 M24 44 V8 H36 V30 L40 26 L44 34 L42 44 M48 44 L52 36 L56 44 M14 14 L18 6 M30 4 L32 0"/></svg><h4>Everything breaks</h4><p>Rockets blow holes in walls, tank shells and C4 knock them down, a plane flown into a tower can bring the whole thing down. Your diamond pickaxe breaks anything for material; build with it, block by block.</p></article>
       <article class="wall-card blue"><span class="badge">80</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M24 46 V6 H36 V46 M30 6 V0 M24 14 H36 M24 22 H36 M24 30 H36 M24 38 H36"/></svg><h4>The Needle</h4><p>An 80-floor megatower. Ride the updraft in its core to the top, loot rare guns on every floor, jump out of a window and glide off.</p></article>
       <article class="wall-card green"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M4 30 H40 V20 H52 L56 30 V36 H4 Z M8 36 m0 0 a5 5 0 1 0 10 0 M42 36 a5 5 0 1 0 10 0 M28 20 H56"/></svg><h4>Tanks and motorbikes</h4><p>Tanks drive through walls and their cannon flattens houses. Motorbikes are the fastest thing on wheels, with room for a friend on the back.</p></article>
-      <article class="wall-card pink"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M10 40 H50 M18 40 L24 28 H36 L42 40 M30 28 V14 M24 20 H36"/></svg><h4>Knocked, not out</h4><p>250 health and 250 shield, fights that last. In duos and squads you get knocked first: crawl to cover and your team picks you up.</p></article>
+      <article class="wall-card pink"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M10 40 H50 M18 40 L24 28 H36 L42 40 M30 28 V14 M24 20 H36"/></svg><h4>Knocked, not out</h4><p>100 health and 100 shield, fights that are over fast. In duos and squads you get knocked first: crawl to cover and your team picks you up.</p></article>
       <article class="wall-card red"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M4 30 H60 V22 L48 19 L39 9 H21 L12 19 H4 Z"/></svg><h4>Cars, helis, planes</h4><p>67 vehicles on every island. Run people over, drive-by from the window, fly a helicopter with a nose gun or a fighter plane with bombs. Your squad rides with you.</p></article>
       <article class="wall-card orange"><span class="badge">NEW</span><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M6 20 H50 L58 16 L50 12 H6 Z M14 12 L10 4 M14 28 L10 36"/></svg><h4>Anti-air warfare</h4><p>Stinger missiles lock onto aircraft and chase them. Rocket launchers wreck cars. Planes crash in flames.</p></article>
       <article class="wall-card blue"><svg viewBox="0 0 60 46" aria-hidden="true"><path d="M6 18 H44 V24 H24 L20 32 H12 L14 24 H6 Z M44 20 H58"/></svg><h4>12 guns, 3 upgrade stars</h4><p>From pistol to the one-shot Heavy Sniper and the SCAR. Upgrade benches and kits add up to +66% damage.</p></article>
@@ -227,6 +231,7 @@
       <div id="seats" class="seats"></div>
       <div class="intro">
         <canvas id="mapPreview" width="340" height="340" aria-label="map of the island"></canvas>
+        <p id="previewNote" class="preview-note">The red line is the paper plane's flight. Click the map to mark where you want to land.</p>
         <ul class="tips">
           <li><b>Golden pencil cases</b> (★ on the map) hold the legendaries.</li>
           <li><b>The last circle</b> always closes on the King's Tower.</li>
@@ -262,6 +267,7 @@
   </div>
   <div id="crosshair" class="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="dot"></i></div>
   <div id="scope" class="scope hidden"></div>
+  <div id="sight" class="sight hidden"><i></i></div>
   <div id="hitmarker" class="hitmarker"><i></i><i></i></div>
   <div id="shieldbreak" class="shieldbreak"></div>
   <div id="elimPop" class="elim-pop" aria-live="polite"></div>
@@ -273,12 +279,13 @@
     <div class="hp-row"><span>HP</span><div class="bar hp"><div id="hpFill"></div></div><b id="hpNum">100</b></div>
     <div class="ammo-row"><b id="ammo">16</b><span id="ammoMax">/16</span><em id="reloading" class="hidden">reloading…</em></div>
     <div id="magTally" class="tally"></div>
-    <div id="items" class="items"></div>
   </div>
-  <div class="hud-br">
-    <ol id="weapons" class="weapons"></ol>
-    <div id="weapon" class="weapon">Pistol</div>
-  </div>
+  <div id="hotbar" class="hotbar"></div>
+  <div id="pickToasts" class="pick-toasts"></div>
+  <div id="inventory" class="inventory hidden"></div>
+  <div id="wheel" class="wheel hidden"></div>
+  <div id="announce" class="announce"></div>
+  <div id="armorLost" class="armor-lost"></div>
   <div id="prompt" class="prompt"></div>
   <div id="axeHint" class="axe-hint hidden"></div>
   <div id="ammoTip" class="ammo-tip"></div>
@@ -294,6 +301,7 @@
       <div><kbd>Shift</kbd>+<kbd>C</kbd><span>slide (sprint, then C)</span></div><div><kbd>Space</kbd><span>jump · double · wall jump</span></div>
       <div><kbd>1-4</kbd><span>guns</span></div><div><kbd>5</kbd> <kbd>6</kbd><span>shield · medkit</span></div>
       <div><kbd>G</kbd><span>perk / grenade</span></div><div><kbd>Q</kbd><span>grapple (hold)</span></div>
+      <div><kbd>Z</kbd><span>item wheel (hold)</span></div><div><kbd>Tab</kbd><span>inventory: what everything does</span></div>
       <div><kbd>P</kbd><span>third / first person</span></div><div><kbd>Space</kbd><span>at a ledge or window: climb over</span></div>
     </div>
     <p>Minigun: hold left click, it spins up first. The storm closes on the King's Tower. <small>H shows this again</small></p>
@@ -313,40 +321,15 @@
       <div id="vStats" class="v-stats"></div>
     </div>
   </div>
+  <div id="dropHud" class="drop-hud hidden" aria-live="polite"></div>
+  <canvas id="dropMap" class="drop-map hidden" width="560" height="560" aria-label="map with the plane's flight line: click to mark where you want to land"></canvas>
+  <div id="markTag" class="mark-tag hidden"></div>
   <div id="specBar" class="spec-bar hidden"></div>
   <div id="vehHud" class="veh-hud hidden"></div>
 </section>
 
-<section id="pause" class="pause hidden">
-  <div class="pause-card">
-    <h2 id="pauseTitle">Click to drop in</h2>
-    <p class="pause-sub">You glide down first. Steer with the mouse, land anywhere, then fight.</p>
-    <button id="resumeBtn" class="btn play">Play</button>
-    <div class="controls">
-      <div><h4>Mouse + keyboard</h4>
-        <p><kbd>WASD</kbd> move · <kbd>Mouse</kbd> look · <kbd>Shift</kbd> sprint</p>
-        <p><kbd>LMB</kbd> fire · <kbd>RMB</kbd> aim down sights</p>
-        <p><kbd>Space</kbd> jump · again in the air = double jump · on a wall = wall jump</p>
-        <p><kbd>C</kbd>/<kbd>Ctrl</kbd> while sprinting = slide · in the air = air dash</p>
-        <p><kbd>Q</kbd> hold to grapple and reel in</p>
-        <p><kbd>E</kbd>/<kbd>F</kbd> open pencil cases · pick up or swap guns · get in and out of cars, helicopters, planes</p>
-        <p><kbd>5</kbd> drink a shield · <kbd>6</kbd> use a medkit · <kbd>G</kbd> use your perk</p>
-        <p><kbd>R</kbd> reload: do it between fights; an empty gun reloads when you click · <kbd>1-4</kbd>/<kbd>wheel</kbd> switch weapon</p>
-        <p><kbd>X</kbd> diamond pickaxe · <kbd>left click</kbd> break walls, cars, people (every block gives ▦ material) · <kbd>right click</kbd> or <kbd>B</kbd> build a block where the blue cube is</p>
-        <p>Minigun: hold <kbd>LMB</kbd>, the barrels spin up for a moment, then it shreds · big drum, slow reload</p>
-        <p><kbd>H</kbd> controls card · training checklist on the left while you learn</p>
-        <p>Teammate knocked? Stand next to them and hold <kbd>E</kbd> for 5 s</p>
-        <p><kbd>V</kbd> hold to talk to your squad · <kbd>U</kbd> mute them · in a vehicle: <kbd>N</kbd> next radio station · <kbd>M</kbd> radio off</p>
-        <p>The Needle: step into the blue updraft in the core to fly up 80 floors; jump out of a window and your glider opens</p>
-        <p>Out? <kbd>LMB</kbd>/<kbd>RMB</kbd> switch who you watch · <kbd>F</kbd> free camera once your team is out</p>
-        <p><kbd>Esc</kbd> pause</p>
-      </div>
-    </div>
-    <label class="setting">look sensitivity <input id="sens" type="range" min="0.3" max="2.5" step="0.05" /> <b id="sensVal">100%</b></label>
-    <label class="setting"><input id="invert" type="checkbox" /> invert vertical look</label>
-    <button id="quitBtn" class="btn ghost">Leave match</button>
-  </div>
-</section>
+<section id="pause" class="pause hidden"><div id="menuCard" class="pause-card"></div></section>
+<section id="prematch" class="prematch hidden"></section>
 
 <script type="module" src="./src/main.ts"></script>
 </body>

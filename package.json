@@ -12,7 +12,8 @@
     "test": "node --import tsx --test server/test/*.test.ts",
     "loadtest": "tsx server/scripts/loadtest.ts",
     "build:server": "node scripts/build-server.mjs",
-    "check:map": "tsx scripts/check-map.ts"
+    "check:map": "tsx scripts/check-map.ts",
+    "record:gameplay": "node scripts/record-gameplay.mjs"
   },
   "dependencies": {
     "@types/three": "^0.169.0",

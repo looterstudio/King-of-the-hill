@@ -9,13 +9,24 @@ can drop anywhere on the map. Play **solo, duos or squads**; every match scores 
 top-10 finish, kills), and the token's trading fees fill one shared pot: **every hour, on the hour
 (UTC), the player with the most points that hour takes it.**
 
-- **Fights that last.** 250 health + 250 shield. Guns keep their damage, so an assault rifle needs
-  a full magazine (about 3 s) instead of one second; explosives, fire, rams and the storm scale with
-  health. A Heavy Sniper headshot still drops anyone. Hit an enemy and their health bar shows over
-  their head for two seconds; damage numbers, headshot and kill markers on every hit.
+- **Fast fights.** 100 health + 100 shield. An assault rifle takes a full-shield player down in about
+  1.5 s, a pump shotgun in two blasts up close (one once their shield is gone), a Heavy Sniper
+  headshot in one. Shotguns keep a tight cone on the move and full damage out to 8 m. Hit an enemy
+  and their health bar shows over their head for two seconds; damage numbers, headshot and kill
+  markers on every hit.
+- **Sights per gun, your own hands.** Right click aims down the gun's own sight: irons on pistols,
+  SMGs and shotguns, a red dot on the rifles, a real scope only on the two snipers, an open ring on
+  the launchers (held on the shoulder, never over the middle of the screen). In first person you see
+  your arms, in your character's colours, holding the gun through recoil, reloads and swaps. The
+  drawing is made at full screen resolution with FXAA on the pen lines (settings: quality,
+  render scale, antialias).
+- **A storm that forces the fight.** It starts closing 30 s in, while the last players are still
+  gliding, and keeps coming in every half minute through seven circles (about 4 minutes to nothing).
+  Once fewer than 60% of the teams are left it hurries, up to 4x as fast with a tenth of them, so a
+  match is always decided in the last small circles, never across an empty island.
 - **Knocked, not out.** In duos and squads, zero health knocks you down while a teammate is still
   standing: you crawl, bleed out in 30 s, and a teammate holding `E` next to you for 5 s brings you
-  back at 75 health. When nobody on the team is left standing, the knocked are out. A kill board
+  back at 30 health. When nobody on the team is left standing, the knocked are out. A kill board
   shows the top teams by kills all match.
 
 - **Everything breaks.** Every building is a structure of blocks. Rockets, grenades, C4, tank shells
@@ -61,13 +72,19 @@ top-10 finish, kills), and the token's trading fees fill one shared pot: **every
 - **Squads in vehicles.** Teammates ride along as passengers (3 in cars and helicopters, 1 in a
   plane) and shoot out of the windows; bail out of an aircraft and your glider opens.
 - **C4 and supply drops.** C4 sticks where it lands and goes off on the second press: a full
-  health bar (250) inside 2.5 m, your own included, so you survive your charge only with shields up. Every time the
+  health bar (100) inside 2.5 m, your own included, so you survive your charge only with shields up. Every time the
   storm moves, a balloon crate drops into the next circle with a legendary gun, C4 or a nuke.
 - **Modes and points.** A win is 100 points solo, 50 each in duos, 25 each in squads (the same per
   match on average); a top-10 finish (top 5 duos, top 3 squads) is +20 and every kill +5 (up to 10). Friends type the same **party code** to drop on one team; empty spots
   are filled. No friendly fire; teammates are marked through walls and always on the minimap.
 - **Rooms.** The lobby lists every room filling or live, with a join button. Up to 5 rooms fill at
   once (`OPEN_ROOMS`), 10 full matches run per process (`MAX_ROOMS`), spread over worker threads.
+- **Menus and HUD.** Before a match: the controls as keycaps, your name, one button in. `Esc` opens
+  Resume, Inventory, Settings (sensitivity, aiming sensitivity, invert, camera, field of view, master /
+  music / effects volume, announcer voice, graphics quality, resolution; saved per device, applied live),
+  Controls and Back to menu. The hotbar sits bottom centre (gun silhouettes in their rarity colour, stars,
+  ammo); hold `Tab` (or `I`) for the inventory with what everything does, hold `Z` for the item wheel.
+  First Blood, multi-kills (10 s apart) and streaks get a synthesized sting and a spoken line.
 - **Spectating.** Out? Click / right-click to switch players. While a teammate lives you can only
   watch your team (no ghosting); once your team is out, `F` gives you a free flying camera.
 - **Anti-cheat.** The server is the authority for movement, fire rate, damage and loot. On top:
@@ -107,6 +124,29 @@ The game has two parts, and they deploy to different places:
   VPS (`docker build -t koth . && docker run -p 8787:8787 -v koth-data:/data koth`). Keep
   `data/` on a persistent volume: it holds the points log and the epoch secret. The server also
   serves the page itself, so it can run alone without Vercel.
+
+## The landing page and its gameplay video
+
+The first screen is a landing page over the lobby (`client/src/landing.ts`, `landing.css`): what the
+game is, how to win, the hourly pot, the modes, the controls as keycaps, a minute of gameplay and a
+big Play button that lifts it off the lobby. `#play` in the URL skips it; the lobby's logo brings it back.
+
+The video is recorded from the offline demo, in one command:
+
+```bash
+npm run record:gameplay            # builds the demo, plays a match headlessly, writes client/public/media/
+npm run record:gameplay -- --seconds 60 --max-mb 8 --no-build --keep
+```
+
+It joins as a guest and lets the bots' brain play your seat (`client/src/autopilot.ts`, loaded only on
+`#autotest` in the demo build) through the normal input path: the paper plane, the glide, looting and
+fights, in third person. The page runs on a virtual clock that the recorder steps one frame at a time
+and screenshots at 1280x720, so the clip is a smooth 30 fps however slow the machine is (it takes a
+few minutes). ffmpeg encodes `gameplay.mp4` (H.264), `gameplay.webm` (VP9) and the poster
+`gameplay.jpg`, raising compression until each file fits the size budget. Needs ffmpeg and
+Playwright (`playwright` or `playwright-core`, or `PLAYWRIGHT_CORE=/path`); the browser is
+`CHROME_PATH`, Playwright's Chromium, a Puppeteer Chrome or the system Chrome. Re-run it whenever the
+game looks different.
 
 ## Checks
 

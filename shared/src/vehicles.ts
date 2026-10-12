@@ -145,3 +145,31 @@ function move3(w: World, p: Body, r: number, h: number, dt: number): number {
   if (p.grounded) { p.vx *= 1 - Math.min(1, dt * 3); p.vz *= 1 - Math.min(1, dt * 3); }
   return impact;
 }
+
+// The tank's gunner sight. The driver looks through the chase camera, so the cannon and the machine gun
+// fire at whatever is under its crosshair: the camera's ray, cast from level with the turret (the bit
+// behind the tank, maybe inside a wall, doesn't count), hits something (or runs out at TANK_SIGHT.far),
+// and the shells leave the muzzle toward that point. The client puts its camera on this same eye.
+// (The cannon used to fire parallel to the camera from 4 m lower: shells landed well under the crosshair.)
+export const TANK_SIGHT = { up: 3.2, back: 10, perSpeed: 0.08, extra: 6, muzzle: 4.0, height: 1.9, far: 400 };
+export function tankEye(x: number, y: number, z: number, yaw: number, pitch: number, spd: number): [number, number, number] {
+  const d = TANK_SIGHT.back + Math.min(TANK_SIGHT.extra, Math.abs(spd) * TANK_SIGHT.perSpeed), cp = Math.cos(pitch), ty = y + TANK_SIGHT.up;
+  let ey = ty - Math.sin(pitch) * d;
+  if (ey < ty - 1) ey = ty - 1;
+  if (ey < 0.5) ey = 0.5;
+  return [x + Math.sin(yaw) * cp * d, ey, z + Math.cos(yaw) * cp * d];
+}
+// where the gun points: the muzzle (dir's start) and a unit direction toward the crosshair's point
+export function tankAim(w: World, x: number, y: number, z: number, yaw: number, pitch: number, spd: number) {
+  const [ex, ey, ez] = tankEye(x, y, z, yaw, pitch, spd), cp = Math.cos(pitch);
+  const fx = -Math.sin(yaw) * cp, fy = Math.sin(pitch), fz = -Math.cos(yaw) * cp;
+  const t0 = Math.max(0, (x - ex) * fx + (y + TANK_SIGHT.height - ey) * fy + (z - ez) * fz);
+  const t = t0 + w.raycast(ex + fx * t0, ey + fy * t0, ez + fz * t0, fx, fy, fz, TANK_SIGHT.far);
+  const tx = ex + fx * t, ty = ey + fy * t, tz = ez + fz * t;
+  const h = Math.hypot(fx, fz) || 1, mx = x + (fx / h) * TANK_SIGHT.muzzle, my = y + TANK_SIGHT.height, mz = z + (fz / h) * TANK_SIGHT.muzzle;
+  let dx = tx - mx, dy = ty - my, dz = tz - mz;
+  const L = Math.hypot(dx, dy, dz);
+  // the point is behind the muzzle or right on it (a wall against the barrel): fire straight along the view
+  if (L < 1 || dx * fx + dy * fy + dz * fz <= 0) { dx = fx; dy = fy; dz = fz; } else { dx /= L; dy /= L; dz /= L; }
+  return { mx, my, mz, dx, dy, dz, tx, ty, tz };
+}

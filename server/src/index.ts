@@ -6,7 +6,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
-import { SKINS, playerNumber } from '../../shared/src/constants.ts';
+import { MAP_HALF, SKINS, playerNumber } from '../../shared/src/constants.ts';
 import { loginMessage, type ClientMsg, type PotView, type ProfileView, type ServerMsg } from '../../shared/src/protocol.ts';
 import { sanitizeInput } from '../../shared/src/sim.ts';
 import { config } from './config.ts';
@@ -15,6 +15,7 @@ import { PriceFeed } from './price.ts';
 import { CANDLE_MS, Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
 import { Profiles } from './profile.ts';
+import { Parties } from './party.ts';
 import { InProcessHost, WorkerHost } from './host.ts';
 
 const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requireWallet ? 4 : 1));
@@ -42,6 +43,10 @@ const mm = new Matchmaker({
     console.warn('[anticheat]', row.name, row.reason);
   },
 }, config.maxRooms, config.openRooms);
+
+// the party pre-lobby: who is in which party, pushed to its members as it changes
+const parties = new Parties(mm);
+setInterval(() => parties.tick(), 500);
 
 const everyone = (msg: ServerMsg) => { const s = JSON.stringify(msg); for (const c of clients) c.sendRaw(s, true); };
 
@@ -192,9 +197,13 @@ async function onMessage(c: Client, msg: ClientMsg) {
       try { return await signIn(c, msg); } finally { c.authing = false; }
     }
     case 'guest': {
-      if (c.authed) return;
+      if (c.authed) { // a guest renaming from the pre-match screen, between matches only
+        if (!c.guest || c.room || c.queued || !c.lobbyAction()) return;
+        c.name = cleanName(msg.name);
+        return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });
+      }
       if (!config.allowGuests) return c.send({ t: 'error', msg: 'connect a wallet to play' });
-      c.name = cleanName(msg.name); c.authed = true;
+      c.name = cleanName(msg.name); c.authed = true; c.guest = true;
       // mock pot only: give guests a throwaway key so the whole ticket -> payout path runs locally
       if (config.potSource === 'mock') c.wallet = bs58.encode(nacl.sign.keyPair().publicKey);
       return c.send({ t: 'authed', name: c.name, wallet: c.wallet, num: c.num, eligible: c.wallet ? null : 'guests play for fun: connect a wallet to score points for the pot' });
@@ -216,7 +225,12 @@ async function onMessage(c: Client, msg: ClientMsg) {
         at: msg.at === null ? null : Array.isArray(msg.at) ? [Number(msg.at[0]), Number(msg.at[1])] as [number, number] : undefined };
       return c.room?.spectate(c, r);
     }
-    case 'leave': if (c.lobbyAction()) mm.leave(c); return;
+    case 'leave': if (c.lobbyAction()) { parties.cancel(c); mm.leave(c); } return;
+    case 'party': {
+      if (!c.authed) return c.send({ t: 'party', party: null, msg: 'Sign in first' });
+      if (!c.lobbyAction()) return;
+      return parties.handle(c, msg);
+    }
     case 'rtc': {
       // squad voice: relay offers, answers and ICE candidates to a teammate in the same live match,
       // nobody else. Audio itself goes peer to peer and never touches the server.
@@ -227,6 +241,16 @@ async function onMessage(c: Client, msg: ClientMsg) {
       const body = JSON.stringify({ t: 'rtc', from: c.id, data: msg.data });
       if (body.length > 12_000) return;
       return peer.sendRaw(body);
+    }
+    case 'mark': {
+      // a landing marker on the map: relayed to your teammates in the same live match, nobody else
+      const room = c.room;
+      if (!room || room.phase !== 'live' || room.mode === 'solo') return;
+      const at = Array.isArray(msg.at) && Number.isFinite(Number(msg.at[0])) && Number.isFinite(Number(msg.at[1]))
+        ? [Math.round(Math.max(-MAP_HALF, Math.min(MAP_HALF, Number(msg.at[0])))), Math.round(Math.max(-MAP_HALF, Math.min(MAP_HALF, Number(msg.at[1]))))] : null;
+      const body = JSON.stringify({ t: 'mark', from: c.id, at });
+      for (const s of room.seats) if (s !== c && s.room === room && s.team === c.team) s.sendRaw(body);
+      return;
     }
   }
 }
@@ -267,6 +291,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     clients.delete(c);
+    parties.leave(c, 'gone');
     mm.leave(c);
     if (c.wallet && byWallet.get(c.wallet) === c) byWallet.delete(c.wallet);
   });

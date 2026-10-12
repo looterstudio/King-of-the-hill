@@ -38,7 +38,7 @@ class Radio {
     this.delay = c.createDelay(1); const fb = c.createGain(), wet = c.createGain();
     fb.gain.value = 0.28; wet.gain.value = 0.22;
     this.delay.connect(fb); fb.connect(this.delay); this.delay.connect(wet); wet.connect(this.out);
-    this.out.connect(c.destination);
+    this.out.connect(sfx.music ?? c.destination); // the music volume slider
     const len = c.sampleRate * 0.5, buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.noise = buf;
@@ -74,7 +74,7 @@ class Radio {
       if (!say) return;
       say.cancel();
       const u = new SpeechSynthesisUtterance(tuned ? `${s.name}. ${s.tag}.` : s.lines[Math.floor(Math.random() * s.lines.length)]);
-      u.rate = 1.05; u.pitch = this.station === 2 ? 0.7 : 1.1; u.volume = 0.8; u.lang = 'en-US';
+      u.rate = 1.05; u.pitch = this.station === 2 ? 0.7 : 1.1; u.volume = 0.8 * sfx.musicLevel; u.lang = 'en-US';
       say.speak(u);
     } catch { /* no speech: the toast is enough */ }
   }

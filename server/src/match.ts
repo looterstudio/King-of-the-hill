@@ -6,7 +6,7 @@ import { Sim, emptyInput, type Input, type PlayerState, type SimEvent, type Tick
 import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, frameJson, snapJsonFor, type Viewer } from '../../shared/src/snap.ts';
 import { Watchdog, type Flag } from './anticheat.ts';
-import { botInput, newBot, teamDrops, type Bot } from '../../shared/src/bots.ts';
+import { botInput, newBot, markBots, teamDrops, type Bot } from '../../shared/src/bots.ts';
 import { rng } from '../../shared/src/rng.ts';
 
 // targets: 'all' = everyone still in the match; otherwise player ids. drop = may be skipped for a slow client
@@ -51,7 +51,8 @@ export class Match {
     this.sim.spawn([...ids, ...bots], teamOf, { bus: true });
     for (const id of ids) this.seats.set(id, new Seat());
     this.bots = bots.map((id) => newBot(id, rng(seed * 7919 + id)));
-    teamDrops(this.bots, teamOf ?? new Map([...ids, ...bots].map((id) => [id, id])), rng(seed ^ 0x5eed));
+    markBots(this.sim, bots);
+    teamDrops(this.bots, teamOf ?? new Map([...ids, ...bots].map((id) => [id, id])), rng(seed ^ 0x5eed), this.sim.bus);
     const sizes = new Map<number, number>();
     for (const p of this.sim.players.values()) sizes.set(p.team, (sizes.get(p.team) ?? 0) + 1);
     this.teamSize = Math.max(1, ...sizes.values());

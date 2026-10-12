@@ -3,17 +3,17 @@
 // Loot comes from the floor and from pencil cases; the fallen drop everything they carried.
 import {
   EYE_H, FORT, GRAVITY, GRENADE, HEADSHOT_MULT, HEAD_R, HEAD_Y, INTERACT_R, ITEMS, JUMP_V, NUKE, PAD, PERKS,
-  PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
+  PLAYER_HP, PLAYER_R, REWIND_MAX_TICKS, RING_DPS_START, RING_HURRY, RING_PHASES, RING_START_R, SHIELD_MAX, SLOTS, SMOKE,
   SPRINT_SPEED, WALK_SPEED, WEAPONS, WEAPON_IDS, type ItemId, type PerkId, type Rarity, type WeaponId,
-  AIR_CRASH, AXE, BOMB, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, LIFE_SCALE, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
+  AMMO, AMMO_IDS, type AmmoId, AIR_CRASH, AXE, BOMB, BURST_GAP, BUS, GUIDED, SPELL, BUILD, C4, CRASH, KNOCK, BLAST_WORLD, MATERIAL, WRECK_BUDGET, HELI_GUN, MAP_HALF, TANK, TANK_MG, covered, isAir, MISSILE, MOLOTOV, PLANE_GUN, RAM, ROCKET, SHOCK, SUPPLY, UPGRADE, VEHICLES, VEHICLE_KINDS, VEH_BOOM, type VehicleKind,
 } from './constants.ts';
-import { moveVehicle } from './vehicles.ts';
+import { moveVehicle, tankAim } from './vehicles.ts';
 import { rng } from './rng.ts';
 import { INK, World, moveBody, newBody, rayBox, type Body, type Box, type Structure } from './world.ts';
 
 export { rng };
 
-export type LootKind = 'weapon' | 'item' | 'perk';
+export type LootKind = 'weapon' | 'item' | 'perk' | 'ammo';
 export interface Loot { id: number; x: number; y: number; z: number; kind: LootKind; what: string; n: number; mag?: number; up?: number }
 export interface Case { id: number; x: number; y: number; z: number; golden: boolean; open: boolean; supply?: boolean }
 export interface Projectile { id: number; kind: 'grenade' | 'smoke' | 'c4' | 'bomb' | 'rocket' | 'missile' | 'guided' | 'spell' | 'molotov' | 'shock'; stuck?: boolean; tgt?: number; dmg?: number; r?: number; owner: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }
@@ -25,6 +25,7 @@ export interface Build { id: number; owner: number; idx: number[]; boxes: Box[];
 export interface PlayerState extends Body {
   id: number; yaw: number; pitch: number; hp: number; shield: number; alive: boolean;
   slots: (WeaponId | null)[]; mags: number[]; cur: number; ups: number[]; // upgrade level per slot
+  ammo: Record<AmmoId, number>; // reserve ammo by type: what reloads take from
   items: Record<ItemId, number>; perk: { kind: PerkId; n: number } | null;
   use: { item: ItemId; t: number } | null;
   reloadT: number; fireCd: number; spin: number; burstLeft: number; burstT: number;
@@ -32,12 +33,13 @@ export interface PlayerState extends Body {
   downBy: number | null; reviveT: number; reviver: number; // knocked: who did it, revive progress, by whom
   axe: boolean; axeCd: number; mats: number; // axe out (instead of a gun), its swing cooldown, building material
   tp: boolean; // playing in third person: aims down the shoulder camera's ray (aimFrom)
+  hitBy?: number; // who hit us last (the bots answer that one)
 }
 export interface Input {
   seq: number; fwd: number; strafe: number; yaw: number; pitch: number;
   jump: boolean; sprint: boolean; slide: boolean; grapple: boolean;
   fire: boolean; aim: boolean; reload: boolean; slot: number; view: number;
-  interact: boolean; item: number; perk: boolean; // item: 1 = best shield, 2 = medkit
+  interact: boolean; item: number; perk: boolean; // item: 1 = best shield, 2 = medkit, 3 = mini shield, 4 = shield potion (the item wheel)
   up: number; // helicopter climb (+1) / descend (-1)
   hold: boolean; // E held down: reviving a knocked teammate
   tp?: boolean; // third-person camera (aimFrom); bots and old clients aim from the eye
@@ -79,7 +81,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
     jump: raw?.jump === true, sprint: raw?.sprint === true, slide: raw?.slide === true, grapple: raw?.grapple === true,
     fire: raw?.fire === true, aim: raw?.aim === true, reload: raw?.reload === true,
     slot: clamp(Math.floor(finite(raw?.slot)), 0, SLOTS + 1), view: Math.floor(finite(raw?.view)), // slot SLOTS + 1 = the axe
-    interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 2), perk: raw?.perk === true,
+    interact: raw?.interact === true, item: clamp(Math.floor(finite(raw?.item)), 0, 4), perk: raw?.perk === true,
     up: clamp(finite(raw?.up), -1, 1), hold: raw?.hold === true, tp: raw?.tp === true,
   };
 }
@@ -88,7 +90,7 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
   if (p.bus) { // aboard the paper plane: carried along at its speed until you jump out
     if (!inp.jump && !inp.interact) { p.x += p.vx * dt; p.z += p.vz * dt; return 0; }
-    p.bus = 0; p.gliding = true; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0; // out: you keep a little of its speed and glide
+    leaveBus(p);
     return 0;
   }
   if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
@@ -102,14 +104,37 @@ export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = fals
 };
 const NO_INPUT: Input = emptyInput();
 
-// accuracy: aiming tightens it, moving and being airborne loosen it
+// out of the paper plane (you jumped, or the far edge threw you out): you keep a little of its speed and
+// free fall, the glider shut until you open it (moveBody)
+export function leaveBus(p: Body) { p.bus = 0; p.gliding = true; p.fall = 1; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0; }
+
+// the paper plane's line for a match: straight across the island near the middle, from a random side, clear
+// of anything that reaches its height (The Needle). A function of the seed alone, so the waiting room draws
+// it before the match starts
+export function busLine(w: World): { x: number; z: number; dx: number; dz: number } {
+  const r = rng(w.seed ^ 0x6b75b05), tall = w.structures.filter((s) => s.y1 > BUS.y - 8);
+  let best = { x: 0, z: 0, dx: 1, dz: 0 }, clear = -1;
+  for (let k = 0; k < 24 && clear < 30; k++) {
+    const a = r() * Math.PI * 2, off = (r() - 0.5) * 2 * BUS.offset, dx = Math.cos(a), dz = Math.sin(a);
+    // the closest any tall thing comes to the line (from its edge)
+    let near = Infinity;
+    for (const s of tall) near = Math.min(near, Math.abs(-dz * ((s.x0 + s.x1) / 2) + dx * ((s.z0 + s.z1) / 2) - off) - Math.hypot(s.x1 - s.x0, s.z1 - s.z0) / 2);
+    if (near > clear) { clear = near; best = { x: -dz * off - dx * BUS.len / 2, z: dx * off - dz * BUS.len / 2, dx, dz }; }
+  }
+  return best;
+}
+
+// accuracy: aiming tightens it, moving and being airborne loosen it (a shotgun's cone barely: it is
+// the gun you fire on the move, at someone in your face)
 export function spreadFor(p: Body, w: WeaponId, aim: boolean): number {
-  const base = WEAPONS[w].spread, speed = Math.hypot(p.vx, p.vz);
-  const scoped = w === 'heavy' || w === 'hunting';
-  let s = base * (aim ? (scoped ? 0.02 : 0.5) : 1) * (1 + speed / 8);
-  if (!p.grounded) s *= 2;
+  const base = WEAPONS[w].spread, speed = Math.hypot(p.vx, p.vz), shotgun = WEAPONS[w].pellets > 1;
+  const scoped = WEAPONS[w].sight === 'scope';
+  let s = base * (aim ? (scoped ? 0.02 : shotgun ? 0.8 : 0.5) : 1) * (1 + speed / (shotgun ? 30 : 8));
+  if (!p.grounded) s *= shotgun ? 1.25 : 2;
   return s;
 }
+// a shotgun pellet's damage over distance: full out to 30% of its range, then down to a third
+export const pelletFall = (t: number, range: number) => clamp(1.3 - t / range, 0.35, 1);
 
 // Third person: the camera rides over the right shoulder (TP) and the crosshair is its ray. Everything you
 // aim (shots, rockets, the pickaxe, blocks you place) starts on that ray, at the point of it level with your
@@ -142,6 +167,8 @@ const FLOOR_RARITY: [Rarity, number][] = [['common', 50], ['uncommon', 30], ['ra
 const CASE_RARITY: [Rarity, number][] = [['common', 34], ['uncommon', 34], ['rare', 21], ['epic', 9], ['legendary', 2]];
 const GOLD_RARITY: [Rarity, number][] = [['epic', 55], ['legendary', 45]];
 const ITEM_TABLE: [ItemId, number][] = [['mini', 50], ['big', 25], ['med', 25]];
+// loose ammo boxes: mostly what the common guns take
+const AMMO_TABLE: [AmmoId, number][] = [['light', 32], ['medium', 30], ['shells', 24], ['heavy', 8], ['rockets', 6]];
 const PERK_TABLE: [PerkId, number][] = [['grenade', 30], ['molotov', 22], ['shock', 14], ['smoke', 14], ['launch', 14], ['fort', 11], ['kit', 12], ['c4', 12]];
 
 // ray vs player hitboxes (vertical cylinder body + head sphere); returns {t, head} or null
@@ -154,8 +181,15 @@ export function rayPlayer(ox: number, oy: number, oz: number, dx: number, dy: nu
   if (a2 > 1e-9) {
     const br = fx * dx + fz * dz, cr = fx * fx + fz * fz - (PLAYER_R + 0.05) ** 2, dr = br * br - a2 * cr;
     if (dr >= 0) {
-      const t = (-br - Math.sqrt(dr)) / a2, y = oy + dy * t;
-      if (t >= 0 && y >= py && y <= py + HEAD_Y - HEAD_R && (!best || t < best.t)) best = { t, head: false };
+      // the stretch of the ray inside the body's cylinder, cut to the body's height: a ray coming down
+      // steeply (an axe swung up close, a shot from above) enters over the shoulders and still goes
+      // through the chest (only the entry point was checked, so those all missed)
+      const sq = Math.sqrt(dr), top = py + HEAD_Y - HEAD_R;
+      let t0 = (-br - sq) / a2, t1 = (-br + sq) / a2;
+      if (Math.abs(dy) > 1e-9) { const ya = (py - oy) / dy, yb = (top - oy) / dy; t0 = Math.max(t0, Math.min(ya, yb)); t1 = Math.min(t1, Math.max(ya, yb)); }
+      else if (oy < py || oy > top) t1 = -1;
+      const t = Math.max(0, t0);
+      if (t <= t1 && (!best || t < best.t)) best = { t, head: false };
     }
   }
   return best;
@@ -190,7 +224,9 @@ export class Sim {
   t = 0;
   tick = 0;
   private rand: () => number;
-  private phaseStart = 0;
+  private phaseStart = 0;   // on the storm's clock
+  private clock = 0;        // the storm's clock: the match's, run faster as the field thins out
+  private field = 0;        // teams at the start
   private from = { x: 0, y: 0, r: RING_START_R };
   private history: { tick: number; pos: Map<number, { x: number; y: number; z: number }> }[] = [];
   private nextId = 1;
@@ -210,7 +246,8 @@ export class Sim {
     for (const s of this.world.caseSpots) this.cases.push({ id: this.nextId++, x: s.x, y: s.y, z: s.z, golden: !!s.golden, open: false });
     for (const s of this.world.lootSpots) {
       const roll = lr();
-      if (roll < 0.6 || (s.rich && roll < 0.8)) this.drop(s.x, s.y, s.z, 'weapon', this.rollWeapon(lr, s.rich ? CASE_RARITY : FLOOR_RARITY));
+      if (roll < 0.6 || (s.rich && roll < 0.8)) this.dropGun(s.x, s.y, s.z, this.rollWeapon(lr, s.rich ? CASE_RARITY : FLOOR_RARITY), lr() * Math.PI * 2);
+      else if (roll < 0.74) this.drop(s.x, s.y, s.z, 'ammo', weighted(lr, AMMO_TABLE));
       else if (roll < 0.9) this.drop(s.x, s.y, s.z, 'item', weighted(lr, ITEM_TABLE));
       else this.drop(s.x, s.y, s.z, 'perk', weighted(lr, PERK_TABLE));
     }
@@ -235,11 +272,18 @@ export class Sim {
     return list[Math.floor(r() * list.length)];
   }
 
+  // a gun on the floor, with a box of its ammo next to it
+  private dropGun(x: number, y: number, z: number, w: WeaponId, a = 0) {
+    this.drop(x, y, z, 'weapon', w);
+    const ammo = WEAPONS[w].ammo;
+    if (ammo) this.drop(x + Math.cos(a) * 0.9, y, z + Math.sin(a) * 0.9, 'ammo', ammo);
+  }
+
   drop(x: number, y: number, z: number, kind: LootKind, what: string, n = 1, mag?: number, up = 0) {
     const def = kind === 'weapon' ? WEAPONS[what as WeaponId] : null;
     const at = this.world.settle(x, y, z) ?? { x, y: this.world.groundAt(x, z, y + 0.6), z };
     x = at.x; y = at.y; z = at.z;
-    this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : n, mag: def ? (mag ?? def.mag) : undefined, up: up || undefined });
+    this.loot.push({ id: this.nextId++, x, y, z, kind, what, n: kind === 'perk' ? PERKS[what as PerkId].count : kind === 'ammo' && n === 1 ? AMMO[what as AmmoId].box : n, mag: def ? (mag ?? def.mag) : undefined, up: up || undefined });
     this.lootVer++;
   }
 
@@ -252,10 +296,8 @@ export class Sim {
   // opts.bus: everyone boards the paper plane (a match); without it they start gliding over their team's
   // drop spot (the tests, a training ground)
   spawn(ids: number[], teamOf?: Map<number, number>, opts: { bus?: boolean } = {}) {
-    if (opts.bus) {
-      const a = this.rand() * Math.PI * 2, off = (this.rand() - 0.5) * 2 * BUS.offset, dx = Math.cos(a), dz = Math.sin(a);
-      this.bus = { x: -dz * off - dx * BUS.len / 2, z: dx * off - dz * BUS.len / 2, dx, dz, t: this.t };
-    }
+    if (opts.bus) this.bus = { ...busLine(this.world), t: this.t };
+    const bare = !!opts.bus;
     const drop = new Map<number, { x: number; z: number; n: number }>();
     ids.forEach((id) => {
       const team = teamOf?.get(id) ?? id;
@@ -265,24 +307,23 @@ export class Sim {
       this.players.set(id, {
         ...newBody(x, 95 + this.rand() * 15, z), gliding: true, id,
         yaw: Math.atan2(x, z), pitch: -0.5, hp: PLAYER_HP, shield: 0, alive: true,
-        slots: ['pistol', null, null, null], mags: [WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
+        // a match: the pickaxe and nothing else. The training ground (and the tests): a pistol and full ammo
+        slots: [bare ? null : 'pistol', null, null, null], mags: [bare ? 0 : WEAPONS.pistol.mag, 0, 0, 0], cur: 0, ups: [0, 0, 0, 0],
+        ammo: bare ? { light: 0, medium: 0, heavy: 0, shells: 0, rockets: 0 } : { light: AMMO.light.max, medium: AMMO.medium.max, heavy: AMMO.heavy.max, shells: AMMO.shells.max, rockets: AMMO.rockets.max },
         items: { mini: 0, big: 0, med: 0 }, perk: null, use: null,
         reloadT: 0, fireCd: 0.5, spin: 0, burstLeft: 0, burstT: 0, kills: 0, ack: 0, team, rideV: 0,
-        downBy: null, reviveT: 0, reviver: 0, axe: false, axeCd: 0, mats: BUILD.startMats, tp: false,
+        downBy: null, reviveT: 0, reviver: 0, axe: bare, axeCd: 0, mats: BUILD.startMats, tp: false,
       });
       if (this.bus) Object.assign(this.players.get(id)!, { x: this.bus.x, y: BUS.y, z: this.bus.z, vx: this.bus.dx * BUS.speed, vy: 0, vz: this.bus.dz * BUS.speed, gliding: false, bus: 1, yaw: Math.atan2(-this.bus.dx, -this.bus.dz), pitch: -0.3 });
     });
-  }
-  // out of the paper plane: you keep a little of its speed and glide from there
-  private leaveBus(p: PlayerState) {
-    p.bus = 0; p.gliding = true; p.vx *= BUS.exit; p.vz *= BUS.exit; p.vy = 0;
+    this.field = this.teamsAlive.size;
   }
   // riders move with their own inputs (moveStep carries them at the plane's speed, so prediction is exact);
   // at the far edge everyone still aboard is thrown out
   private stepBus() {
     if (!this.bus) return;
     const b = this.bus, over = this.busAt().s >= BUS.len; // the plane itself is past the edge: nobody stays (idle players too)
-    for (const p of this.players.values()) if (p.bus && p.alive && (over || (p.x - b.x) * b.dx + (p.z - b.z) * b.dz >= BUS.len)) this.leaveBus(p);
+    for (const p of this.players.values()) if (p.bus && p.alive && (over || (p.x - b.x) * b.dx + (p.z - b.z) * b.dz >= BUS.len)) leaveBus(p);
   }
 
   get alive() { let n = 0; for (const p of this.players.values()) if (p.alive) n++; return n; }
@@ -301,7 +342,8 @@ export class Sim {
     // everything they carried spills on the floor in a little ring
     const gy = this.world.groundAt(p.x, p.z, p.y + 0.1);
     const spill: [LootKind, string, number, number | undefined, number][] = [];
-    p.slots.forEach((w, i) => { if (w && w !== 'pistol') spill.push(['weapon', w, 1, p.mags[i], p.ups[i]]); });
+    p.slots.forEach((w, i) => { if (w) spill.push(['weapon', w, 1, p.mags[i], p.ups[i]]); });
+    for (const a of AMMO_IDS) if (p.ammo[a] > 0) spill.push(['ammo', a, p.ammo[a], undefined, 0]);
     for (const it of Object.keys(p.items) as ItemId[]) if (p.items[it] > 0) spill.push(['item', it, p.items[it], undefined, 0]);
     if (p.perk && p.perk.n > 0) spill.push(['perk', p.perk.kind, p.perk.n, undefined, 0]); // an empty perk would block picking up a real one
     spill.forEach(([k, what, n, mag, up], i) => {
@@ -355,19 +397,28 @@ export class Sim {
   private reviving = new Set<number>();
   private holding = new Map<number, boolean>();
 
-  private stepRing() {
+  // how fast the storm's clock runs: the match's pace while most teams are still in, up to RING_HURRY.max
+  // times that once only a few are left, so the last ones meet in a small circle instead of the match
+  // ending (or dragging on) in a big one
+  hurry() {
+    const frac = this.field > 1 ? this.teamsAlive.size / this.field : 1;
+    return 1 + (RING_HURRY.max - 1) * clamp((RING_HURRY.from - frac) / (RING_HURRY.from - RING_HURRY.to), 0, 1);
+  }
+  private stepRing(dt: number) {
     const ring = this.ring, phase = RING_PHASES[ring.phase];
     if (!phase) return;
-    const since = this.t - this.phaseStart;
-    if (since < phase.wait) { ring.closing = false; ring.nextAt = this.phaseStart + phase.wait; return; }
+    const rate = this.hurry();
+    this.clock += dt * rate;
+    const since = this.clock - this.phaseStart;
+    if (since < phase.wait) { ring.closing = false; ring.nextAt = this.t + (phase.wait - since) / rate; return; }
     ring.closing = true;
     const k = Math.min(1, (since - phase.wait) / phase.shrink);
     ring.x = this.from.x + (ring.nx - this.from.x) * k;
     ring.y = this.from.y + (ring.ny - this.from.y) * k;
     ring.r = this.from.r + (ring.nr - this.from.r) * k;
-    ring.nextAt = this.phaseStart + phase.wait + phase.shrink;
+    ring.nextAt = this.t + Math.max(0, phase.wait + phase.shrink - since) / rate;
     if (k >= 1) {
-      ring.dps = phase.dps; ring.phase++; this.phaseStart = this.t;
+      ring.dps = phase.dps; ring.phase++; this.phaseStart = this.clock;
       if (ring.phase < RING_PHASES.length) this.pendingDrop = true;
       this.from = { x: ring.x, y: ring.y, r: ring.r };
       const next = RING_PHASES[ring.phase];
@@ -424,7 +475,7 @@ export class Sim {
       const cp = Math.cos(pitch);
       // pellets and long range fall off a little; headshots multiply
       this.ray(p, ox, oy, oz, -Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, def.range, (t, head) =>
-        def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]) * (def.pellets > 1 ? clamp(1.2 - t / def.range, 0.35, 1) : 1) * (head ? (def.headMult ?? HEADSHOT_MULT) : 1), ev, past, eye);
+        def.dmg * (1 + UPGRADE.perLevel * p.ups[p.cur]) * (def.pellets > 1 ? pelletFall(t, def.range) : 1) * (head ? (def.headMult ?? HEADSHOT_MULT) : 1), ev, past, eye);
     }
   }
 
@@ -609,13 +660,21 @@ export class Sim {
   private vehicleGuns(p: PlayerState, inp: Input, ev: SimEvent[]) {
     const v = this.vehicles.find((x) => x.id === p.rideV);
     if (!v || !covered(p.ride)) return;
-    if (v.kind === 'tank') { // the cannon fires where you look
-      if (inp.fire && v.gunCd <= 0) {
-        v.gunCd = TANK.cd;
-        const cp = Math.cos(inp.pitch), dx = -Math.sin(inp.yaw) * cp, dy = Math.sin(inp.pitch), dz = -Math.cos(inp.yaw) * cp;
-        const ox = p.x + dx * 3.2, oy = p.y + 2.1 + dy * 3.2, oz = p.z + dz * 3.2;
-        this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg, r: TANK.radius });
-        this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
+    if (v.kind === 'tank') { // the cannon (and the machine gun beside it, on right click) fire at the crosshair
+      if ((inp.fire && v.gunCd <= 0) || (inp.aim && v.bombCd <= 0)) {
+        const a = tankAim(this.world, p.x, p.y, p.z, inp.yaw, inp.pitch, p.spd);
+        if (inp.fire && v.gunCd <= 0) {
+          v.gunCd = TANK.cd;
+          const ox = a.mx, oy = a.my, oz = a.mz, dx = a.dx, dy = a.dy, dz = a.dz;
+          this.projectiles.push({ id: this.nextId++, kind: 'rocket', owner: p.id, x: ox, y: oy, z: oz, vx: dx * TANK.speed, vy: dy * TANK.speed, vz: dz * TANK.speed, t: 6, dmg: TANK.dmg, r: TANK.radius });
+          this.shots.push({ ox, oy, oz, ex: ox + dx * 2, ey: oy + dy * 2, ez: oz + dz * 2, by: p.id, hit: false });
+        }
+        if (inp.aim && v.bombCd <= 0) { // (a tank has no bombs: bombCd is the machine gun's)
+          v.bombCd = TANK_MG.cd;
+          const yaw = Math.atan2(-a.dx, -a.dz) + (this.rand() - 0.5) * 2 * TANK_MG.spread, pitch = Math.asin(clamp(a.dy, -1, 1)) + (this.rand() - 0.5) * 2 * TANK_MG.spread;
+          const cp = Math.cos(pitch);
+          this.ray(p, a.mx, a.my + 0.35, a.mz, -Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, TANK_MG.range, () => TANK_MG.dmg, ev);
+        }
       }
       return;
     }
@@ -699,7 +758,7 @@ export class Sim {
     const team = this.players.get(owner)?.team;
     for (const v of [...this.vehicles]) {
       const b = v.body, d = Math.hypot(b.x - x, b.y + 1 - y, b.z - z);
-      if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * (1.3 / LIFE_SCALE) * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
+      if (d < radius + VEHICLES[v.kind].r) this.damageVehicle(v, Math.round(dmg * 1.3 * (nuke ? 3 : 1 - Math.min(1, d / radius) * 0.6)), owner, ev);
     }
     for (const q of this.players.values()) {
       if (!q.alive || (q.id !== owner && q.team === team) || (covered(q.ride) && !q.seat) || hit?.has(q.id)) continue; // pilots and tank crews: the vehicle takes it
@@ -716,7 +775,7 @@ export class Sim {
       if (q.hp <= 0) this.fall(q, owner, 'boom', ev);
     }
     // and the walls around it: blocks break, buildings take structural damage
-    if (world) this.damageWorld(x, y, z, nuke ? radius * 0.8 : radius * 0.85, dmg * 1.15, dmg * (nuke ? 30 : 1.5), owner, nuke);
+    if (world) this.damageWorld(x, y, z, nuke ? radius * 0.8 : radius * 0.85, dmg * 1.15 * BLAST_WORLD, dmg * (nuke ? 30 : 1.5) * BLAST_WORLD, owner, nuke);
   }
 
   // a vehicle slamming into something breaks it: a car punches through a wall (an aircraft only gets
@@ -924,7 +983,7 @@ export class Sim {
     for (const h of hit) this.markDirty(h.x0, h.y, h.z0, h.x1, h.y1, h.z1);
     for (const h of hit) for (const q of this.players.values()) {
       if (!q.alive || q.x < h.x0 || q.x > h.x1 || q.z < h.z0 || q.z > h.z1 || q.y > h.y) continue;
-      this.hurt(q, 60);
+      this.hurt(q, 25);
       if (q.hp <= 0) this.fall(q, null, 'boom', ev);
     }
   }
@@ -935,7 +994,7 @@ export class Sim {
       const by = this.structBy.get(s.id) ?? null;
       for (const q of this.players.values()) {
         if (!q.alive || q.x < s.x0 - 1 || q.x > s.x1 + 1 || q.z < s.z0 - 1 || q.z > s.z1 + 1 || q.y > s.y1 + 1) continue;
-        const dmg = 120, h = this.hurt(q, dmg), enemy = by !== null && by !== q.id && this.players.get(by)?.team !== q.team;
+        const dmg = 50, h = this.hurt(q, dmg), enemy = by !== null && by !== q.id && this.players.get(by)?.team !== q.team;
         if (enemy) ev.push({ kind: 'hit', victim: q.id, by: by!, dmg, head: false, ...h });
         if (q.hp <= 0) this.fall(q, enemy ? by : null, 'boom', ev); // a teammate's collapse is nobody's kill
       }
@@ -968,6 +1027,20 @@ export class Sim {
     }
     const wb = this.world.raycastBox(ox, oy, oz, dx, dy, dz, AXE.reach);
     if (wb.i >= 0 && wb.t < best) { this.chopAt(p, dx, dy, dz, AXE.reach, AXE.block, ev); return; }
+    // nothing on the crosshair: someone right in front of the body still takes it (over the shoulder, the
+    // crosshair runs to the right of whoever is in your face)
+    if (!hitP && !hitV) {
+      const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw), ey = p.y + EYE_H;
+      let bd = AXE.reach - 0.6;
+      for (const q of this.players.values()) {
+        if (!q.alive || q.id === p.id || q.team === p.team || Math.abs(q.y - p.y) > 1.6) continue;
+        const qx = q.x - p.x, qz = q.z - p.z, d = Math.hypot(qx, qz);
+        if (d > bd + PLAYER_R || (d > 0.6 && (qx * fx + qz * fz) / d < 0.8)) continue; // within about 35 degrees of where you face
+        const cy = q.y + 1.1 - ey, L = Math.hypot(qx, cy, qz);
+        if (L > 0.5 && this.world.raycast(p.x, ey, p.z, qx / L, cy / L, qz / L, L) < L - 0.35) continue; // not through a wall
+        bd = d; hitP = { q, head: false };
+      }
+    }
     if (hitV) { this.damageVehicle(hitV, AXE.vehicle, p.id, ev); return; }
     if (hitP) {
       const dmg = Math.round(AXE.player * (hitP.head ? 1.5 : 1)), h = this.hurt(hitP.q, dmg);
@@ -1091,6 +1164,8 @@ export class Sim {
       }
       // loot spills out the far side of the case, fanned out, so you choose what to grab
       const away = Math.atan2(best.x - p.x, best.z - p.z);
+      for (const [k, what] of [...out]) if (k === 'weapon' && WEAPONS[what as WeaponId].ammo) out.push(['ammo', WEAPONS[what as WeaponId].ammo!]); // each gun with its ammo
+      out.push(['ammo', weighted(r, AMMO_TABLE)]);
       out.forEach(([k, what], i) => { const a = away + (i - (out.length - 1) / 2) * 0.55; this.drop(best!.x + Math.sin(a) * 1.4, best!.y, best!.z + Math.cos(a) * 1.4, k, what); });
       ev.push({ kind: 'open', caseId: best.id, by: p.id, golden: best.golden });
       return;
@@ -1119,7 +1194,7 @@ export class Sim {
       const held = p.slots[slot];
       if (held) this.drop(p.x, this.world.groundAt(p.x, p.z, p.y + 0.1), p.z, 'weapon', held, 1, p.mags[slot], p.ups[slot]);
     }
-    p.slots[slot] = gun.what as WeaponId; p.mags[slot] = gun.mag ?? WEAPONS[gun.what as WeaponId].mag; p.ups[slot] = gun.up ?? 0; p.cur = slot; p.reloadT = 0;
+    p.slots[slot] = gun.what as WeaponId; p.mags[slot] = gun.mag ?? WEAPONS[gun.what as WeaponId].mag; p.ups[slot] = gun.up ?? 0; p.cur = slot; p.reloadT = 0; p.axe = false;
     this.loot.splice(this.loot.indexOf(gun), 1); this.lootVer++;
   }
 
@@ -1151,6 +1226,11 @@ export class Sim {
         const take = Math.min(room, l.n);
         p.items[it] += take; l.n -= take;
         if (l.n > 0) { this.lootVer++; continue; }
+      } else if (l.kind === 'ammo') {
+        const a = l.what as AmmoId, take = Math.min(AMMO[a].max - p.ammo[a], l.n);
+        if (take <= 0) continue;
+        p.ammo[a] += take; l.n -= take;
+        if (l.n > 0) { this.lootVer++; continue; }
       } else if (l.kind === 'perk') {
         if (p.perk && p.perk.kind !== l.what) continue;
         const cap = PERKS[l.what as PerkId].count * 2;
@@ -1160,6 +1240,7 @@ export class Sim {
         const slot = p.slots.findIndex((s) => s === null);
         if (slot < 0 || p.slots.includes(l.what as WeaponId)) continue;
         p.slots[slot] = l.what as WeaponId; p.mags[slot] = l.mag ?? WEAPONS[l.what as WeaponId].mag; p.ups[slot] = l.up ?? 0;
+        if (p.axe && p.slots.filter(Boolean).length === 1) { p.axe = false; p.cur = slot; } // your first gun goes straight to your hands
       }
       this.loot.splice(i, 1); this.lootVer++;
     }
@@ -1314,8 +1395,10 @@ export class Sim {
 
     // healing / shielding takes time and you walk slowly while doing it
     if (inp.item && !p.use && !p.gliding && !p.ride) {
+      const big = p.items.big > 0 && p.shield < SHIELD_MAX, mini = p.items.mini > 0 && p.shield < (ITEMS.mini.shieldCap ?? 50);
       const it: ItemId | null = inp.item === 2 ? (p.items.med > 0 && p.hp < PLAYER_HP ? 'med' : null)
-        : p.items.big > 0 && p.shield < SHIELD_MAX ? 'big' : p.items.mini > 0 && p.shield < (ITEMS.mini.shieldCap ?? 50) ? 'mini' : null;
+        : inp.item === 3 ? (mini ? 'mini' : null) : inp.item === 4 ? (big ? 'big' : null)
+        : big ? 'big' : mini ? 'mini' : null;
       if (it) { p.use = { item: it, t: ITEMS[it].use }; p.reloadT = 0; }
     }
     if (p.use) {
@@ -1332,8 +1415,12 @@ export class Sim {
     const w = p.axe ? null : this.weaponOf(p);
     if (w) {
       const def = WEAPONS[w];
-      if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) { p.reloadT = 0; p.mags[p.cur] = def.mag; } }
-      else if ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0)) { p.reloadT = def.reload; p.use = null; }
+      // a reload fills the magazine from your reserve of its ammo (as far as it goes); with none left there's no reload
+      const spare = def.ammo ? p.ammo[def.ammo] : Infinity;
+      if (p.reloadT > 0) {
+        p.reloadT -= dt;
+        if (p.reloadT <= 0) { const take = Math.min(def.mag - p.mags[p.cur], spare); p.reloadT = 0; p.mags[p.cur] += take; if (def.ammo) p.ammo[def.ammo] -= take; }
+      } else if (spare > 0 && ((inp.reload && p.mags[p.cur] < def.mag) || (inp.fire && p.mags[p.cur] === 0 && p.burstLeft === 0))) { p.reloadT = def.reload; p.use = null; }
     }
 
     const vx0 = p.vx, vy0 = p.vy, vz0 = p.vz, was = p.grounded;
@@ -1361,7 +1448,7 @@ export class Sim {
       if (def.burst) {
         if (inp.fire && p.fireCd === 0 && p.burstLeft === 0 && p.mags[p.cur] > 0) p.burstLeft = Math.min(def.burst, p.mags[p.cur]);
         if (p.burstLeft > 0 && p.burstT === 0) {
-          this.shoot(p, w, inp, ev); p.burstLeft--; p.burstT = 0.075;
+          this.shoot(p, w, inp, ev); p.burstLeft--; p.burstT = BURST_GAP;
           if (p.burstLeft === 0) p.fireCd = def.cd;
         }
       } else if (inp.fire && spunUp && p.fireCd === 0 && p.mags[p.cur] > 0) { p.fireCd = def.cd; this.shoot(p, w, inp, ev); }
@@ -1371,7 +1458,7 @@ export class Sim {
   step(dt: number, inputs: TickInputs): SimEvent[] {
     const ev: SimEvent[] = [];
     this.t += dt; this.tick++;
-    this.stepRing();
+    this.stepRing(dt);
     const ring = this.ring;
     // supply drops: one a minute in, then one every time the storm moves on
     if (this.pendingDrop || (this.tick === Math.round(60 / dt))) { this.pendingDrop = false; this.supplyDrop(ev); }
@@ -1405,6 +1492,7 @@ export class Sim {
     for (const p of this.players.values()) if (p.alive) pos.set(p.id, { x: p.x, y: p.y, z: p.z });
     this.history.push({ tick: this.tick, pos });
     if (this.history.length > REWIND_MAX_TICKS + 2) this.history.shift();
+    for (const e of ev) if (e.kind === 'hit' && e.by && e.by !== e.victim) { const v = this.players.get(e.victim); if (v) v.hitBy = e.by; }
     return ev;
   }
 }

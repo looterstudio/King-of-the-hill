@@ -3,22 +3,53 @@
 // Pass 2 turns that buffer + depth into a drawing: ink outlines where depth, normal or ink
 // change, screen-space hatching in the shadows, graph paper behind everything, and the storm
 // drawn as a red hatched wall reconstructed per pixel from depth (no geometry for it at all).
+// Pass 3 (FXAA) smooths the pen lines. The drawing is made at the screen's full resolution (up to 2x
+// on a retina screen); only pass 1 shrinks when frames run long, so lines and the paper stay sharp.
 import * as THREE from 'three';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+
+// graphics settings, from the settings menu (localStorage 'pr_settings', written by settings.ts):
+// quality picks the screen resolution and whether lines are smoothed, renderScale caps pass 1's
+// resolution, antialias adds the browser's own multisampling (tracers, ropes; needs a reload)
+export type GfxQuality = 'low' | 'medium' | 'high';
+export interface Gfx { quality: GfxQuality; renderScale: number; antialias: boolean }
+export function readGfx(): Gfx {
+  const g: Gfx = { quality: 'high', renderScale: 1, antialias: false };
+  try {
+    const s = JSON.parse(localStorage.getItem('pr_settings') ?? '{}') as Partial<Gfx>;
+    if (s.quality === 'low' || s.quality === 'medium' || s.quality === 'high') g.quality = s.quality;
+    if (typeof s.renderScale === 'number' && Number.isFinite(s.renderScale)) g.renderScale = Math.max(0.55, Math.min(1, s.renderScale));
+    g.antialias = s.antialias === true;
+  } catch { /* storage blocked or garbage: the defaults */ }
+  return g;
+}
+const PR_CAP: Record<GfxQuality, number> = { low: 1, medium: 1.5, high: 2 };
 
 // ink palette, indexed by the ink id written in pass 1 (matches shared/src/world.ts INK)
-export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9 } as const;
+// (SKIN, YELLOW, BLACK and WHITE are for the characters: faces, robots, hair, clothes)
+export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9, SKIN: 10, YELLOW: 11, BLACK: 12, WHITE: 13 } as const;
+// a material whose ink comes from each vertex (aInk): a whole character is one mesh in many inks
+export const INK_VERTEX = -1;
 
 const passOneVert = /* glsl */`
 attribute float aInk;
 uniform float uInk;
 varying vec3 vN;
 varying float vInk;
+#include <skinning_pars_vertex>
 void main() {
-  vec3 p = position;
-  vec3 n = normal;
+  vec3 transformed = position;
+  vec3 objectNormal = normal;
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <skinning_vertex>
+  vec3 p = transformed;
+  vec3 n = objectNormal;
   #ifdef USE_INSTANCING
     p = (instanceMatrix * vec4(p, 1.0)).xyz;
     n = mat3(instanceMatrix) * n;
+  #endif
+  #if defined(USE_INSTANCING) || defined(VERTEX_INK)
     vInk = aInk;
   #else
     vInk = uInk;
@@ -52,7 +83,8 @@ const postFrag = /* glsl */`
 precision highp float;
 uniform sampler2D tBuf;
 uniform sampler2D tDepth;
-uniform vec2 uRes;
+uniform vec2 uRes;   // the screen, in pixels
+uniform vec2 uTex;   // pass 1's buffer, in pixels (smaller when frames run long)
 uniform float uNear, uFar, uTime, uPx;
 uniform mat4 uInvProj, uCamWorld;
 uniform vec3 uCamPos;
@@ -71,9 +103,13 @@ vec3 inkColor(float id) {
   if (id < 4.5) return vec3(0.15, 0.52, 0.28);  // green
   if (id < 5.5) return vec3(0.88, 0.38, 0.62);  // pink
   if (id < 6.5) return vec3(0.45, 0.30, 0.18);  // brown
-  if (id > 8.5) return vec3(0.42, 0.20, 0.66);  // purple
-  if (id > 7.5) return vec3(0.02, 0.60, 0.80);  // diamond
-  return vec3(0.17, 0.18, 0.23);
+  if (id < 7.5) return vec3(0.17, 0.18, 0.23);  // paper (its lines are graphite)
+  if (id < 8.5) return vec3(0.02, 0.60, 0.80);  // diamond
+  if (id < 9.5) return vec3(0.42, 0.20, 0.66);  // purple
+  if (id < 10.5) return vec3(0.66, 0.36, 0.27); // skin: a warm brown line
+  if (id < 11.5) return vec3(0.80, 0.58, 0.02); // yellow
+  if (id < 12.5) return vec3(0.07, 0.07, 0.10); // black
+  return vec3(0.30, 0.34, 0.47);                // white cloth: a cool grey line
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float linDepth(float d) { float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }
@@ -116,7 +152,11 @@ void main() {
     if (id > 1.5 && id < 2.5) col = mix(col, vec3(0.85, 0.85, 0.87), 0.45 * fade);
     if (id > 4.5 && id < 5.5) col = mix(col, vec3(0.99, 0.84, 0.92), 0.55 * fade);
     if (id > 5.5 && id < 6.5) col = mix(col, vec3(0.93, 0.85, 0.74), 0.6 * fade);
-    if (id > 8.5) col = mix(col, vec3(0.86, 0.78, 0.96), 0.6 * fade);
+    if (id > 12.5) col = mix(col, vec3(1.0, 1.0, 1.0), 0.9 * fade);
+    else if (id > 11.5) col = mix(col, vec3(0.20, 0.20, 0.25), 0.88 * fade);
+    else if (id > 10.5) col = mix(col, vec3(1.0, 0.89, 0.30), 0.75 * fade);
+    else if (id > 9.5) col = mix(col, vec3(1.0, 0.84, 0.71), 0.7 * fade);
+    else if (id > 8.5) col = mix(col, vec3(0.86, 0.78, 0.96), 0.6 * fade);
     else if (id > 7.5) col = mix(col, vec3(0.62, 0.95, 1.0), 0.8 * fade);
     // hatching in the shadows, screen-space, two directions when it gets dark
     if (id < 6.5 || id > 7.5) {
@@ -127,7 +167,7 @@ void main() {
     }
     // outlines: depth laplacian (relative), normal break, ink change
     float edge = 0.0;
-    vec2 o = px * uPx * 1.25;
+    vec2 o = max(px * uPx * 1.25, 1.0 / uTex); // never under one texel of pass 1
     float dl = linDepth(texture2D(tDepth, uv + vec2(o.x, 0.0)).r), dr = linDepth(texture2D(tDepth, uv - vec2(o.x, 0.0)).r);
     float du = linDepth(texture2D(tDepth, uv + vec2(0.0, o.y)).r), dd = linDepth(texture2D(tDepth, uv - vec2(0.0, o.y)).r);
     float lap = abs(dl + dr + du + dd - 4.0 * d) / max(d, 0.5);
@@ -190,8 +230,12 @@ export class InkRenderer {
   camera: THREE.PerspectiveCamera;
   viewCamera: THREE.PerspectiveCamera;
   private rt: THREE.WebGLRenderTarget;
-  private basePr = 1;
-  quality = 1; // render scale chosen by the frame-time governor (0.55 .. 1)
+  private out: THREE.WebGLRenderTarget; // the finished drawing, before FXAA
+  private fxaa: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+  private fxaaScene = new THREE.Scene();
+  private pr = 1;
+  gfx: Gfx = readGfx();
+  quality = 1; // pass 1's scale, chosen by the frame-time governor (0.55 .. gfx.renderScale)
   private post: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private postScene = new THREE.Scene();
   private postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -201,19 +245,27 @@ export class InkRenderer {
 
   // fit: size to the canvas element (a framed view in the lobby) instead of the whole window
   constructor(public canvas: HTMLCanvasElement, private fit = false) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1));
-    this.basePr = Math.min(1.5, devicePixelRatio || 1);
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: this.gfx.antialias, powerPreference: 'high-performance' });
+    this.pr = Math.min(PR_CAP[this.gfx.quality], devicePixelRatio || 1);
+    this.renderer.setPixelRatio(this.pr);
+    this.quality = this.gfx.renderScale;
     this.renderer.autoClear = false;
     this.camera = new THREE.PerspectiveCamera(78, 1, 0.15, 1400);
     this.viewCamera = new THREE.PerspectiveCamera(62, 1, 0.01, 10);
     this.rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
     this.rt.depthTexture = new THREE.DepthTexture(4, 4, THREE.UnsignedIntType);
+    this.out = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: false });
+    this.fxaa = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      vertexShader: FXAAShader.vertexShader, fragmentShader: FXAAShader.fragmentShader, depthTest: false, depthWrite: false,
+      uniforms: { tDiffuse: { value: this.out.texture }, resolution: { value: new THREE.Vector2() } },
+    }));
+    this.fxaa.frustumCulled = false;
+    this.fxaaScene.add(this.fxaa);
     this.post = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
       vertexShader: postVert, fragmentShader: postFrag, depthTest: false, depthWrite: false,
       uniforms: {
         tBuf: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture }, uRes: { value: new THREE.Vector2() },
-        uNear: { value: this.camera.near }, uFar: { value: this.camera.far }, uTime: { value: 0 }, uPx: { value: 1 },
+        uNear: { value: this.camera.near }, uFar: { value: this.camera.far }, uTime: { value: 0 }, uPx: { value: 1 }, uTex: { value: new THREE.Vector2() },
         uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
         uRing: { value: new THREE.Vector3(0, 0, 1e4) }, uNext: { value: new THREE.Vector3(0, 0, 0) }, uDanger: { value: new THREE.Vector4(0, 0, 0, 0) },
       },
@@ -222,7 +274,17 @@ export class InkRenderer {
     this.postScene.add(this.post);
     this.resize();
     addEventListener('resize', () => this.resize());
+    // the settings menu changed something: resolution and smoothing apply at once (multisampling on reload)
+    addEventListener('pr-settings', () => {
+      const g = readGfx(), pr = Math.min(PR_CAP[g.quality], devicePixelRatio || 1);
+      this.gfx = { ...g, antialias: this.gfx.antialias };
+      this.quality = Math.min(this.quality, g.renderScale);
+      if (pr !== this.pr) { this.pr = pr; this.renderer.setPixelRatio(pr); }
+      this.resize();
+    });
   }
+  // FXAA on the finished drawing: on unless the quality is low (antialias asks for it even then)
+  get smooth() { return this.gfx.quality !== 'low' || this.gfx.antialias; }
 
   // one material per ink for plain meshes; instanced meshes carry their ink per instance
   // one material per ink (and per front/back), shared by every mesh that uses it
@@ -232,31 +294,36 @@ export class InkRenderer {
     const hit = this.cache.get(key);
     if (hit) return hit;
     const m = new THREE.ShaderMaterial({
-      vertexShader: passOneVert, fragmentShader: passOneFrag, side: THREE.DoubleSide, defines: front ? { FRONT: '' } : {},
+      vertexShader: passOneVert, fragmentShader: passOneFrag, side: THREE.DoubleSide, defines: { ...(front ? { FRONT: '' } : {}), ...(ink === INK_VERTEX ? { VERTEX_INK: '' } : {}) },
       uniforms: { uInk: { value: ink }, uLight: { value: this.lightView } },
     });
+    m.userData.ink = ink;
     this.materials.push(m);
     this.cache.set(key, m);
     return m;
   }
 
-  // lower the internal resolution when frames run long, raise it again when there is headroom
+  // lower pass 1's resolution when frames run long, raise it again (up to the settings' ceiling) when
+  // there is headroom. The screen itself stays at full resolution, so the pen lines stay sharp
   setQuality(q: number) {
-    q = Math.max(0.55, Math.min(1, q));
+    q = Math.max(0.55, Math.min(this.gfx.renderScale, q));
     if (Math.abs(q - this.quality) < 0.01) return;
     this.quality = q;
-    this.renderer.setPixelRatio(this.basePr * q);
     this.resize();
   }
 
   resize() {
     const w = this.fit ? Math.max(2, this.canvas.clientWidth) : innerWidth, h = this.fit ? Math.max(2, this.canvas.clientHeight) : innerHeight, pr = this.renderer.getPixelRatio();
     this.renderer.setSize(w, h, false);
-    this.rt.setSize(Math.floor(w * pr), Math.floor(h * pr));
+    const W = Math.floor(w * pr), H = Math.floor(h * pr), q = this.quality;
+    this.rt.setSize(Math.max(2, Math.floor(W * q)), Math.max(2, Math.floor(H * q)));
+    this.out.setSize(W, H);
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     this.viewCamera.aspect = w / h; this.viewCamera.updateProjectionMatrix();
-    this.post.material.uniforms.uRes.value.set(Math.floor(w * pr), Math.floor(h * pr));
+    this.post.material.uniforms.uRes.value.set(W, H);
+    this.post.material.uniforms.uTex.value.set(this.rt.width, this.rt.height);
     this.post.material.uniforms.uPx.value = pr;
+    this.fxaa.material.uniforms.resolution.value.set(1 / W, 1 / H);
   }
 
   setDanger(x: number, z: number, r: number, pulse: number) { this.post.material.uniforms.uDanger.value.set(x, z, r, pulse); }
@@ -279,8 +346,16 @@ export class InkRenderer {
     u.uInvProj.value.copy(this.camera.projectionMatrixInverse);
     u.uCamWorld.value.copy(this.camera.matrixWorld);
     u.uCamPos.value.setFromMatrixPosition(this.camera.matrixWorld);
-    r.clear(true, true, true);
-    r.render(this.postScene, this.postCam);
+    if (this.smooth) { // the drawing into a buffer, then smoothed onto the screen
+      r.setRenderTarget(this.out);
+      r.render(this.postScene, this.postCam);
+      r.setRenderTarget(null);
+      r.clear(true, true, true);
+      r.render(this.fxaaScene, this.postCam);
+    } else {
+      r.clear(true, true, true);
+      r.render(this.postScene, this.postCam);
+    }
     r.render(this.overlay, this.camera);
   }
 }

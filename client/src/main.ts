@@ -1,13 +1,15 @@
 /// <reference types="vite/client" />
 import bs58 from 'bs58';
-import { BUILD, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, SKINS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
+import { BUILD, BUS, EPOCH_MS, epochEnd, ITEMS, KNOCK, MAP_HALF, MODES, POINTS, topPlaces, PERKS, PLAYER_HP, RESULT_MS, ROOM_MAX, SHIELD_MAX, SKINS, TICK_HZ, VEHICLES, VEHICLE_KINDS, WEAPONS, type Mode } from '../../shared/src/constants.ts';
 import { OTHER_DOWN, loginMessage, type LobbyRoom, type PotView, type ProfileView, type RoomSeat, type ServerMsg } from '../../shared/src/protocol.ts';
-import { spreadFor } from '../../shared/src/sim.ts';
+import { busLine, spreadFor } from '../../shared/src/sim.ts';
 import { Net } from './net.ts';
 import { LocalNet } from './local.ts';
 import { PotJar } from './potjar.ts';
 import { Game3D, RARITY_CSS } from './game3d.ts';
-import { renderArsenal, renderSkins } from './arsenal.ts';
+import { renderArsenal, renderSkins, skinPics } from './arsenal.ts';
+import { PartyUI } from './party.ts';
+import { lobbyMusic } from './music.ts';
 import { STATIONS, radio } from './radio.ts';
 import { voice } from './voice.ts';
 import { World } from '../../shared/src/world.ts';
@@ -15,6 +17,17 @@ import { FpsInput } from './fpsinput.ts';
 import { sfx } from './audio.ts';
 import { Training, bindManual, guideHTML, manualHTML, tipCardHTML } from './guide.ts';
 import { TOKEN, buyLinks } from '../../shared/src/token.ts';
+import { onSettings, setSetting, settings, type Settings } from './settings.ts';
+import { GameMenu } from './menu.ts';
+import { PreMatch } from './prematch.ts';
+import { Inventory } from './inventory.ts';
+import { Announcer } from './announcer.ts';
+import { hotbarHTML } from './hotbar.ts';
+import { renderIcons } from './icons.ts';
+import './hud.css';
+import { initLanding } from './landing.ts';
+
+initLanding(); // the landing page over the lobby, until Play
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const sol = (lamports: string | bigint) => Number(BigInt(lamports)) / 1e9;
@@ -43,6 +56,7 @@ flyover.ink.setQuality(0.75);
 // the arsenal pictures are drawn once, when the page is idle
 const idle = (window as unknown as { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback ?? ((f: () => void) => setTimeout(f, 300));
 idle(() => renderArsenal($('arsenal')));
+idle(() => renderIcons()); // the hotbar's gun silhouettes and item pictures
 // how to play: drawn cards in the lobby and the waiting room, a checklist in your first matches
 $('guideCards').innerHTML = manualHTML(); bindManual($('guideCards'));
 $('roomGuide').innerHTML = guideHTML(true);
@@ -90,23 +104,35 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyV' && !e.repeat) void voice.talk(true);
   if (e.code === 'KeyU' && voice.active) { voice.setDeaf(!voice.deaf); hint(voice.deaf ? 'squad voice muted (U)' : 'squad voice on', 1500); }
   if (e.code === 'KeyN' && radio.on) radio.nextStation();
+  if (e.code === 'KeyM' && !e.repeat && (state.mapOpen || game.me?.bus)) { toggleMap(); return; } // aboard the plane M is the map
+  if (e.code === 'Escape' && state.mapOpen) { toggleMap(); return; }
   if (e.code === 'KeyM') { radio.muted = !radio.muted; if (radio.muted) { radio.stop(); hint('📻 radio off (M to turn it back on)', 1800); } }
   if (e.code === 'KeyP' && !e.repeat) { // third person (over the shoulder) or first person, remembered
-    game.thirdPerson = !game.thirdPerson;
-    try { localStorage.setItem('pr_view', game.thirdPerson ? 'tp' : 'fp'); } catch { /* private window */ }
+    setSetting('view', game.thirdPerson ? 'fp' : 'tp');
     hint(game.thirdPerson ? 'third person · P for first person' : 'first person · P for third person', 1500);
   }
 });
-try { game.thirdPerson = localStorage.getItem('pr_view') !== 'fp'; } catch { /* private window: third person */ }
 // the character you drop in as (remembered between visits)
 let mySkin = 0;
 try { mySkin = Math.max(0, Math.min(SKINS.length - 1, Number(localStorage.getItem('skin')) || 0)); } catch { /* private window */ }
-setTimeout(() => renderSkins($('skinList'), mySkin, (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } }), 50);
+setTimeout(() => renderSkins($('skinList'), mySkin, (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } renderProfile(); }), 50);
 let flyVisible = true;
 try { new IntersectionObserver((e) => { flyVisible = e[0].isIntersecting; }).observe(flyCanvas); } catch { /* old browser: always draw */ }
 const input = new FpsInput(canvas);
+// settings (Esc menu): look, view, volumes, graphics, applied the moment they change
+function applySettings(_: Settings, key: keyof Settings | null) {
+  input.sens = settings.sens; input.adsSens = settings.adsSens; input.invert = settings.invert;
+  sfx.setVolume(settings.master, settings.effects, settings.music);
+  game.fov = settings.fov;
+  if (key === null || key === 'view') game.thirdPerson = settings.view === 'tp';
+  if (key === null || key === 'quality' || key === 'renderScale') game.ink.setQuality(settings.renderScale);
+}
+onSettings(applySettings);
+applySettings(settings, null);
+// the inventory (Tab / I), the item wheel (hold Z) and the notes on what you just picked up
+const inventory = new Inventory($('inventory'), $('wheel'), $('pickToasts'), input, () => state.screen === 'game' && !state.over && !!game.self?.alive);
 // headless test runs can't take pointer lock; #autotest pretends it was granted (demo build only)
-if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input }; }
+if (DEMO && location.hash === '#autotest') { input.locked = true; input.lock = () => {}; (window as unknown as Record<string, unknown>).__pr = { game, net, input, autopilot: () => import('./autopilot.ts') }; }
 
 type Screen = 'lobby' | 'waiting' | 'game';
 const state = {
@@ -131,6 +157,12 @@ const state = {
   roomMode: 'solo' as Mode,   // the room we are in
   dead: new Set<number>(),    // eliminated this match
   specFire: false, specAim: false, freeSendT: 0,
+  connected: false, guests: true,  // the server said hello; whether it lets guests play
+  sentName: '',                    // the guest name we last sent (the server tidies it up)
+  after: null as null | { mode: Mode; room?: string }, // queue for this once the sign-in lands
+  marker: null as [number, number] | null,   // where you want to land (click the map): yours, and your teammates'
+  marks: new Map<number, [number, number]>(),
+  mapOpen: false,                            // the flight map is open on screen, with the cursor (M aboard the plane)
 };
 try { const m = localStorage.getItem('pr_mode') as Mode | null; if (m && m in MODES) state.mode = m; state.party = localStorage.getItem('pr_party') ?? ''; } catch { /* storage blocked */ }
 
@@ -142,21 +174,22 @@ function show(s: Screen) {
   $('hud').classList.toggle('hidden', s !== 'game');
   canvas.style.visibility = s === 'game' ? 'visible' : 'hidden';
   if (s !== 'game') {
-    input.unlock(); $('pause').classList.add('hidden'); sfx.engine(0, 0); sfx.spin(0);
+    input.unlock(); menu.hide(); prematch.close(); sfx.engine(0, 0); sfx.spin(0);
     voice.stop(); if (prev === 'game' && radio.on) radio.stop(); // the vehicle radio doesn't follow you out of the match
     document.body.classList.remove('knocked');
   }
   if (s === 'lobby') { jar.resize(); flyover.ink.resize(); updatePlay(); }
+  party.onScreen(s); lobbyMusic.setScreen(s);
 }
 
 function err(msg: string) { $('error').textContent = msg; if (msg) setTimeout(() => { if ($('error').textContent === msg) $('error').textContent = ''; }, 5000); }
-function updatePlay() { $<HTMLButtonElement>('playBtn').disabled = !state.authed; }
+function updatePlay() { $<HTMLButtonElement>('playBtn').disabled = !state.connected; }
 
 // ---------- auth ----------
 $('guestBtn').onclick = () => {
   const name = $<HTMLInputElement>('guestName').value.trim() || 'guest';
   try { localStorage.setItem('pr_name', name); } catch { /* storage blocked */ }
-  state.authMode = 'guest'; net.send({ t: 'guest', name });
+  state.authMode = 'guest'; state.sentName = name; net.send({ t: 'guest', name });
 };
 $('guestName').addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') $('guestBtn').click(); });
 try { $<HTMLInputElement>('guestName').value = localStorage.getItem('pr_name') ?? ''; } catch { /* storage blocked */ }
@@ -199,11 +232,37 @@ $('connectBtn').onclick = async () => {
 };
 
 const touchOnly = () => matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
-$('playBtn').onclick = () => {
+$('playBtn').onclick = () => openPrematch(state.mode);
+
+// ---------- before the match: controls, your name, one big button ----------
+const prematch = new PreMatch($('prematch'), {
+  enter: (name) => {
+    const t = state.after ?? { mode: state.mode };
+    if (state.authed && (state.authMode === 'wallet' || name === state.sentName)) return queueFor(t);
+    // not signed in yet (or a new name): sign in as a guest, then queue when the server answers
+    try { localStorage.setItem('pr_name', name); } catch { /* storage blocked */ }
+    $<HTMLInputElement>('guestName').value = name;
+    state.authMode = 'guest'; state.sentName = name; state.after = t;
+    net.send({ t: 'guest', name });
+    prematch.busy('Signing in…');
+  },
+  cancel: () => { state.after = null; },
+});
+function openPrematch(mode: Mode, room?: string) {
   if (touchOnly()) return err('King of the Hill Royale needs a mouse and keyboard. Open it on a computer.');
-  net.send({ t: 'queue', mode: state.mode, party: state.mode === 'solo' ? undefined : state.party || undefined, skin: mySkin });
-  $('queueInfo').textContent = `Finding a ${MODES[state.mode].name.toLowerCase()} room…`;
-};
+  if (!state.authed && !state.guests) return err('Connect a wallet first.');
+  sfx.unlock();
+  state.after = { mode, room };
+  const stored = $<HTMLInputElement>('guestName').value.trim();
+  prematch.open({ mode, name: state.authed ? (state.authMode === 'wallet' ? state.name : state.sentName || state.name) : stored, wallet: state.authed && state.authMode === 'wallet' ? state.wallet : null, guests: state.guests });
+}
+function queueFor(t: { mode: Mode; room?: string }) {
+  state.after = null;
+  const party = t.mode === 'solo' && !t.room ? undefined : state.party || undefined;
+  net.send(t.room ? { t: 'queue', room: t.room, party, skin: mySkin } : { t: 'queue', mode: t.mode, party, skin: mySkin });
+  $('queueInfo').textContent = t.room ? 'Joining that room…' : `Finding a ${MODES[t.mode].name.toLowerCase()} room…`;
+  prematch.busy(t.room ? 'Joining…' : 'Finding a room…');
+}
 
 // ---------- modes / party ----------
 function renderMode() {
@@ -220,12 +279,14 @@ const saveParty = () => { try { localStorage.setItem('pr_party', state.party); }
 $<HTMLInputElement>('party').oninput = (e) => {
   const el = e.target as HTMLInputElement; el.value = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); state.party = el.value; saveParty();
 };
-$('partyNew').onclick = () => {
-  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  state.party = Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join(''); saveParty(); renderMode();
-  navigator.clipboard?.writeText(state.party).then(() => toast(`party code ${state.party} copied`), () => {});
-};
 renderMode();
+// the party pre-lobby (party.ts): Create party / Join, and the slots screen over the lobby
+const party = new PartyUI(net, {
+  skin: () => mySkin,
+  setSkin: (i) => { mySkin = i; try { localStorage.setItem('skin', String(i)); } catch { /* ignore */ } document.querySelectorAll('#skinList .skin').forEach((b, k) => b.classList.toggle('on', k === i)); },
+  mode: () => state.mode, authed: () => state.authed, err, toLobby: () => show('lobby'),
+  canPlay: () => (touchOnly() ? 'King of the Hill Royale needs a mouse and keyboard. Open it on a computer.' : null),
+});
 
 // ---------- pot odometer: each digit is a rolling column ----------
 function odometer(el: HTMLElement, text: string, sym = '◎') {
@@ -275,9 +336,7 @@ function renderRooms(rooms: LobbyRoom[]) {
 $('roomList').addEventListener('click', (e) => {
   const id = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-room]')?.dataset.room;
   if (!id) return;
-  if (!state.authed) return err('Connect a wallet or join as a guest first.');
-  if (touchOnly()) return err('King of the Hill Royale needs a mouse and keyboard. Open it on a computer.');
-  net.send({ t: 'queue', room: id, party: state.party || undefined, skin: mySkin }); $('queueInfo').textContent = 'Joining that room…';
+  openPrematch(lobbyRooms.find((r) => r.id === id)?.mode ?? state.mode, id);
 });
 
 // ---------- ticker: fees coming in, wins, rooms starting ----------
@@ -340,6 +399,7 @@ function renderProfile() {
   chip.setAttribute('aria-expanded', String(!pop.classList.contains('hidden')));
   const won = sol(p.prizeLamports);
   setHTML(pop, `<h4>Your profile <button type="button" data-close aria-label="close">✕</button></h4><div class="pf-wallet">${esc(p.wallet)}</div>`
+    + (skinPics[mySkin] ? `<div class="pf-skin"><img src="${skinPics[mySkin]}" alt=""><span>playing as <b>${esc(SKINS[mySkin])}</b></span></div>` : '')
     + `<div class="pf-status ${p.qualified ? 'ok' : 'no'}">${p.qualified ? `✓ Qualified for this hour's prize` : '✗ Not qualified this hour'}`
     + `<small>${p.balance !== null ? `You hold ${fmtNum(p.balance)} $${esc(p.symbol)}${p.need ? ` · need ${fmtNum(p.need)} (≈ $${p.holdMinUsd})` : ''}` : esc(p.why ?? '')}${p.qualified || p.balance === null ? '' : `<br>${esc(p.why ?? '')}`}</small></div>`
     + `<div class="pf-grid"><div class="gold"><b>${p.points}</b><span>points this hour</span></div><div class="gold"><b>${p.rank ? `#${p.rank}` : '–'}</b><span>rank this hour</span></div><div class="gold"><b>${p.prizes}</b><span>prizes won</span></div>`
@@ -432,19 +492,21 @@ function hitmarker(head: boolean, kill = false) {
   const el = $('hitmarker'); el.classList.toggle('head', head); el.classList.toggle('kill', kill); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   if (head || kill) { const c = $('crosshair'); c.classList.remove('kick'); void c.offsetWidth; c.classList.add('kick'); }
 }
-// you eliminated someone: the pop in the middle of the screen (with the streak: kills 6 s apart or less),
-// the sound, the kill counter, a kick of the camera
-let streak = 0, streakAt = 0;
-const STREAKS = ['', '', 'DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL', 'RAMPAGE', 'UNSTOPPABLE'];
+// you eliminated someone: the pop in the middle of the screen, the sound (a step higher for each kill
+// in a multi-kill), the kill counter, a kick of the camera. The announcer calls the multi-kills and streaks
+const announcer = new Announcer($('announce'));
 function eliminated(victim: number, head: boolean) {
-  const now = performance.now();
-  streak = now - streakAt < 6000 ? streak + 1 : 1; streakAt = now;
   const el = $('elimPop');
   el.classList.toggle('head', head);
-  setHTML(el, `<div class="ep-icon">${head ? '🎯' : '☠'}</div><div class="ep-title">${head ? 'HEADSHOT' : 'ELIMINATED'}</div><div class="ep-name">${esc(label(victim))}</div>${streak > 1 ? `<div class="ep-streak">${STREAKS[Math.min(streak, STREAKS.length - 1)]}</div>` : ''}`);
+  setHTML(el, `<div class="ep-icon">${head ? '🎯' : '☠'}</div><div class="ep-title">${head ? 'HEADSHOT' : 'ELIMINATED'}</div><div class="ep-name">${esc(label(victim))}</div>`);
   el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   const k = $('killCount'); k.classList.remove('pop'); void k.offsetWidth; k.classList.add('pop');
-  sfx.elim(head, streak); hitmarker(head, true); game.kick(head ? 1.3 : 1);
+  sfx.elim(head, announcer.multiKills); hitmarker(head, true); game.kick(head ? 1.3 : 1);
+}
+// your own shield just broke: a crunch you can't miss and a crack across the screen edges
+function armorLost() {
+  sfx.armorLost();
+  const el = $('armorLost'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
 function damageFrom(by: number | null) {
   const pos = by !== null ? game.positionOf(by) : null;
@@ -455,21 +517,26 @@ function damageFrom(by: number | null) {
   setTimeout(() => i.remove(), 1000);
 }
 
-// ---------- pause / pointer lock ----------
-const sens = $<HTMLInputElement>('sens'), invert = $<HTMLInputElement>('invert');
-sens.value = String(input.sens); invert.checked = input.invert;
-const showSens = () => { $('sensVal').textContent = `${Math.round(input.sens * 100)}%`; };
-showSens();
-sens.oninput = () => { input.setSens(Number(sens.value)); showSens(); };
-invert.onchange = () => input.setInvert(invert.checked);
-$('resumeBtn').onclick = () => { sfx.unlock(); input.lock(); };
-$('quitBtn').onclick = () => { net.send({ t: 'leave' }); show('lobby'); };
+// ---------- pause / pointer lock: the Esc menu ----------
+// browsers refuse to take the mouse again for about a second after Esc; Resume waits that out
+let unlockedAt = 0;
+const menu = new GameMenu($('pause'), $('menuCard'), {
+  resume: () => { sfx.unlock(); const wait = unlockedAt + 1100 - performance.now(); if (wait > 0) setTimeout(() => input.lock(), wait); else input.lock(); },
+  leave: () => leaveMatch(),
+  inventory: () => inventory.html(),
+});
+$('pause').addEventListener('mousedown', (e) => { if (e.target === $('pause')) { sfx.unlock(); input.lock(); } }); // a click beside the card plays too
+function leaveMatch() {
+  net.send({ t: 'leave' });
+  $('banner').classList.add('hidden'); $('victory').classList.add('hidden'); stopConfetti();
+  show('lobby'); $('queueInfo').textContent = '';
+}
 input.onLockChange = (locked) => {
-  if (state.screen !== 'game' || state.over) return;
+  if (!locked) unlockedAt = performance.now();
+  if (state.screen !== 'game' || state.over || (state.mapOpen && !locked)) return; // the flight map took the cursor: no pause card
   if (locked && !state.dropped) { state.dropped = true; banner('Drop!', `${MODES[state.roomMode].name} · ${state.seats.length} players${game.mates.size ? ` · ${game.mates.size} teammate${game.mates.size > 1 ? 's' : ''} with you` : ''} · the hill is in the middle`, true, 2400); }
-  $('pause').classList.toggle('hidden', locked);
+  if (locked) menu.hide(); else menu.show(state.dropped ? 'paused' : 'drop');
   if (locked && input.free) hint('mouse capture is blocked here: look with the mouse + arrow keys, Esc to pause', 4500);
-  $('pauseTitle').textContent = game.self ? 'Paused' : 'Click to drop in';
 };
 
 // ---------- maps ----------
@@ -501,14 +568,112 @@ function drawIsland(ctx: CanvasRenderingContext2D, w: World, S: number, labels: 
   }
 }
 function drawPreview(seed: number) {
-  if (state.previewSeed === seed) return;
-  state.previewSeed = seed;
-  const c = $<HTMLCanvasElement>('mapPreview'), ctx = c.getContext('2d')!;
-  ctx.clearRect(0, 0, c.width, c.height);
+  if (state.previewSeed === seed) return paintPreview();
+  state.previewSeed = seed; state.marker = null;
+  const c = $<HTMLCanvasElement>('mapPreview');
   preWorld = new World(seed);
-  drawIsland(ctx, preWorld, c.width, true);
+  previewBase.width = c.width; previewBase.height = c.height;
+  drawIsland(previewBase.getContext('2d')!, preWorld, c.width, true);
+  previewLine = busLine(preWorld);
+  paintPreview();
 }
 let preWorld: World | null = null; // generated for the preview, reused at the drop (it costs 100-300 ms)
+const previewBase = document.createElement('canvas');
+let previewLine: ReturnType<typeof busLine> | null = null;
+function paintPreview() {
+  const c = $<HTMLCanvasElement>('mapPreview'), ctx = c.getContext('2d')!;
+  ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(previewBase, 0, 0);
+  drawDrop(ctx, c.width, previewLine, null, true);
+}
+// a click on a map: your landing marker goes there (a second click on it takes it off), and your teammates see it
+function markAt(canvas: HTMLCanvasElement, e: MouseEvent) {
+  const r = canvas.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width) * MAP_HALF * 2 - MAP_HALF, z = ((e.clientY - r.top) / r.height) * MAP_HALF * 2 - MAP_HALF;
+  const m = state.marker, off = m && Math.hypot(m[0] - x, m[1] - z) < 18;
+  state.marker = off ? null : [Math.round(x), Math.round(z)];
+  if (state.screen === 'game') net.send({ t: 'mark', at: state.marker });
+}
+$('mapPreview').addEventListener('click', (e) => { markAt($<HTMLCanvasElement>('mapPreview'), e); paintPreview(); });
+// the plane's flight over a map (S px across), where the plane is now, and the landing markers
+function drawDrop(ctx: CanvasRenderingContext2D, S: number, line: ReturnType<typeof busLine> | null, plane: { x: number; z: number; dx: number; dz: number } | null, big: boolean) {
+  const k = S / (MAP_HALF * 2), X = (x: number) => (x + MAP_HALF) * k, Y = (z: number) => (z + MAP_HALF) * k;
+  if (line) {
+    const x1 = line.x + line.dx * BUS.len, z1 = line.z + line.dz * BUS.len;
+    ctx.save();
+    ctx.strokeStyle = '#d32336'; ctx.lineWidth = big ? 3 : 2; ctx.setLineDash(big ? [10, 7] : [6, 5]);
+    ctx.beginPath(); ctx.moveTo(X(line.x), Y(line.z)); ctx.lineTo(X(x1), Y(z1)); ctx.stroke(); ctx.setLineDash([]);
+    // arrowheads: which way it flies
+    for (const f of [0.3, 0.55, 0.8]) {
+      const ax = X(line.x + line.dx * BUS.len * f), ay = Y(line.z + line.dz * BUS.len * f), a = Math.atan2(line.dz, line.dx), h = big ? 9 : 6;
+      ctx.fillStyle = '#d32336'; ctx.beginPath(); ctx.moveTo(ax + Math.cos(a) * h, ay + Math.sin(a) * h);
+      ctx.lineTo(ax + Math.cos(a + 2.5) * h, ay + Math.sin(a + 2.5) * h); ctx.lineTo(ax + Math.cos(a - 2.5) * h, ay + Math.sin(a - 2.5) * h); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+  if (plane) { // a little paper plane
+    const a = Math.atan2(plane.dz, plane.dx), h = big ? 13 : 8;
+    ctx.save(); ctx.translate(X(plane.x), Y(plane.z)); ctx.rotate(a);
+    ctx.fillStyle = '#fffdf5'; ctx.strokeStyle = '#1d33b8'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(h, 0); ctx.lineTo(-h * 0.8, -h * 0.7); ctx.lineTo(-h * 0.45, 0); ctx.lineTo(-h * 0.8, h * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  const pin = (at: [number, number], color: string, label: string) => {
+    const x = X(at[0]), y = Y(at[1]), r = big ? 7 : 5;
+    ctx.fillStyle = color; ctx.strokeStyle = '#fffdf5'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - r * 0.8, y - r * 1.6); ctx.arc(x, y - r * 1.9, r, Math.PI * 0.8, Math.PI * 0.2); ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (big && label) { ctx.font = '700 12px sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeText(label, x, y - r * 3.4); ctx.fillText(label, x, y - r * 3.4); }
+  };
+  for (const [id, at] of state.marks) if (!state.dead.has(id)) pin(at, '#13897f', label(id));
+  if (state.marker) pin(state.marker, '#d32336', 'you');
+}
+
+// ---------- the drop: the flight map aboard the plane, the panel that says what to press ----------
+// aboard, the map sits at the side with the plane's line; M opens it big with the cursor, a click marks where
+// you want to land (and gives the mouse back to the game), M or Esc closes it
+const dropMap = $<HTMLCanvasElement>('dropMap'), dropLayer = document.createElement('canvas');
+let dropFor: World | null = null, lineFor: World | null = null, line: ReturnType<typeof busLine> | null = null;
+function toggleMap() {
+  state.mapOpen = !state.mapOpen;
+  dropMap.classList.toggle('open', state.mapOpen);
+  $('tags').style.visibility = state.mapOpen ? 'hidden' : ''; // names and tags over the world, not over the map
+  if (state.mapOpen) input.unlock(); else input.lock();
+}
+dropMap.addEventListener('mousedown', (e) => { if (!state.mapOpen) return; e.stopPropagation(); markAt(dropMap, e); toggleMap(); });
+addEventListener('mousedown', () => { if (state.mapOpen) toggleMap(); }); // a click off the map closes it
+function drawDropMap() {
+  const w = game.world, ctx = dropMap.getContext('2d')!, S = dropMap.width;
+  if (!w) return;
+  if (dropFor !== w) { dropFor = w; dropLayer.width = S; dropLayer.height = S; drawIsland(dropLayer.getContext('2d')!, w, S, true); }
+  ctx.clearRect(0, 0, S, S); ctx.drawImage(dropLayer, 0, 0);
+  drawDrop(ctx, S, line, game.busNow, true);
+  if (!state.marker) { ctx.font = '700 22px Caveat, cursive'; ctx.textAlign = 'center'; ctx.fillStyle = '#1d33b8'; ctx.fillText(state.mapOpen ? 'click where you want to land' : 'M · mark where you want to land', S / 2, S - 16); }
+}
+// what to press right now, aboard and on the way down, with the countdown and how high you are
+function dropFrame() {
+  const me = game.me, w = game.world, alive = !!game.self?.alive;
+  if (w && lineFor !== w) { lineFor = w; line = busLine(w); }
+  const aboard = alive && !!me?.bus, falling = alive && !!me && !me.bus && me.gliding && !me.ride;
+  $('dropHud').classList.toggle('hidden', (!aboard && !falling) || state.mapOpen);
+  dropMap.classList.toggle('hidden', !aboard && !state.mapOpen);
+  if (state.mapOpen && !aboard) { state.mapOpen = false; dropMap.classList.remove('open'); $('tags').style.visibility = ''; $('pause').classList.remove('hidden'); } // thrown out with the map open: click to carry on
+  if (aboard && line && me) {
+    const left = Math.max(0, (BUS.len - ((me.x - line.x) * line.dx + (me.z - line.z) * line.dz)) / BUS.speed);
+    setHTML($('dropHud'), `<div class="big"><kbd>CLICK</kbd> ANYWHERE or <kbd>SPACE</kbd> to jump</div>`
+      + `<div class="sub">the plane throws you out in <b>${Math.ceil(left)} s</b> · <kbd>M</kbd> map${state.marker ? ` · your mark ${Math.round(Math.hypot(state.marker[0] - me.x, state.marker[1] - me.z))} m away` : ': mark where you want to land'}</div>`);
+  } else if (falling && me && w) {
+    const h = Math.max(0, Math.round(me.y - w.groundAt(me.x, me.z, me.y)));
+    setHTML($('dropHud'), me.fall
+      ? `<div class="big"><kbd>SPACE</kbd> to open your glider</div><div class="sub">it opens by itself low down · look down to fall faster</div><div class="alt">${h} m</div>`
+      : `<div class="sub">gliding · <kbd>W</kbd> faster · <kbd>S</kbd> brake · <kbd>A</kbd><kbd>D</kbd> turn · look down to dive</div><div class="alt">${h} m</div>`);
+  }
+  // your marker in the world: a pin over the spot while you're on the way down
+  const tag = $('markTag'), m = state.marker, show = !!m && !!me && alive && (!!me.bus || me.gliding) && !!w;
+  tag.classList.toggle('hidden', !show);
+  if (show && m && me && w) {
+    const at = game.screenAt(m[0], w.groundAt(m[0], m[1], 400) + 2, m[1]);
+    if (!at) tag.classList.add('hidden');
+    else { tag.style.transform = `translate(${at.x}px, ${at.y}px) translate(-50%, -100%)`; setText(tag, `▼ ${Math.round(Math.hypot(m[0] - me.x, m[1] - me.z))} m`); }
+  }
+}
 
 // ---------- minimap ----------
 const mini = $<HTMLCanvasElement>('minimap').getContext('2d')!;
@@ -541,6 +706,7 @@ function drawMinimap() {
     mini.fillRect(toX(v[2]) - s, toY(v[4]) - s / 2, s * 2, v[1] === 4 ? s * 1.6 : s);
     if (v[1] === 1 || v[1] === 2) mini.fillRect(toX(v[2]) - s / 2, toY(v[4]) - s, s, s * 2);
   }
+  if (game.busNow || state.marker || state.marks.size) drawDrop(mini, S, game.busNow ? line : null, game.busNow, false); // the plane's line while it flies, the landing marks
   for (const d of game.drops) { mini.fillStyle = '#e8a317'; mini.strokeStyle = '#2b2f3a'; mini.lineWidth = 1.5; mini.beginPath(); mini.arc(toX(d.x), toY(d.z), 5, 0, Math.PI * 2); mini.fill(); mini.stroke(); }
   if (game.self && !game.self.alive) {
     const cam = game.ink.camera.position;
@@ -560,7 +726,8 @@ function drawMinimap() {
 let lostAt = 0;
 net.onClose = () => {
   if (!lostAt) lostAt = Date.now();
-  state.authed = false; updatePlay();
+  state.authed = false; state.connected = false; updatePlay();
+  if (prematch.isOpen) { prematch.close(); state.after = null; }
   if (state.screen === 'game' && !state.over) { input.unlock(); banner('Connection lost', 'reconnecting to the game server…'); }
   else $('me').textContent = 'Connection to the game server lost · reconnecting…';
 };
@@ -571,10 +738,10 @@ net.on((m: ServerMsg) => {
   }
   switch (m.t) {
     case 'hello':
-      state.nonce = m.nonce; state.authed = false; updatePlay();
+      state.nonce = m.nonce; state.authed = false; state.connected = true; state.guests = m.allowGuests; updatePlay();
       $('guestBtn').classList.toggle('hidden', !m.allowGuests);
       $('guestName').classList.toggle('hidden', !m.allowGuests);
-      if (state.authMode === 'guest') net.send({ t: 'guest', name: state.name || 'guest' });
+      if (state.authMode === 'guest') net.send({ t: 'guest', name: state.sentName || state.name || 'guest' });
       else if (state.authMode === 'wallet') { $('me').textContent = 'Connection lost. Connect your wallet again.'; $('me').classList.remove('on'); }
       if (state.screen !== 'lobby') show('lobby');
       break;
@@ -585,8 +752,9 @@ net.on((m: ServerMsg) => {
       // signed in with Phantom: the button says so (the profile chip up top has the details)
       if (state.authMode === 'wallet') { $('connectBtn').textContent = 'Phantom connected ✓'; $<HTMLButtonElement>('connectBtn').disabled = true; }
       updatePlay();
+      if (state.after && prematch.isOpen) queueFor(state.after); // signed in from the pre-match screen: straight into the queue
       break;
-    case 'error': err(m.msg); $('queueInfo').textContent = ''; break;
+    case 'error': err(m.msg); $('queueInfo').textContent = ''; if (prematch.isOpen) { prematch.close(); state.after = null; } break;
     case 'pot': renderPot(m.pot); break;
     case 'profile': profile = m.profile; renderProfile(); if (!$('victory').classList.contains('hidden')) victoryStats(); break;
     case 'inflow': {
@@ -612,7 +780,7 @@ net.on((m: ServerMsg) => {
       if (s.winners.length) ticker(`<span class="gold">♛ <b>${esc(s.winners.map((w) => w.name || w.wallet.slice(0, 6)).join(' + '))}</b> took the ${hour} pot · ${fmtSol(sol(s.winners.reduce((t, w) => t + BigInt(w.lamports), 0n)))}</span>`);
       break;
     }
-    case 'queued': $('queueInfo').textContent = `In queue, position ${m.position}`; break;
+    case 'queued': $('queueInfo').textContent = `In queue, position ${m.position}`; prematch.busy(`In queue · #${m.position}`); break;
     case 'room': {
       state.seats = m.seats; state.you = m.you; state.startsAt = m.startsAt; state.phase = m.state;
       $('roomId').textContent = m.roomId.toUpperCase();
@@ -625,19 +793,21 @@ net.on((m: ServerMsg) => {
       if (m.state === 'live') {
         state.over = false; state.aimed = false; state.dropped = false; state.dead = new Set(); howtoDone = false;
         tipsSeen = new Set(); training.reset(); Object.assign(learn, { look: 0, walk: 0, sprint: 0, glided: false, mats: 0, combat: 0 });
+        inventory.reset(); announcer.reset();
         game.setRoom(m.seed, m.seats, m.you, preWorld ?? undefined); preWorld = null;
+        state.marks = new Map(); state.mapOpen = false; dropMap.classList.remove('open');
+        if (state.marker) net.send({ t: 'mark', at: state.marker }); // marked on the waiting room's map
         $('feed').innerHTML = '';
         // squad voice with your teammates (online matches; the demo's teammates are bots)
         if (!DEMO && m.mode !== 'solo') { voice.start(m.you, [...game.mates], (to, data) => net.send({ t: 'rtc', to, data })); setTimeout(() => hint('hold V to talk to your squad · U mutes them', 3500), 4000); }
         show('game');
         input.yaw = 0; input.pitch = -0.5;
-        $('pause').classList.remove('hidden');
-        $('pauseTitle').textContent = 'Click to drop in';
-        if (input.locked) $('pause').classList.add('hidden'); // the Play button takes the mouse (needs a click)
+        if (input.locked) menu.hide(); else menu.show('drop'); // the Drop in button takes the mouse (needs a click)
       }
       break;
     }
     case 'rtc': void voice.onSignal(m.from, m.data); break;
+    case 'mark': if (m.at) state.marks.set(m.from, m.at); else state.marks.delete(m.from); break;
     case 'snap':
       game.onSnap(m);
       if (m.self && !state.aimed) { input.yaw = m.self.yaw; input.pitch = m.self.pitch; state.aimed = true; }
@@ -648,9 +818,9 @@ net.on((m: ServerMsg) => {
         if (m.by === state.you) {
           hitmarker(m.head); damageNumber(m.victim, m.dmg, m.head, m.shield); sfx.hit(m.head); game.markHit(m.victim);
           if (m.head) game.kick(0.45);
-          if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); }
+          if (m.broke) { const el = $('shieldbreak'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); sfx.shieldBreak(); hint('shield broken · push now', 1200); }
         }
-        if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); }
+        if (m.victim === state.you) { damageFrom(m.by); sfx.hurt(); if (m.broke) armorLost(); }
         break;
       }
       if (m.kind === 'boom') {
@@ -701,9 +871,10 @@ net.on((m: ServerMsg) => {
         if (!m.landed) { feed('<b style="color:#c98a00">📦 supply drop incoming</b> · legendary inside', false); hint('supply drop incoming: legendary loot, find the balloon', 2600); sfx.siren(); }
         break;
       }
+      if (m.cause !== 'left') announcer.onElim(m.victim, m.by, state.you); // first blood, multi-kills, streaks
       if (m.by === state.you && m.victim !== state.you) eliminated(m.victim, !!m.head);
       state.dead.add(m.victim);
-      if (m.cause !== 'left') game.onElim(m.victim);
+      if (m.cause !== 'left') game.onElim(m.victim, m.by);
       const mine = m.victim === state.you || m.by === state.you || game.mates.has(m.victim) || (m.by !== null && game.mates.has(m.by));
       const how = m.cause === 'ring' ? 'the storm' : m.cause === 'left' ? 'left' : m.by === null ? 'a wreck' : label(m.by);
       feed(`<s>${esc(label(m.victim))}</s> <span class="by">${m.cause === 'shot' ? (m.head ? 'headshot by ' : 'by ') : m.cause === 'ring' ? 'to ' : m.cause === 'ram' ? 'run over by ' : m.cause === 'boom' ? 'blown up by ' : ''}${esc(how)}</span>`, mine);
@@ -716,7 +887,7 @@ net.on((m: ServerMsg) => {
     }
     case 'result': {
       state.over = true;
-      input.unlock(); $('pause').classList.add('hidden');
+      input.unlock(); menu.hide();
       const winners = m.winners ?? (m.winner === null ? [] : [m.winner]);
       const won = winners.includes(state.you), team = winners.length > 1, mine = m.points?.[state.you] ?? 0;
       const word = !winners.length ? 'Draw' : won ? 'Victory!' : team ? `Team ${label(winners[0])} wins` : `${label(winners[0])} wins`;
@@ -877,7 +1048,7 @@ function govern(dt: number) {
   const avg = (perfT / perfN) * 1000;
   perfT = 0; perfN = 0;
   if (avg > 21) game.ink.setQuality(game.ink.quality - 0.1);
-  else if (avg < 14) game.ink.setQuality(game.ink.quality + 0.05);
+  else if (avg < 14) game.ink.setQuality(Math.min(settings.renderScale, game.ink.quality + 0.05)); // never above the resolution setting
 }
 function frame(now: number) {
   const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
@@ -925,21 +1096,17 @@ function frame(now: number) {
       setText($('hpNum'), String(me.hp));
       $('shFill').style.width = `${(me.shield / SHIELD_MAX) * 100}%`;
       setText($('shNum'), String(me.shield));
-      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= 75);
-      for (const sel of ['.hud-bl', '.hud-br']) (document.querySelector(sel) as HTMLElement).style.visibility = me.alive ? 'visible' : 'hidden';
+      document.querySelector('.hud-bl')!.classList.toggle('low', me.hp <= PLAYER_HP * 0.3);
+      for (const sel of ['.hud-bl', '#hotbar']) { const el = document.querySelector(sel) as HTMLElement | null; if (el) el.style.visibility = me.alive ? 'visible' : 'hidden'; }
       setText($('ammo'), def ? (def.melee ? '∞' : String(mag)) : '–'); // a blade has no ammo
-      setText($('ammoMax'), def && !def.melee ? `/${def.mag}` : '');
+      setText($('ammoMax'), def && !def.melee ? `/${def.ammo ? me.ammo?.[def.ammo] ?? 0 : def.mag}` : ''); // what's left to reload with
       $('reloading').classList.toggle('hidden', me.reloadT <= 0);
       setHTML($('magTally'), def && !def.melee ? Array.from({ length: Math.min(def.mag, 30) }, (_, i) => `<i class="${i < mag ? '' : 'spent'}"></i>`).join('') : '');
-      setText($('weapon'), me.axe ? 'Diamond Pickaxe' : def ? def.name : 'unarmed');
-      $('weapon').style.color = def ? RARITY_CSS[def.rarity] : '';
-      setHTML($('weapons'), `<li class="axe ${me.axe ? 'on' : ''}"><span><kbd>X</kbd> pickaxe</span><em>▦ ${me.mats}</em></li>` + me.slots.map((s, i) => s
-        ? `<li class="${i === me.cur && !me.axe ? 'on' : ''}" style="color:${RARITY_CSS[WEAPONS[s].rarity]}"><span>${WEAPONS[s].name}${me.ups?.[i] ? `<b class="stars">${'★'.repeat(me.ups[i])}</b>` : ''}</span><em>${me.mags[i]}/${WEAPONS[s].mag}</em></li>`
-        : `<li class="empty"><span>empty</span><em></em></li>`).join(''));
-      const shields = me.items.big + me.items.mini;
-      setHTML($('items'), `<span class="${shields ? '' : 'empty'}"><kbd>5</kbd> shield ×${me.items.big}<small>+${me.items.mini} mini</small></span>`
-        + `<span class="${me.items.med ? '' : 'empty'}"><kbd>6</kbd> medkit ×${me.items.med}</span>`
-        + `<span class="${me.perk ? '' : 'empty'}" style="${me.perk ? `color:${RARITY_CSS[PERKS[me.perk.kind].rarity]}` : ''}"><kbd>G</kbd> ${me.perk ? `${PERKS[me.perk.kind].name} ×${me.perk.n}` : 'no perk'}</span>`);
+      // the hotbar (hidden in a vehicle, where the vehicle card takes the bottom of the screen)
+      const hb = $('hotbar');
+      hb.classList.toggle('hidden', !me.alive || !!game.me?.ride);
+      if (me.alive && !game.me?.ride) setHTML(hb, hotbarHTML(me));
+      inventory.update(me);
       // one bar for anything that takes time: healing, bleeding out, being picked up, picking up
       const bar = me.use ? { label: ITEMS[me.use.item].name, k: 1 - me.use.t / ITEMS[me.use.item].use, cls: '' }
         : me.reviving > 0 ? { label: 'reviving teammate…', k: me.reviving / KNOCK.revive, cls: 'revive' }
@@ -967,10 +1134,15 @@ function frame(now: number) {
       setHTML($('prompt'), game.prompt);
       setText($('killCount'), String(me.kills));
       const body = game.me;
-      const scoped = input.aim && (w === 'heavy' || w === 'hunting') && me.alive;
-      const spread = body && w ? spreadFor(body, w, input.aim) : 0.02;
+      const scoped = input.aim && !!w && WEAPONS[w].sight === 'scope' && me.alive;
+      // aiming down sights in first person: the gun's own sight over the middle of the screen (irons and red
+      // dots replace the crosshair; a launcher's ring sits around it and hides nothing)
+      const sight = me.alive && w && !scoped && game.aimK > 0.7 ? WEAPONS[w].sight : null, overlay = sight === 'iron' || sight === 'dot' || sight === 'ring';
+      $('sight').className = `sight ${overlay ? sight : 'hidden'}`;
+      const tank = body?.ride === 5 && !body.seat; // a tank's gunner sight: a steady crosshair (the cannon has no spread)
+      const spread = tank ? 0.006 : body && w ? spreadFor(body, w, input.aim) : 0.02;
       $('crosshair').style.setProperty('--s', `${Math.round(6 + spread * 900)}px`);
-      $('crosshair').style.visibility = me.alive && !scoped ? 'visible' : 'hidden';
+      $('crosshair').style.visibility = me.alive && !scoped && sight !== 'iron' && sight !== 'dot' ? 'visible' : 'hidden';
       $('scope').classList.toggle('hidden', !scoped);
       if (body?.gliding && me.alive) tipOnce('glide', 'gliding · look down to dive, look up to float · land anywhere', 5000, 5);
     }
@@ -1002,7 +1174,7 @@ function frame(now: number) {
       const kmh = Math.round(Math.hypot(game.me!.vx, game.me!.vy, game.me!.vz) * 3.6);
       setHTML($('vehHud'), `<div class="veh-name">${def.name}<b>${kmh}<small> km/h</small></b></div><div class="bar veh"><div style="width:${hpPct}%" class="${hpPct < 30 ? 'low' : ''}"></div></div>`
         + `<div class="veh-keys">${game.me!.seat ? '<b>passenger</b> · <kbd>LMB</kbd> shoot out of it · <kbd>G</kbd> throw · <kbd>E</kbd> hop off' : kind === 'car' || kind === 'moto' ? '<kbd>W</kbd><kbd>S</kbd> gas / brake · <kbd>A</kbd><kbd>D</kbd> steer · <kbd>Shift</kbd> boost · <kbd>Space</kbd> hop · <kbd>LMB</kbd> drive-by'
-          : kind === 'tank' ? '<kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · drive through walls'
+          : kind === 'tank' ? `<span class="cannon ${game.tankCd > 0 ? 'wait' : 'ready'}">${game.tankCd > 0 ? `cannon reloading ${game.tankCd.toFixed(1)}s` : 'cannon ready'}</span> · <kbd>Mouse</kbd> aim the turret · <kbd>LMB</kbd> cannon · <kbd>RMB</kbd> machine gun · <kbd>W</kbd><kbd>S</kbd> tracks · <kbd>A</kbd><kbd>D</kbd> turn`
           : kind === 'heli' ? '<kbd>WASD</kbd> fly · <kbd>Space</kbd>/<kbd>C</kbd> up / down · <kbd>Shift</kbd> fast · <kbd>LMB</kbd> nose gun'
           : '<kbd>Mouse</kbd> steer · <kbd>W</kbd><kbd>S</kbd> throttle · <kbd>Shift</kbd> afterburner · <kbd>LMB</kbd> guns · <kbd>RMB</kbd> bomb'}${game.me!.seat ? '' : ' · <kbd>E</kbd> get out'}</div>`);
     }
@@ -1024,7 +1196,8 @@ function frame(now: number) {
     st.textContent = g.nr <= 0 && g.r <= 1 ? 'final storm' : g.closing ? `storm closing · ${g.nextIn}s` : `storm moves in ${g.nextIn}s`;
     st.classList.toggle('calm', !g.closing);
     if (state.pot) { const s = sol(state.pot.lamports), u = state.pot.solUsd; setText($('miniPot'), u ? `$${Math.round(s * u).toLocaleString('en-US')}` : fmtSol(s)); }
-    if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); }
+    dropFrame();
+    if ((miniT += dt) > 0.1) { miniT = 0; drawMinimap(); if (!dropMap.classList.contains('hidden')) drawDropMap(); }
     miniJar.frame(dt);
   }
   requestAnimationFrame(frame);

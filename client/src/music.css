@@ -1,0 +1,12 @@
+/* the lobby music's mute toggle, in the bottom-right corner of every screen outside a match */
+.music-btn { position: fixed; right: 14px; bottom: 14px; z-index: 40; width: 42px; height: 42px; display: grid; place-items: center; cursor: pointer;
+  background: var(--card); color: var(--ink); border: 2.5px solid var(--ink); border-radius: var(--wobble-2); box-shadow: 3px 3px 0 var(--ink);
+  font-size: 22px; line-height: 1; transition: transform .12s, box-shadow .12s, opacity .2s; }
+.music-btn:hover { transform: translate(-1px, -1px) rotate(-3deg); box-shadow: 4px 4px 0 var(--ink); }
+.music-btn:focus-visible { outline: 3px solid var(--hl); outline-offset: 2px; }
+.music-btn span { display: block; animation: music-bob 2.6s ease-in-out infinite; }
+.music-btn.muted { color: var(--ink-faint); border-color: var(--ink-faint); box-shadow: none; }
+.music-btn.muted span { animation: none; }
+.music-btn.muted::after { content: ''; position: absolute; left: 8px; right: 8px; top: 50%; height: 2.5px; background: var(--red); transform: rotate(-35deg); border-radius: 2px; }
+@keyframes music-bob { 0%, 100% { transform: translateY(0) rotate(-6deg); } 50% { transform: translateY(-2px) rotate(6deg); } }
+@media (prefers-reduced-motion: reduce) { .music-btn span { animation: none; } }
