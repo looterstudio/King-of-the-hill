@@ -851,11 +851,11 @@ test('the hold requirement is min(HOLD_TOKENS, $HOLD_MIN_USD) and fixed for the 
   const dir = mkdtempSync(join(tmpdir(), 'pr-'));
   let price = 0.001; // $1M market cap at 1B supply: $50 = 50K tokens
   const ep = new Epochs({ ...config, dataDir: dir, holdTokens: 50_000, holdMinUsd: 50 }, new MockPot(), () => EPOCH_MS * 300 + 5, () => price);
-  assert.equal(ep.requirement(), 50_000);
-  price = 0.0001; // dumps 10x: $50 would be 500K tokens, but the cap keeps it at 50K and it is fixed anyway
-  assert.equal(ep.requirement(), 50_000);
+  assert.equal(ep.requirement(), 40_000, '$50 at $0.001 is 50K tokens, 80% of it with the margin: under the 50K cap');
+  price = 0.0001; // dumps 10x: it is fixed for the hour anyway
+  assert.equal(ep.requirement(), 40_000);
   const ep2 = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 50_000, holdMinUsd: 50 }, new MockPot(), () => EPOCH_MS * 301 + 5, () => 0.01);
-  assert.equal(ep2.requirement(), 5_000, 'pumped 10x: $50 is 5K tokens, new players need less');
+  assert.equal(ep2.requirement(), 4_000, 'pumped 10x: $50 is 5K tokens, new players need less (80% of it: the margin)');
 });
 
 test('dollars only (no token cap): without a price the requirement is never 0', () => {
@@ -863,9 +863,9 @@ test('dollars only (no token cap): without a price the requirement is never 0', 
   const ep = new Epochs({ ...config, dataDir: mkdtempSync(join(tmpdir(), 'pr-')), holdTokens: 0, holdMinUsd: 25 }, new MockPot(), () => now, () => price);
   assert.equal(ep.requirement(500), Number.MAX_SAFE_INTEGER, 'no price yet: nobody qualifies for free');
   price = 0.0005;
-  assert.equal(ep.requirement(500), 50_000, '$25 at $0.0005 is 50K tokens, fixed for the hour');
+  assert.equal(ep.requirement(500), 40_000, '$25 at $0.0005 is 50K tokens; 80% of that (the margin), fixed for the hour');
   price = null; now += EPOCH_MS;
-  assert.equal(ep.requirement(501), 50_000, 'the price feed is down next hour: last hour\'s requirement, not 0');
+  assert.equal(ep.requirement(501), 40_000, 'the price feed is down next hour: last hour\'s requirement, not 0');
 });
 
 test('selling before a hidden snapshot voids your points; holders keep theirs', async () => {

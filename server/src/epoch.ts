@@ -28,6 +28,7 @@ export const CANDLE_MS = 10 * 60_000; // scoring closes at a random moment insid
 const SNAPSHOTS = 6;                  // hidden balance checks per epoch
 const SWEEP_CONCURRENCY = 8;
 
+const HOLD_GRACE = 0.8; // the requirement is this share of the announced dollars (see requirement())
 export class Epochs extends EventEmitter {
   current: number;
   private tallies = new Map<number, Map<string, Tally>>();
@@ -78,7 +79,9 @@ export class Epochs extends EventEmitter {
     if (this.cfg.holdMinUsd <= 0 && this.cfg.holdTokens <= 0) r = 0;
     else {
       const usd = this.priceUsd();
-      const byUsd = this.cfg.holdMinUsd > 0 && usd ? this.cfg.holdMinUsd / usd : Infinity;
+      // the price is the last hour's median, so a token that is climbing is worth more now than the median says: a 20% margin
+      // keeps someone holding $25 at today's price qualified (it takes a 25% rise inside the hour to put them under)
+      const byUsd = this.cfg.holdMinUsd > 0 && usd ? (this.cfg.holdMinUsd * HOLD_GRACE) / usd : Infinity;
       r = Math.min(this.cfg.holdTokens > 0 ? this.cfg.holdTokens : Infinity, byUsd);
       if (!Number.isFinite(r)) {
         // no price and no token cap (dollars only): the last hour's requirement, never 0. With none yet,
