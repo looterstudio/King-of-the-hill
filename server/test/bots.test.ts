@@ -19,7 +19,7 @@ function match(seed: number, mode: Mode, capS = 1200) {
   sim.spawn(ids, teams, { bus: true }); // as a real match: the paper plane, the pickaxe only, bots that know each other
   const bots = ids.map((id) => newBot(id, rng(seed * 1000 + id)));
   teamDrops(bots, teams, rng(seed ^ 0xabc), sim.bus);
-  markBots(sim, ids);
+  markBots(sim, bots);
   const out = { stuckMax: 0, stormMax: 0, mateHits: 0, blind: 0, shots: 0, ringDeaths: 0, staleView: 0, botMs: 0, ticks: 0 };
   const trail = new Map<number, { x: number; z: number; free: boolean }[]>(), busy = new Set<number>();
   const storm = new Map<number, number>();

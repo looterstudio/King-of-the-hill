@@ -133,23 +133,24 @@ async function predicted(plan: (k: number) => { gen: number; delay: number }, ti
   const copy = (f: Record<string, unknown>, t: Record<string, unknown>) => { for (const k of KEYS) t[k] = f[k]; };
   const world = new Sim(77).world, m = new Match('p', 77, [1, 2], 0, { 1: 0, 2: 1 });
   type In = ReturnType<typeof emptyInput>;
-  let pred: Record<string, unknown> | null = null, seq = 0, now = 0, lastAt = 0, worst = 0, n = 0;
+  let pred: Record<string, unknown> | null = null, seq = 0, now = 0, lastAt = 0, worst = 0, n = 0, left = -99; // left: the tick we jumped out of the plane
   const pending: In[] = [], net: { at: number; i: In }[] = [], snaps: { at: number; body: Record<string, unknown>; ack: number }[] = [];
   for (let k = 0; k < ticks; k++) {
     const { gen, delay } = plan(k);
     for (let g = 0; g < gen && pred; g++) {
       const i = { ...emptyInput(), seq: ++seq, fwd: 1, sprint: true, yaw: 0.3 + Math.sin(seq / 60) * 0.8, pitch: -0.4, jump: seq % 45 === 0 };
-      moveStep(world, pred as never, i, 1 / 30); pending.push(i); lastAt = Math.max(lastAt, k + delay); net.push({ at: lastAt, i });
+      const was = pred.bus; moveStep(world, pred as never, i, 1 / 30); if (was && !pred.bus) left = k; pending.push(i); lastAt = Math.max(lastAt, k + delay); net.push({ at: lastAt, i });
     }
     while (net.length && net[0].at <= k) m.input(1, net.shift()!.i);
     m.step((now += 1000 / 30));
     const p = m.sim.players.get(1)!, body: Record<string, unknown> = {}; copy(p as never, body); snaps.push({ at: k + 2, body, ack: p.ack });
     for (const s of snaps.filter((x) => x.at <= k)) {
-      const before = pred ? [pred.x as number, pred.y as number, pred.z as number] : null, base = { ...s.body };
+      const before = pred ? [pred.x as number, pred.y as number, pred.z as number] : null, base = { ...s.body }, aboard = !!pred?.bus || !!base.bus; // aboard, the client draws the plane by the clock, not the prediction
       for (let j = pending.length - 1; j >= 0; j--) if (pending[j].seq <= s.ack) pending.splice(j, 1);
       for (const q of pending) moveStep(world, base as never, q, 1 / 30);
       if (!pred) pred = base; else copy(base, pred);
-      if (before && k > 60) { const d = Math.hypot(before[0] - (pred.x as number), before[1] - (pred.y as number), before[2] - (pred.z as number)); if (d > 0.05) { n++; worst = Math.max(worst, d); } }
+      // (leaving the plane is one small correction: it flies on by the clock)
+      if (before && k > 60 && !aboard && k - left > 6) { const d = Math.hypot(before[0] - (pred.x as number), before[1] - (pred.y as number), before[2] - (pred.z as number)); if (d > 0.05) { n++; worst = Math.max(worst, d); } }
     }
     for (let j = snaps.length - 1; j >= 0; j--) if (snaps[j].at <= k) snaps.splice(j, 1);
   }

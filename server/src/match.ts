@@ -51,7 +51,7 @@ export class Match {
     this.sim.spawn([...ids, ...bots], teamOf, { bus: true });
     for (const id of ids) this.seats.set(id, new Seat());
     this.bots = bots.map((id) => newBot(id, rng(seed * 7919 + id)));
-    markBots(this.sim, bots);
+    markBots(this.sim, this.bots);
     teamDrops(this.bots, teamOf ?? new Map([...ids, ...bots].map((id) => [id, id])), rng(seed ^ 0x5eed), this.sim.bus);
     const sizes = new Map<number, number>();
     for (const p of this.sim.players.values()) sizes.set(p.team, (sizes.get(p.team) ?? 0) + 1);

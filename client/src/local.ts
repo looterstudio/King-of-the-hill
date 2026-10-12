@@ -175,7 +175,7 @@ export class LocalNet {
     r.seats = r.seats.map((s) => ({ ...s, team: teams.get(s.id)! }));
     r.sim.spawn(r.seats.map((s) => s.id), teams, { bus: true });
     teamDrops(r.bots, teams, Math.random, r.sim.bus);
-    markBots(r.sim, r.bots.map((b) => b.id));
+    markBots(r.sim, r.bots);
     this.mine = new InputQueue(emptyInput(), TICK_HZ); this.killer = null; this.teamPlace = new Map(); this.free = null; this.viewer = { lootVer: -1, lootAt: -9 };
     this.announce('live', null);
     // your bot teammates show where they mean to land, like a squad would

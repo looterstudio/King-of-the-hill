@@ -38,9 +38,12 @@ export interface Bot {
 
 // which players in a match are bots: between bots fights start rarely early on and more as the storm closes
 // (99 bots fighting everything they saw ended a match in four minutes); against people a bot always fights
-const BOTS = new WeakMap<Sim, Set<number>>();
-export function markBots(sim: Sim, ids: Iterable<number>) { const s = BOTS.get(sim) ?? new Set<number>(); for (const id of ids) s.add(id); BOTS.set(sim, s); }
-const BOT_AGGRO = [0.05, 0.1, 0.2, 0.35, 0.6];
+// (and a person never has more than two bots on them at once: a match is for the people in it)
+const BOTS = new WeakMap<Sim, { ids: Set<number>; list: Bot[] }>();
+export function markBots(sim: Sim, bots: Bot[]) { const r = BOTS.get(sim) ?? { ids: new Set<number>(), list: [] }; for (const b of bots) { r.ids.add(b.id); r.list.push(b); } BOTS.set(sim, r); }
+const BOT_AGGRO = [0.02, 0.05, 0.1, 0.2, 0.45];
+const ON_PERSON = 2;
+const PHASE_PEACE = 1e9; // a peace value from here up: until the storm moves on (PHASE_PEACE + the circle it was made in)
 
 export function newBot(id: number, rand: () => number): Bot {
   // normal players, not aimbots: the best of them plays like a decent human
@@ -397,7 +400,7 @@ export function botInput(b: Bot, sim: Sim): Input {
     // the few nearest enemies: shoot the nearest one we can see (standing first), else keep track of the
     // nearest; stay on the one we're shooting unless another is much closer
     // (at the end of a match the nearest anywhere, to go and find: two bots must not wait out the storm apart)
-    const near: { q: PlayerState; d: number }[] = [], bots = BOTS.get(sim);
+    const near: { q: PlayerState; d: number }[] = [], reg = BOTS.get(sim), armedSelf = self.slots.some(Boolean);
     let far: { q: PlayerState; d: number } | null = null;
     for (const q of sim.players.values()) {
       if (!q.alive || q.team === self.team || q.gliding) continue; // gliders can't shoot back
@@ -415,12 +418,20 @@ export function botInput(b: Bot, sim: Sim): Input {
       const q = near[i].q;
       if (q.id === hit) { b.peace.set(q.id, -1); continue; } // whoever shot us: always
       if (q === tgt && b.los) continue;
-      if (bots?.has(q.id)) {
+      if (reg) {
+        const bot = reg.ids.has(q.id);
+        // a person who already has two bots on them is left to those two
+        if (!bot && reg.list.filter((o) => o !== b && o.target === q.id && o.los).length >= ON_PERSON) { near.splice(i, 1); continue; }
+        // peace with another bot holds for the rest of this circle (rolled again at every meeting, a bot crossing
+        // twenty others on the way into the circle all but certainly started one, and they all did at once)
         const until = b.peace.get(q.id);
-        if (until !== undefined && t < until) { near.splice(i, 1); continue; }
-        if (until === undefined || t >= until) {
-          if (R() >= (BOT_AGGRO[g.phase] ?? 1)) { b.peace.set(q.id, t + 30); near.splice(i, 1); continue; }
-          b.peace.set(q.id, -1); // a fight: stays one until it's over
+        if (until !== -1) { // -1: a fight already on, it stays one until it's over
+          if (until !== undefined && (until >= PHASE_PEACE ? until - PHASE_PEACE === g.phase : t < until)) { near.splice(i, 1); continue; }
+          // another bot: rarely early on, more as the storm closes, and much more when both carry guns and
+          // they're close; a person: a fair chance from the start (but never everyone at once, above)
+          const base = BOT_AGGRO[g.phase] ?? 1, chance = bot ? (armedSelf && q.slots.some(Boolean) && near[i].d < 20 ? Math.min(1, base * 2) : base) : Math.min(1, 0.3 + base * 1.2);
+          if (R() >= chance) { b.peace.set(q.id, bot ? PHASE_PEACE + g.phase : t + 12); near.splice(i, 1); continue; }
+          b.peace.set(q.id, -1);
         }
       }
       if (near[i].d > 4 && Math.abs(angDiff(yawTo(self, q.x, q.z), self.yaw)) > 1.2 && q !== tgt) near.splice(i, 1);

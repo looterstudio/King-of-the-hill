@@ -27,7 +27,7 @@ const PR_CAP: Record<GfxQuality, number> = { low: 1, medium: 1.5, high: 2 };
 
 // ink palette, indexed by the ink id written in pass 1 (matches shared/src/world.ts INK)
 // (SKIN, YELLOW, BLACK and WHITE are for the characters: faces, robots, hair, clothes)
-export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9, SKIN: 10, YELLOW: 11, BLACK: 12, WHITE: 13 } as const;
+export const INK_IDS = { BLUE: 0, RED: 1, GRAPHITE: 2, ORANGE: 3, GREEN: 4, PINK: 5, BROWN: 6, PAPER: 7, DIAMOND: 8, PURPLE: 9, SKIN: 10, YELLOW: 11, BLACK: 12, WHITE: 13, DEEP: 14 } as const; // DEEP: a deep brown skin
 // a material whose ink comes from each vertex (aInk): a whole character is one mesh in many inks
 export const INK_VERTEX = -1;
 
@@ -109,7 +109,8 @@ vec3 inkColor(float id) {
   if (id < 10.5) return vec3(0.66, 0.36, 0.27); // skin: a warm brown line
   if (id < 11.5) return vec3(0.80, 0.58, 0.02); // yellow
   if (id < 12.5) return vec3(0.07, 0.07, 0.10); // black
-  return vec3(0.30, 0.34, 0.47);                // white cloth: a cool grey line
+  if (id < 13.5) return vec3(0.30, 0.34, 0.47); // white cloth: a cool grey line
+  return vec3(0.22, 0.12, 0.08);                // deep skin: a dark brown line
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float linDepth(float d) { float z = d * 2.0 - 1.0; return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear)); }
@@ -152,7 +153,8 @@ void main() {
     if (id > 1.5 && id < 2.5) col = mix(col, vec3(0.85, 0.85, 0.87), 0.45 * fade);
     if (id > 4.5 && id < 5.5) col = mix(col, vec3(0.99, 0.84, 0.92), 0.55 * fade);
     if (id > 5.5 && id < 6.5) col = mix(col, vec3(0.93, 0.85, 0.74), 0.6 * fade);
-    if (id > 12.5) col = mix(col, vec3(1.0, 1.0, 1.0), 0.9 * fade);
+    if (id > 13.5) col = mix(col, vec3(0.50, 0.32, 0.22), 0.85 * fade);
+    else if (id > 12.5) col = mix(col, vec3(1.0, 1.0, 1.0), 0.9 * fade);
     else if (id > 11.5) col = mix(col, vec3(0.20, 0.20, 0.25), 0.88 * fade);
     else if (id > 10.5) col = mix(col, vec3(1.0, 0.89, 0.30), 0.75 * fade);
     else if (id > 9.5) col = mix(col, vec3(1.0, 0.84, 0.71), 0.7 * fade);
