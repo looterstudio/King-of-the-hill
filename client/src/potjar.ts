@@ -246,9 +246,12 @@ export class PotJar {
     ctx.fillStyle = PINK; ctx.beginPath(); ctx.ellipse(g.cx + g.rx * 0.66, g.cy + g.ry * 0.06, g.rx * 0.09, g.ry * 0.07, 0, 0, Math.PI * 2); ctx.fill();
     const smile = new Path2D(); smile.moveTo(g.cx + g.rx * 0.7, g.cy + g.ry * 0.32); smile.quadraticCurveTo(g.cx + g.rx * 0.8, g.cy + g.ry * 0.42, g.cx + g.rx * 0.88, g.cy + g.ry * 0.34); this.pen(smile, 2 * lw);
     // curly tail
-    const tail = new Path2D(), tx = g.cx - g.rx * 0.99, ty = g.cy - g.ry * 0.05;
+    const tail = new Path2D(), tx = g.cx - g.rx * 0.99, ty = g.cy - g.ry * 0.05, u = g.rx / 60;
+    // a short stalk out of the rump that curls up into one loop
     tail.moveTo(tx, ty);
-    for (let a = 0; a < Math.PI * 3.4; a += 0.2) { const rr = 3 + a * 2; tail.lineTo(tx - 8 - Math.cos(a) * rr * 0.6 - a * 2, ty - Math.sin(a) * rr * 0.6); }
+    tail.bezierCurveTo(tx - 10 * u, ty + 2 * u, tx - 19 * u, ty - 5 * u, tx - 16 * u, ty - 14 * u);
+    tail.bezierCurveTo(tx - 13 * u, ty - 22 * u, tx - 3 * u, ty - 20 * u, tx - 5 * u, ty - 12 * u);
+    tail.bezierCurveTo(tx - 6.5 * u, ty - 7 * u, tx - 12 * u, ty - 9 * u, tx - 11.5 * u, ty - 14 * u);
     this.pen(tail, 2.2 * lw);
     // slot with a coin halfway in
     const slot = new Path2D(); slot.moveTo(g.cx - g.rx * 0.14, g.top + 4); slot.lineTo(g.cx + g.rx * 0.14, g.top + 3);
