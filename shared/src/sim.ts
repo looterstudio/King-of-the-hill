@@ -181,8 +181,15 @@ export function rayPlayer(ox: number, oy: number, oz: number, dx: number, dy: nu
   if (a2 > 1e-9) {
     const br = fx * dx + fz * dz, cr = fx * fx + fz * fz - (PLAYER_R + 0.05) ** 2, dr = br * br - a2 * cr;
     if (dr >= 0) {
-      const t = (-br - Math.sqrt(dr)) / a2, y = oy + dy * t;
-      if (t >= 0 && y >= py && y <= py + HEAD_Y - HEAD_R && (!best || t < best.t)) best = { t, head: false };
+      // the stretch of the ray inside the body's cylinder, cut to the body's height: a ray coming down
+      // steeply (an axe swung up close, a shot from above) enters over the shoulders and still goes
+      // through the chest (only the entry point was checked, so those all missed)
+      const sq = Math.sqrt(dr), top = py + HEAD_Y - HEAD_R;
+      let t0 = (-br - sq) / a2, t1 = (-br + sq) / a2;
+      if (Math.abs(dy) > 1e-9) { const ya = (py - oy) / dy, yb = (top - oy) / dy; t0 = Math.max(t0, Math.min(ya, yb)); t1 = Math.min(t1, Math.max(ya, yb)); }
+      else if (oy < py || oy > top) t1 = -1;
+      const t = Math.max(0, t0);
+      if (t <= t1 && (!best || t < best.t)) best = { t, head: false };
     }
   }
   return best;
@@ -1020,6 +1027,20 @@ export class Sim {
     }
     const wb = this.world.raycastBox(ox, oy, oz, dx, dy, dz, AXE.reach);
     if (wb.i >= 0 && wb.t < best) { this.chopAt(p, dx, dy, dz, AXE.reach, AXE.block, ev); return; }
+    // nothing on the crosshair: someone right in front of the body still takes it (over the shoulder, the
+    // crosshair runs to the right of whoever is in your face)
+    if (!hitP && !hitV) {
+      const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw), ey = p.y + EYE_H;
+      let bd = AXE.reach - 0.6;
+      for (const q of this.players.values()) {
+        if (!q.alive || q.id === p.id || q.team === p.team || Math.abs(q.y - p.y) > 1.6) continue;
+        const qx = q.x - p.x, qz = q.z - p.z, d = Math.hypot(qx, qz);
+        if (d > bd + PLAYER_R || (d > 0.6 && (qx * fx + qz * fz) / d < 0.8)) continue; // within about 35 degrees of where you face
+        const cy = q.y + 1.1 - ey, L = Math.hypot(qx, cy, qz);
+        if (L > 0.5 && this.world.raycast(p.x, ey, p.z, qx / L, cy / L, qz / L, L) < L - 0.35) continue; // not through a wall
+        bd = d; hitP = { q, head: false };
+      }
+    }
     if (hitV) { this.damageVehicle(hitV, AXE.vehicle, p.id, ev); return; }
     if (hitP) {
       const dmg = Math.round(AXE.player * (hitP.head ? 1.5 : 1)), h = this.hurt(hitP.q, dmg);

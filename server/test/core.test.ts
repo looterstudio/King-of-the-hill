@@ -1291,3 +1291,22 @@ test('the team wallet pot never counts what the team still owes, and remembers w
     assert.throws(() => new WalletPot({ ...cfg, potWallet: '' }), /POT_WALLET/);
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('the pickaxe and the blade hit someone right in front of you, in first and third person', () => {
+  for (const tp of [false, true]) for (const gun of ['axe', 'blade'] as const) for (const d of [1.2, 2.4]) {
+    const sim = arena([1, 2]);
+    const a = sim.players.get(1)!, b = sim.players.get(2)!;
+    a.x = 0; a.z = 0; b.x = 0; b.z = -d;
+    if (gun === 'axe') a.axe = true; else { a.slots[0] = 'blade'; a.mags[0] = 1; a.cur = 0; a.axe = false; }
+    let hits = 0;
+    for (let i = 0; i < 12; i++) hits += sim.step(DT, new Map([[1, inp({ yaw: 0, pitch: -0.15, fire: true, tp, seq: i + 1 })]])).filter((e) => e.kind === 'hit' && e.victim === 2).length;
+    assert.ok(hits > 0, `${tp ? 'third' : 'first'} person ${gun} at ${d} m`);
+  }
+});
+
+test('a shot coming down steeply still hits the body it passes through', () => {
+  // from just over a player's shoulder, straight down through their chest: the ray enters the body's
+  // cylinder above its top, and only the entry point used to be checked
+  const h = rayPlayer(0.42, 2.2, 0, -0.12, -0.99, 0, 0, 0, 0);
+  assert.ok(h && !h.head && h.t > 0, 'the body is hit');
+});
