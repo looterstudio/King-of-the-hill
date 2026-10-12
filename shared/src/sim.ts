@@ -88,9 +88,8 @@ export function sanitizeInput(raw: Partial<Input> | undefined): Input {
 
 // one tick of movement for a player: on foot, or driving / flying. Returns the crash speed, if any.
 export const moveStep = (w: World, p: Body, inp: Input, dt: number, using = false): number => {
-  if (p.bus) { // aboard the paper plane: carried along at its speed until you jump out
-    if (!inp.jump && !inp.interact) { p.x += p.vx * dt; p.z += p.vz * dt; return 0; }
-    leaveBus(p);
+  if (p.bus) { // aboard the paper plane: it carries you (Sim.stepBus, by the clock) until you jump out
+    if (inp.jump || inp.interact) leaveBus(p);
     return 0;
   }
   if (p.seat) return 0; // passengers go wherever the vehicle takes them (set by the server)
@@ -318,12 +317,17 @@ export class Sim {
     });
     this.field = this.teamsAlive.size;
   }
-  // riders move with their own inputs (moveStep carries them at the plane's speed, so prediction is exact);
-  // at the far edge everyone still aboard is thrown out
+  // everyone aboard is wherever the plane is by the clock (not by their own inputs: a late or bunched input
+  // put a rider metres off the plane, and the client's correction showed as the plane jumping about); at the
+  // far edge everyone still aboard is thrown out
   private stepBus() {
     if (!this.bus) return;
-    const b = this.bus, over = this.busAt().s >= BUS.len; // the plane itself is past the edge: nobody stays (idle players too)
-    for (const p of this.players.values()) if (p.bus && p.alive && (over || (p.x - b.x) * b.dx + (p.z - b.z) * b.dz >= BUS.len)) leaveBus(p);
+    const b = this.bus, at = this.busAt(), over = at.s >= BUS.len;
+    for (const p of this.players.values()) {
+      if (!p.bus || !p.alive) continue;
+      p.x = at.x; p.y = BUS.y; p.z = at.z; p.vx = b.dx * BUS.speed; p.vy = 0; p.vz = b.dz * BUS.speed;
+      if (over) leaveBus(p);
+    }
   }
 
   get alive() { let n = 0; for (const p of this.players.values()) if (p.alive) n++; return n; }
@@ -1380,7 +1384,7 @@ export class Sim {
     const fresh = inp.seq !== p.ack; // (an idle tick repeats the last seq: aboard the plane it moves nobody, as on the client)
     p.ack = inp.seq;
     p.yaw = inp.yaw; p.pitch = inp.pitch; p.tp = !!inp.tp;
-    if (p.bus) { if (fresh) moveStep(this.world, p, inp, dt); return; } // aboard: look around, jump out when you like (moveStep, so it's predicted)
+    if (p.bus) { if (fresh) moveStep(this.world, p, inp, dt); return; } // aboard: look around, jump out when you like
     p.fireCd = Math.max(0, p.fireCd - dt);
     p.burstT = Math.max(0, p.burstT - dt);
     if (p.down > 0) { moveStep(this.world, p, inp, dt); return; } // knocked: crawl, nothing else (bleeding is per tick)
@@ -1458,6 +1462,7 @@ export class Sim {
   step(dt: number, inputs: TickInputs): SimEvent[] {
     const ev: SimEvent[] = [];
     this.t += dt; this.tick++;
+    this.stepBus(); // the plane moves first: who jumps this tick leaves from where it is now
     this.stepRing(dt);
     const ring = this.ring;
     // supply drops: one a minute in, then one every time the storm moves on
@@ -1480,7 +1485,6 @@ export class Sim {
       }
     }
 
-    this.stepBus();
     this.stepVehicles(dt, ev);
     this.stepProjectiles(dt, ev);
     this.stepEffects(dt, ev);

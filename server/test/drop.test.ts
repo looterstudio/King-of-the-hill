@@ -67,6 +67,8 @@ test('the jump out, the free fall and the glide predict exactly (the server and 
   const KEYS = Object.keys(newBody(0, 0, 0)) as (keyof Body)[];
   for (let k = 1; k < 25 * TICK_HZ; k++) {
     const i = inp({ seq: k, fwd: 1, strafe: Math.sin(k / 20), yaw: 0.4 + Math.sin(k / 50), pitch: k < 200 ? -1.2 : -0.4, jump: k === 30 || k === 120 });
+    // aboard, the plane carries you by the clock (the client rides its own estimate of it): the same here
+    if (pred.bus) { const at = sim.busAt(sim.t + DT); Object.assign(pred, { x: at.x, y: BUS.y, z: at.z, vx: sim.bus!.dx * BUS.speed, vy: 0, vz: sim.bus!.dz * BUS.speed }); }
     moveStep(sim.world, pred, i, DT);
     sim.step(DT, new Map([[1, i]]));
     for (const key of KEYS) assert.equal(pred[key], me[key], `tick ${k}: ${key} ${pred[key]} vs ${me[key]}`);

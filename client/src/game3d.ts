@@ -110,7 +110,8 @@ export class Game3D {
   private specYaw: number | null = null; // the spectator camera's heading, eased after the player it follows
   // the paper plane: its last snapshot ([x, y, z, dx, dz, aboard]) and when it came, flown on between them;
   // busNow is where it is this frame (the map and the drop panel read it)
-  private busSnap: { b: number[]; at: number } | null = null;
+  private busSnap: { b: number[]; at: number; t: number } | null = null; // the last snapshot's plane, and the server time it was at
+  private busClock: number | null = null; // local time minus server time, smoothed: the plane flies by it, not by packet arrival
   busNow: { x: number; y: number; z: number; dx: number; dz: number; aboard: number } | null = null;
   private planeModel: THREE.Group | null = null;
   private exitK = 0; private wasBus = false; private exitOff = new THREE.Vector3(); private exitQ = new THREE.Quaternion(); // jumping out of the plane: the camera glides from the plane's view to yours
@@ -658,7 +659,13 @@ export class Game3D {
     this.snaps.push({ s, at: performance.now() / 1000 });
     if (this.snaps.length > 30) this.snaps.shift();
     this.ring = s.ring; this.alive = s.alive; this.leader = s.leader; this.board = s.board ?? [];
-    this.busSnap = s.bus ? { b: s.bus, at: performance.now() / 1000 } : null;
+    this.busSnap = s.bus ? { b: s.bus, at: performance.now() / 1000, t: s.time } : null;
+    if (s.bus) {
+      // the earliest a snapshot ever arrived is the best guess of the clock offset (later ones were held up
+      // on the way); drift up slowly in case the server clock really moved on
+      const off = performance.now() / 1000 - s.time;
+      this.busClock = this.busClock === null || off < this.busClock ? off : this.busClock + (off - this.busClock) * 0.02;
+    } else this.busClock = null;
     if (s.loot) this.syncLoot(s.loot);
     if (s.cases) this.syncCases(s.cases);
     this.syncFx(s.fx, s.time);
@@ -710,6 +717,7 @@ export class Game3D {
     const held = this.weapon, tp = this.thirdPerson && !this.pred.ride && !(c.aim && !!held && WEAPONS[held].sight === 'scope'); // a sniper scope is first person
     // aboard the plane a click jumps too (CLICK ANYWHERE or SPACE)
     const inp: Input = { seq: ++this.seq, fwd: c.fwd, strafe: c.strafe, yaw: c.yaw, pitch: c.pitch, jump: c.jump || (!!this.pred.bus && c.fire), sprint: c.sprint, slide: c.slide, grapple: c.grapple, fire: c.fire, aim: c.aim || (!!c.build && this.self.axe), reload: c.reload, slot, view: this.viewTick, interact: c.interact, item: c.item, perk: c.perk, up: c.up, hold: c.hold, tp };
+    if (this.pred.bus && this.busNow) { this.pred.x = this.busNow.x; this.pred.z = this.busNow.z; } // aboard you are where the plane is: jump from there
     this.prevPos.set(this.pred.x, this.pred.y, this.pred.z);
     const shut = this.pred.fall;
     moveStep(this.world, this.pred, inp, DT, !!this.self.use);
@@ -992,6 +1000,7 @@ export class Game3D {
     const cam = this.ink.camera;
     const { others, tick } = this.interpolated();
     this.viewTick = tick;
+    this.drawPlane(dt); // first: riding it, the camera follows where it is this frame
     this.offset.multiplyScalar(Math.exp(-dt * 12));
 
     const me = this.self;
@@ -1007,6 +1016,7 @@ export class Game3D {
       }
       const held = this.weapon, scoped = look.aim && !!held && WEAPONS[held].sight === 'scope';
       this.tpNow = this.thirdPerson && !this.pred.ride && !this.pred.bus && !scoped;
+      if (this.pred.bus && this.busNow) pos.set(this.busNow.x, BUS.y, this.busNow.z); // aboard: the plane's own position, not the prediction's
       this.selfAt.copy(pos);
       if (this.pred.bus) {
         // aboard the paper plane: a wide view of it from behind and above, orbiting with the mouse
@@ -1352,7 +1362,6 @@ export class Game3D {
     } else this.arms?.hide();
 
     this.drawVehicles(dt);
-    this.drawPlane(dt);
     this.drawWind(dt, !!me?.alive);
     this.drawRiders(dt, riders, look);
     this.stepCorpses(dt);
@@ -1372,8 +1381,11 @@ export class Game3D {
     this.busNow = null;
     const b = this.busSnap;
     if (!b) { if (this.planeModel) { this.drop(this.planeModel); this.planeModel = null; } return; }
-    const e = Math.min(1, performance.now() / 1000 - b.at), p = this.pred;
-    const at = p?.bus && this.self?.alive ? this.selfAt : new THREE.Vector3(b.b[0] + b.b[3] * BUS.speed * e, b.b[1], b.b[2] + b.b[4] * BUS.speed * e);
+    // where it is now by the server's clock: every snapshot's plane lies on the same straight line, so
+    // moving on from the latest one by the smoothed clock never jumps (moving on by packet arrival did, by
+    // a metre or more on every jittery packet, and riding it you saw your own prediction's corrections)
+    const now = performance.now() / 1000, e = Math.min(1.5, this.busClock !== null ? now - this.busClock - b.t : now - b.at);
+    const at = new THREE.Vector3(b.b[0] + b.b[3] * BUS.speed * e, b.b[1], b.b[2] + b.b[4] * BUS.speed * e);
     this.busNow = { x: at.x, y: at.y, z: at.z, dx: b.b[3], dz: b.b[4], aboard: b.b[5] };
     if (!this.planeModel) { this.planeModel = intern(buildPaperPlane(this.ink)); this.ink.scene.add(this.planeModel); }
     const m = this.planeModel;
