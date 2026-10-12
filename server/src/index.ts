@@ -15,6 +15,7 @@ import { PriceFeed } from './price.ts';
 import { CANDLE_MS, Epochs } from './epoch.ts';
 import { Client, Matchmaker } from './room.ts';
 import { Profiles } from './profile.ts';
+import { Parties } from './party.ts';
 import { InProcessHost, WorkerHost } from './host.ts';
 
 const MIN_VERIFIED = Number(process.env.MIN_VERIFIED_FOR_TICKET ?? (config.requireWallet ? 4 : 1));
@@ -42,6 +43,10 @@ const mm = new Matchmaker({
     console.warn('[anticheat]', row.name, row.reason);
   },
 }, config.maxRooms, config.openRooms);
+
+// the party pre-lobby: who is in which party, pushed to its members as it changes
+const parties = new Parties(mm);
+setInterval(() => parties.tick(), 500);
 
 const everyone = (msg: ServerMsg) => { const s = JSON.stringify(msg); for (const c of clients) c.sendRaw(s, true); };
 
@@ -204,7 +209,12 @@ async function onMessage(c: Client, msg: ClientMsg) {
         at: msg.at === null ? null : Array.isArray(msg.at) ? [Number(msg.at[0]), Number(msg.at[1])] as [number, number] : undefined };
       return c.room?.spectate(c, r);
     }
-    case 'leave': if (c.lobbyAction()) mm.leave(c); return;
+    case 'leave': if (c.lobbyAction()) { parties.cancel(c); mm.leave(c); } return;
+    case 'party': {
+      if (!c.authed) return c.send({ t: 'party', party: null, msg: 'Sign in first' });
+      if (!c.lobbyAction()) return;
+      return parties.handle(c, msg);
+    }
     case 'rtc': {
       // squad voice: relay offers, answers and ICE candidates to a teammate in the same live match,
       // nobody else. Audio itself goes peer to peer and never touches the server.
@@ -265,6 +275,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     clients.delete(c);
+    parties.leave(c, 'gone');
     mm.leave(c);
     if (c.wallet && byWallet.get(c.wallet) === c) byWallet.delete(c.wallet);
   });

@@ -1,0 +1,71 @@
+/* The party pre-lobby: the same notebook paper, a page of index cards, one per slot. */
+.pty { display: grid; justify-items: center; gap: 18px; padding-top: 5vh; text-align: center; }
+.pty-head { display: grid; justify-items: center; gap: 8px; width: min(760px, 100%); }
+.pty-code { font-family: var(--f-hand); font-weight: 800; color: var(--ink); font-size: 20px; letter-spacing: .12em; }
+.pty-title { margin: 0; font-size: clamp(40px, 7vw, 72px); font-weight: 800; line-height: 1.02; letter-spacing: -0.02em; }
+.pty-invite { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; width: 100%; }
+.pty-link { flex: 1 1 260px; max-width: 380px; min-width: 0; padding: 7px 12px; border: 2px dashed var(--ink-faint); border-radius: var(--wobble-2); background: var(--card); font-size: 14px; color: var(--ink-soft); text-overflow: ellipsis; }
+.pty-link:focus { outline: 2px solid var(--hl); border-style: solid; }
+
+.pty-modes { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center; }
+.pty-mbtn { cursor: pointer; padding: 7px 16px; background: transparent; border: 2.5px dashed var(--ink-faint); border-radius: var(--wobble-2); color: var(--ink-soft); font-weight: 800; font-size: 17px; transition: transform .15s, color .15s; }
+.pty-mbtn small { font-family: var(--f-note); font-weight: 700; font-size: 17px; margin-left: 4px; }
+.pty-mbtn:not(:disabled):hover { transform: translateY(-2px) rotate(-1deg); color: var(--ink); }
+.pty-mbtn.on { border: 2.5px solid var(--ink); color: var(--ink); background: linear-gradient(transparent 58%, var(--hl-soft) 58% 90%, transparent 90%); box-shadow: 3px 3px 0 var(--ink); transform: rotate(-1deg); }
+.pty-mbtn:disabled { cursor: default; }
+.pty-mbtn:disabled:not(.on) { opacity: .55; }
+.pty-mnote { font-family: var(--f-note); font-size: 20px; color: var(--ink-soft); }
+
+.pty-slots { display: grid; grid-template-columns: repeat(2, minmax(0, 210px)); gap: 18px; justify-content: center; width: 100%; }
+.pty-slots.squad { grid-template-columns: repeat(4, minmax(0, 200px)); }
+.pty-slot { position: relative; display: grid; justify-items: center; align-content: start; gap: 3px; min-height: 270px; padding: 26px 10px 14px; border: 2.5px dashed var(--ink-faint); border-radius: var(--wobble-2); color: var(--ink-faint); }
+.pty-slot.full { border: 0; background: var(--card); color: var(--ink); box-shadow: 0 10px 22px -14px rgba(40, 40, 70, .55); animation: drop .35s cubic-bezier(.2, 1.4, .4, 1) both; }
+.pty-slot.full::before { content: ''; position: absolute; top: -9px; left: 50%; width: 56px; height: 18px; margin-left: -28px; background: var(--tape); transform: rotate(-3deg); }
+.pty-slot.full:nth-child(odd) { rotate: -1.2deg; }
+.pty-slot.full:nth-child(even) { rotate: 1deg; }
+.pty-slot.me { outline: 3px solid var(--hl); outline-offset: 3px; }
+.pty-slot.away { opacity: .6; }
+.pty-slot.empty { align-content: center; font-family: var(--f-note); }
+.pty-slot.empty b { font-size: 26px; font-weight: 700; }
+.pty-slot.empty small { font-size: 18px; line-height: 1.1; padding: 0 8px; }
+.pty-plus { font-family: var(--f-hand); font-size: 46px; line-height: 1; font-weight: 300; }
+.pty-tag { position: absolute; top: 8px; left: 12px; font-family: var(--f-note); font-size: 18px; font-weight: 700; color: var(--red); }
+.pty-kick { position: absolute; top: 6px; right: 8px; cursor: pointer; width: 26px; height: 26px; border: 0; background: transparent; color: var(--ink-faint); font-size: 15px; border-radius: 50%; }
+.pty-kick:hover { color: var(--red); background: rgba(211, 35, 54, .08); }
+.pty-pic { width: 100%; height: 150px; display: grid; place-items: center; }
+.pty-pic img { max-width: 100%; max-height: 150px; object-fit: contain; }
+.pty-pic .suit { width: 96px; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; background: var(--teal); color: var(--card); font-weight: 800; font-size: 24px; border: 2.5px solid var(--graphite); }
+.pty-nm { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; font-weight: 800; }
+.pty-nm small { font-weight: 600; color: var(--ink-soft); }
+.pty-ch { font-family: var(--f-note); font-size: 19px; color: var(--ink-soft); line-height: 1; }
+.pty-rd { margin-top: 6px; padding: 2px 10px 3px; border-radius: var(--wobble); font-size: 14px; font-weight: 700; border: 2px solid currentColor; }
+.pty-rd.ok { color: var(--teal); background: rgba(19, 137, 127, .08); }
+.pty-rd.no { color: var(--ink-faint); border-style: dashed; }
+.pty-rd.away { color: #c98a00; border-style: dashed; }
+.pty-rd.busy { color: var(--ink); }
+
+.pty-skins { width: min(760px, 100%); text-align: left; }
+.pty-skinlist { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+@media (max-width: 640px) { .pty-skinlist { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.pty-actions { display: grid; justify-items: center; gap: 8px; width: min(420px, 100%); }
+.pty-actions .btn.play { margin-top: 0; }
+.pty-go.ready { background: rgba(19, 137, 127, .14); border-color: var(--teal); color: var(--teal); box-shadow: 4px 5px 0 var(--teal); }
+.pty-status { min-height: 26px; font-family: var(--f-note); font-size: 23px; color: var(--ink-soft); line-height: 1.1; }
+.pty-status.ok { color: var(--teal); }
+
+/* invited by link, not signed in yet: a note above the modes */
+.pty-invited { display: grid; gap: 2px; margin: 0 0 12px; padding: 10px 12px; border: 2.5px solid var(--ink); border-radius: var(--wobble-2); background: linear-gradient(transparent 0, var(--hl-soft) 0); text-align: left; }
+.pty-invited b { font-size: 16px; }
+.pty-invited span { font-size: 13.5px; color: var(--ink-soft); }
+
+/* the lobby's party entry: Create party, or a code and Join */
+.party-line #party { flex: 1 1 0; min-width: 0; }
+
+@media (max-width: 860px) {
+  .pty-slots.squad { grid-template-columns: repeat(2, minmax(0, 200px)); }
+}
+@media (max-width: 460px) {
+  .pty-slots, .pty-slots.squad { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .pty-slot { min-height: 220px; }
+  .pty-pic, .pty-pic img { height: 110px; max-height: 110px; }
+}

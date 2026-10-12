@@ -198,7 +198,7 @@ const MODE_SET = new Set(Object.keys(MODES));
 
 export class Matchmaker {
   rooms = new Map<string, Room>();
-  private queue: Client[] = [];
+  private queue: Client[][] = []; // one entry per player, or one per party that drops together
   private timer: NodeJS.Timeout | null = null;
   private next = 0;
   lastTickMs = 0;
@@ -217,28 +217,42 @@ export class Matchmaker {
     const picked = this.rooms.get(c.wantRoom);
     if (picked) c.mode = picked.mode;
     c.party = c.mode === 'solo' ? '' : cleanParty(want.party);
-    c.queued = true; this.queue.push(c);
+    c.queued = true; this.queue.push([c]);
     c.send({ t: 'queued', position: this.queue.length });
   }
-  dequeue(c: Client) { if (c.queued) { c.queued = false; this.queue = this.queue.filter((q) => q !== c); } }
+  // a party from the pre-lobby: everyone goes into the same room, on the same team (the code)
+  enqueueGroup(cs: Client[], mode: Mode, party: string) {
+    if (!cs.length || cs.some((c) => c.room || c.queued)) return false;
+    for (const c of cs) { c.mode = mode; c.wantRoom = ''; c.party = mode === 'solo' ? '' : cleanParty(party); c.queued = true; }
+    this.queue.push(cs);
+    for (const c of cs) c.send({ t: 'queued', position: this.queue.length });
+    return true;
+  }
+  dequeue(c: Client) {
+    if (!c.queued) return;
+    c.queued = false;
+    this.queue = this.queue.map((g) => g.filter((q) => q !== c)).filter((g) => g.length);
+  }
   leave(c: Client) { this.dequeue(c); c.room?.remove(c); }
 
   private assign() {
     if (this.queue.length === 0) return;
     const filling = () => [...this.rooms.values()].filter((r) => r.phase === 'waiting' && !r.closed);
-    const left: Client[] = [];
-    for (const c of this.queue) {
-      if (c.ws.readyState !== c.ws.OPEN) { c.queued = false; continue; }
-      const open = filling().filter((r) => r.open && r.mode === c.mode);
+    const left: Client[][] = [];
+    for (const all of this.queue) {
+      const g = all.filter((c) => { if (c.ws.readyState === c.ws.OPEN) return true; c.queued = false; return false; });
+      if (!g.length) continue;
+      const c = g[0];
+      // a party never gets split: only rooms with a seat for every one of them
+      const open = filling().filter((r) => r.open && r.mode === c.mode && r.seats.length + g.length <= ROOM_MAX);
       // the room you picked, then the one your party is in, then the fullest one filling
       let room = open.find((r) => r.id === c.wantRoom) ?? open.find((r) => r.hasParty(c.party))
         ?? open.sort((a, b) => b.seats.length - a.seats.length)[0];
       if (!room) {
-        if (this.rooms.size >= this.maxRooms || filling().length >= this.openRooms) { left.push(c); continue; } // waits for capacity
+        if (this.rooms.size >= this.maxRooms || filling().length >= this.openRooms) { left.push(g); continue; } // waits for capacity
         room = new Room(this.hooks, this.host, c.mode); this.rooms.set(room.id, room);
       }
-      c.queued = false;
-      room.add(c);
+      for (const m of g) { m.queued = false; room.add(m); }
     }
     this.queue = left;
   }
@@ -268,5 +282,5 @@ export class Matchmaker {
     this.timer = setTimeout(loop, step);
   }
   stop() { if (this.timer) clearTimeout(this.timer); }
-  get queued() { return this.queue.length; }
+  get queued() { return this.queue.reduce((n, g) => n + g.length, 0); }
 }

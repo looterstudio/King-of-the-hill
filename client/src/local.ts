@@ -3,7 +3,7 @@
 import {
   COUNTDOWN_MS, matchPoints, MAP_HALF, MODES, MODE_IDS, RESULT_MS, ROOM_MAX, SKINS, SNAP_EVERY, TICK_HZ, epochEnd, epochOf, playerNumber, type Mode,
 } from '../../shared/src/constants.ts';
-import type { ClientMsg, LobbyRoom, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
+import type { ClientMsg, LobbyRoom, PartyMember, RoomSeat, ServerMsg } from '../../shared/src/protocol.ts';
 import { Sim, emptyInput, sanitizeInput, type TickInputs } from '../../shared/src/sim.ts';
 import { InputQueue } from '../../shared/src/inputq.ts';
 import { frame, snapFor, type Viewer } from '../../shared/src/snap.ts';
@@ -28,7 +28,9 @@ export class LocalNet {
   private phantom = false; // signed in with a real Phantom wallet (the demo can't read its balance: no token yet)
   private record = { matches: 0, wins: 0, kills: 0, best: 0, prizes: 0, prizeLamports: 0n };
   private mine = new InputQueue(emptyInput(), TICK_HZ);
-  room: { id: string; seed: number; mode: Mode; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[] } | null = null;
+  room: { id: string; seed: number; mode: Mode; seats: RoomSeat[]; bots: Bot[]; sim: Sim | null; timers: number[]; mates: Set<number> } | null = null;
+  // the party pre-lobby, played locally: you lead, bots take the other slots and tick ready
+  private party: { code: string; mode: Mode; members: PartyMember[]; timers: number[]; joining: number } | null = null;
   private free: { x: number; z: number } | null = null;
   // the other rooms on the 'server', for the lobby list (simulated: this demo only runs yours)
   private fake: LobbyRoom[] = [];
@@ -133,6 +135,7 @@ export class LocalNet {
       }
       case 'spec': this.spectate(m); break;
       case 'leave': this.closeRoom(); break;
+      case 'party': this.partyOp(m); break;
       case 'in': this.mine.push(sanitizeInput(m)); break;
       case 'mark': this.mark(m.at); break;
     }
@@ -143,9 +146,9 @@ export class LocalNet {
     this.emit({ t: 'room', roomId: r.id, you: 1, seats: r.seats, state, startsAt, seed: r.seed, mode: r.mode });
   }
 
-  private openRoom(mode: Mode, id?: string) {
+  private openRoom(mode: Mode, id?: string, mates: PartyMember[] = []) {
     this.me!.team = 0;
-    const room = { id: id ?? Math.random().toString(16).slice(2, 10), seed: Math.floor(Math.random() * 2 ** 31), mode, seats: [this.me!], bots: [] as Bot[], sim: null as Sim | null, timers: [] as number[] };
+    const room = { id: id ?? Math.random().toString(16).slice(2, 10), seed: Math.floor(Math.random() * 2 ** 31), mode, seats: [this.me!], bots: [] as Bot[], sim: null as Sim | null, timers: [] as number[], mates: new Set<number>() };
     this.room = room;
     this.emit({ t: 'queued', position: 1 });
     this.announce('waiting', null);
@@ -155,7 +158,9 @@ export class LocalNet {
       delay += 12 + Math.random() * 30;
       room.timers.push(window.setTimeout(() => {
         const id = i + 2;
-        room.seats.push({ id, num: playerNumber(Math.floor(Math.random() * 456)), name: NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: Math.floor(Math.random() * SKINS.length), bot: true });
+        const mate = mates[i]; // your party's bots take the first seats, and drop on your team
+        if (mate) room.mates.add(id);
+        room.seats.push({ id, num: mate?.num ?? playerNumber(Math.floor(Math.random() * 456)), name: mate?.name ?? NAMES[i % NAMES.length] + (i >= NAMES.length ? i : ''), verified: true, team: 0, skin: mate?.skin ?? Math.floor(Math.random() * SKINS.length), bot: true });
         room.bots.push(newBot(id, Math.random));
         if (room.seats.length < total) this.announce('waiting', null);
         else { this.announce('countdown', Date.now() + COUNTDOWN_MS); room.timers.push(window.setTimeout(() => this.startRound(), COUNTDOWN_MS)); }
@@ -166,7 +171,7 @@ export class LocalNet {
   private startRound() {
     const r = this.room!;
     r.sim = new Sim(r.seed);
-    const teams = makeTeams(r.seats.map((s) => ({ id: s.id, party: '' })), MODES[r.mode].size);
+    const teams = makeTeams(r.seats.map((s) => ({ id: s.id, party: s.id === 1 || r.mates.has(s.id) ? (r.mates.size ? 'PARTY' : '') : '' })), MODES[r.mode].size);
     r.seats = r.seats.map((s) => ({ ...s, team: teams.get(s.id)! }));
     r.sim.spawn(r.seats.map((s) => s.id), teams, { bus: true });
     teamDrops(r.bots, teams, Math.random);
@@ -174,6 +179,7 @@ export class LocalNet {
     this.announce('live', null);
     // your bot teammates show where they mean to land, like a squad would
     for (const b of this.mates()) this.emit({ t: 'mark', from: b.id, at: [Math.round(b.dropX), Math.round(b.dropZ)] });
+    this.emitParty();
     this.loop = window.setInterval(() => this.step(), 1000 / TICK_HZ);
   }
 
@@ -265,10 +271,89 @@ export class LocalNet {
     r.timers.push(window.setTimeout(() => this.closeRoom(), RESULT_MS - 300)); // free the seat before the client shows the lobby
   }
 
+  private emitParty() {
+    const p = this.party;
+    if (!p) return;
+    const busy = !!this.room;
+    this.emit({ t: 'party', token: 'demo', party: { code: p.code, mode: p.mode, size: MODES[p.mode].size, leader: 1, you: 1,
+      members: p.members.map((x) => ({ ...x, ...(busy ? { busy: true } : {}) })), state: this.room?.sim ? 'playing' : busy ? 'queued' : 'idle' } });
+  }
+  // the open slots fill with bots one by one, and each ticks ready a moment later
+  private fillParty() {
+    const p = this.party;
+    if (!p) return;
+    let delay = 700;
+    for (let k = p.members.length + p.joining; k < MODES[p.mode].size; k++) {
+      delay += 600 + Math.random() * 900;
+      p.joining++;
+      const t = window.setTimeout(() => {
+        p.timers = p.timers.filter((x) => x !== t); p.joining--;
+        if (this.party !== p || p.members.length >= MODES[p.mode].size) return;
+        const taken = new Set(p.members.map((x) => x.name));
+        const name = NAMES.filter((n) => !taken.has(n))[Math.floor(Math.random() * 10)] ?? 'anon';
+        p.members.push({ id: 200 + Math.floor(Math.random() * 1e6), name, num: playerNumber(Math.floor(Math.random() * 456)), skin: Math.floor(Math.random() * SKINS.length), ready: false, bot: true });
+        this.emitParty(); this.readyBots();
+      }, delay);
+      p.timers.push(t);
+    }
+  }
+  private readyBots() {
+    const p = this.party;
+    if (!p) return;
+    p.timers.push(window.setTimeout(() => {
+      if (this.party !== p || this.room) return;
+      const lazy = p.members.find((x) => x.bot && !x.ready);
+      if (!lazy) return;
+      lazy.ready = true; this.emitParty(); this.readyBots();
+    }, 500 + Math.random() * 1200));
+  }
+  private partyOp(m: Extract<ClientMsg, { t: 'party' }>) {
+    const p = this.party, me = this.me;
+    if (!me) { this.emit({ t: 'party', party: null, msg: 'Sign in first' }); return; }
+    const mode = (x: unknown): Mode => (x === 'squad' ? 'squad' : 'duo');
+    switch (m.op) {
+      case 'create': case 'join': { // no server to find a friend's party on: the demo makes you the leader of it
+        if (p) for (const t of p.timers) clearTimeout(t);
+        const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const code = m.op === 'join' && m.code ? String(m.code).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) : Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
+        me.skin = Math.max(0, Math.min(SKINS.length - 1, Math.floor(Number(m.skin)) || 0));
+        this.party = { code, mode: m.op === 'join' ? p?.mode ?? 'squad' : mode(m.mode), members: [{ id: 1, name: me.name, num: me.num, skin: me.skin, ready: true }], timers: [], joining: 0 };
+        this.emitParty(); this.fillParty();
+        break;
+      }
+      case 'leave':
+        if (p) for (const t of p.timers) clearTimeout(t);
+        this.party = null; this.emit({ t: 'party', party: null });
+        break;
+      case 'skin':
+        if (!p) break;
+        me.skin = Math.max(0, Math.min(SKINS.length - 1, Math.floor(Number(m.skin)) || 0));
+        p.members[0].skin = me.skin; this.emitParty();
+        break;
+      case 'mode':
+        if (!p || this.room) break;
+        p.mode = mode(m.mode); p.members = p.members.slice(0, MODES[p.mode].size);
+        this.emitParty(); this.fillParty();
+        break;
+      case 'kick':
+        if (!p) break;
+        p.members = p.members.filter((x) => x.id === 1 || x.id !== m.id);
+        this.emitParty(); this.fillParty();
+        break;
+      case 'play':
+        if (!p || this.room) break;
+        if (p.members.some((x) => !x.ready)) { this.emit({ t: 'error', msg: 'Waiting for everyone to be ready' }); break; }
+        this.openRoom(p.mode, undefined, p.members.filter((x) => x.bot));
+        this.emitParty();
+        break;
+    }
+  }
+
   private closeRoom() {
     if (!this.room) return;
     for (const t of this.room.timers) clearTimeout(t);
     clearInterval(this.loop);
     this.room = null;
+    if (this.party) { for (const x of this.party.members) if (x.bot) x.ready = false; this.emitParty(); this.readyBots(); }
   }
 }
