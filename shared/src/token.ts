@@ -4,7 +4,7 @@
 export const TOKEN = {
   mint: '',             // the CA, e.g. 'So1aNa...pump'
   symbol: 'KOTH',
-  holdMinUsd: 50,       // hold at least this much of the token all hour to qualify for the hourly prize
+  holdMinUsd: 25,       // hold at least this much of the token all hour to qualify for the hourly prize
   holdTokens: 0,        // optional cap in tokens (whichever is less); 0 = dollars only
 };
 
