@@ -9,7 +9,7 @@ import { PotJar } from './potjar.ts';
 
 const VIDEO = { mp4: 'media/gameplay.mp4', poster: 'media/gameplay.jpg' };
 
-const LOGO = '<svg class="syms" viewBox="0 0 96 30" aria-hidden="true"><circle cx="14" cy="15" r="10.5"/><path d="M38 25 L48 5 L58 25 Z"/><rect x="72" y="5" width="20" height="20" rx="1"/></svg><span class="word">King of the Hill <em>Royale</em></span>';
+const LOGO = '<svg class="mark" viewBox="0 0 48 32" aria-hidden="true"><path class="mk-hill" d="M3 29 C 12 15, 18 12, 24 12 C 30 12, 36 15, 45 29"/><path class="mk-crown" d="M16.5 10 L15 2.5 L20 6.5 L24 1.5 L28 6.5 L33 2.5 L31.5 10 Z"/><path class="mk-ground" d="M1 29.5 H47"/></svg><span class="word">King of the Hill <em>Royale</em></span>';
 const SCRIBBLE = '<svg viewBox="0 0 300 20" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 60 4, 120 16, 180 9 S 270 6, 296 11"/></svg>';
 
 // four doodles, one per step
@@ -199,9 +199,6 @@ export function initLanding() {
     root.classList.add('leaving');
     document.body.classList.remove('landing-on');
     setTimeout(() => { if (!open) root.classList.add('gone'); }, 550);
-    // the lobby: on a narrow screen jump to the join card, where the name and the drop button are
-    const join = document.querySelector<HTMLElement>('#lobby .join');
-    if (join && innerWidth < 980) join.scrollIntoView({ block: 'start' });
     dispatchEvent(new CustomEvent('landing:play'));
   };
   root.querySelectorAll<HTMLElement>('[data-play]').forEach((b) => b.addEventListener('click', play));

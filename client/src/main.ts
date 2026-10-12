@@ -9,6 +9,7 @@ import { PotJar } from './potjar.ts';
 import { Game3D, RARITY_CSS } from './game3d.ts';
 import { renderArsenal, renderSkins, skinPics } from './arsenal.ts';
 import { PartyUI } from './party.ts';
+import { initLobby } from './lobby.ts';
 import { lobbyMusic } from './music.ts';
 import { STATIONS, radio } from './radio.ts';
 import { voice } from './voice.ts';
@@ -52,7 +53,8 @@ const game = new Game3D(canvas, $<HTMLDivElement>('tags'));
 const flyCanvas = $<HTMLCanvasElement>('flyCanvas');
 const flyover = new Game3D(flyCanvas, $<HTMLDivElement>('flyTags'), true);
 flyover.setRoom(20261008, [], -1);
-flyover.ink.setQuality(1); // full resolution; flyGovern steps it down only if frames run long
+flyover.ink.setQuality(1); // full resolution; the lobby stage steps it down only if frames run long
+const lobby = initLobby(flyover); // the lobby's live stage: your party on the paper plane over the island
 // the arsenal pictures are drawn once, when the page is idle
 const idle = (window as unknown as { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback ?? ((f: () => void) => setTimeout(f, 300));
 idle(() => renderArsenal($('arsenal')));
@@ -232,7 +234,7 @@ $('connectBtn').onclick = async () => {
 };
 
 const touchOnly = () => matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
-$('playBtn').onclick = () => openPrematch(state.mode);
+$('playBtn').onclick = () => (party.view ? party.play() : openPrematch(state.mode)); // in a party: Play (leader) or Ready
 
 // ---------- before the match: controls, your name, one big button ----------
 const prematch = new PreMatch($('prematch'), {
@@ -267,9 +269,8 @@ function queueFor(t: { mode: Mode; room?: string }) {
 // ---------- modes / party ----------
 function renderMode() {
   document.querySelectorAll<HTMLButtonElement>('.mode').forEach((b) => { const on = b.dataset.mode === state.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
-  $('partyRow').classList.toggle('hidden', state.mode === 'solo');
   $<HTMLInputElement>('party').value = state.party;
-  $('playBtn').textContent = `Drop in · ${MODES[state.mode].name}`;
+  $('playBtn').innerHTML = `<b>Play</b><small>${MODES[state.mode].name}</small>`;
 }
 document.querySelectorAll<HTMLButtonElement>('.mode').forEach((b) => b.onclick = () => {
   state.mode = b.dataset.mode as Mode; renderMode();
@@ -432,7 +433,7 @@ function renderSeats() {
   const fresh = new Set(state.seats.map((s) => s.id));
   const cap = ROOM_MAX;
   $('seats').classList.toggle('many', cap > 12);
-  const filled = state.seats.map((s) => `<div class="seat full ${s.id === state.you ? 'me' : ''} ${shownSeats.has(s.id) ? '' : 'new'}"><div class="suit">${s.num}</div><div class="nm">${s.id === state.you ? 'you' : esc(s.name)}</div></div>`);
+  const filled = state.seats.map((s) => `<div class="seat full ${s.id === state.you ? 'me' : ''} ${shownSeats.has(s.id) ? '' : 'new'}"><div class="pic">${skinPics[s.skin ?? -1] ? `<img src="${skinPics[s.skin ?? -1]}" alt="">` : ''}</div><div class="nm">${s.id === state.you ? 'you' : esc(s.name)}</div></div>`);
   const empty = Array.from({ length: cap - state.seats.length }, () => '<div class="seat"></div>');
   $('seats').innerHTML = [...filled, ...empty].join('');
   shownSeats = fresh;
@@ -747,7 +748,7 @@ net.on((m: ServerMsg) => {
       break;
     case 'authed':
       state.authed = true; state.name = m.name; state.wallet = m.wallet;
-      $('me').textContent = `Player ${m.num} · ${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}${m.eligible ? ` · ${m.eligible}` : m.wallet && state.authMode !== 'guest' ? ' · scoring points for the pot' : ''}`;
+      $('me').textContent = `${m.name}${state.authMode === 'guest' ? ' (guest)' : ''}${m.eligible ? ` · ${m.eligible}` : m.wallet && state.authMode !== 'guest' ? ' · scoring points for the pot' : ''}`;
       $('me').classList.add('on');
       // signed in with Phantom: the button says so (the profile chip up top has the details)
       if (state.authMode === 'wallet') { $('connectBtn').textContent = 'Phantom connected ✓'; $<HTMLButtonElement>('connectBtn').disabled = true; }
@@ -1050,23 +1051,12 @@ function govern(dt: number) {
   if (avg > 21) game.ink.setQuality(game.ink.quality - 0.1);
   else if (avg < 14) game.ink.setQuality(Math.min(settings.renderScale, game.ink.quality + 0.05)); // never above the resolution setting
 }
-// the lobby's island view: sharp while frames keep up, a little softer only when they don't (it was fixed at
-// 0.75 of the screen's resolution and looked soft, and on slow machines still stuttered)
-let flyT = 0, flyN = 0;
-function flyGovern(dt: number) {
-  flyT += dt; flyN++;
-  if (flyT < 1) return;
-  const avg = (flyT / flyN) * 1000;
-  flyT = 0; flyN = 0;
-  if (avg > 22) flyover.ink.setQuality(flyover.ink.quality - 0.1);
-  else if (avg < 15) flyover.ink.setQuality(Math.min(settings.renderScale, flyover.ink.quality + 0.05));
-}
 function frame(now: number) {
   const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
   if (state.screen === 'game') govern(raw);
   if (state.screen === 'lobby') {
     jar.frame(dt);
-    if (flyVisible) { flyGovern(raw); flyover.showcase(dt, flyCanvas.clientWidth, flyCanvas.clientHeight); setText($('flyCaption'), flyover.caption); }
+    if (flyVisible) { lobby.frame(dt); setText($('flyCaption'), lobby.caption); }
     if (state.pot) {
       const target = sol(state.pot.lamports);
       state.potShown += (target - state.potShown) * Math.min(1, dt * 3);
