@@ -757,6 +757,52 @@ function lookOf(skin: number, id: number): Look {
       crown += 0.1;
       break;
     }
+    case 11: { // Mitch: a brown bob, a white painted face with blue diamonds round big glossy eyes, red brows, an orange nose, a wide red grin; a red tee with a black web, a wad of cash in the left hand
+      legs(I.BLUE, I.BLUE, I.WHITE, I.GRAPHITE);
+      chest(I.RED);
+      // the web: spokes from the middle of the chest, and rings across them
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2, x = Math.cos(a) * 0.12, y = 0.3 + Math.sin(a) * 0.13; r.box(torso, I.BLACK, 0.008, 0.27, 0.01, x / 2, (0.3 + y) / 2, front((0.3 + y) / 2, x / 2) - 0.004, 0, 0, a - Math.PI / 2); }
+      for (const rr of [0.05, 0.1]) r.put(torso, I.BLACK, new THREE.TorusGeometry(rr, 0.004, 3, 16), 0, 0.3, front(0.3) - 0.006);
+      r.put(torso, I.WHITE, new THREE.TorusGeometry(0.1, 0.018, 5, 12), 0, 0.585, -0.015, Math.PI / 2); // the tee's collar
+      arms(I.RED, 0.45, I.SKIN, I.SKIN);
+      const [fl] = ARMS[0].slice(1) as number[];
+      r.box(fl, I.GREEN, 0.07, 0.14, 0.11, 0, -fr.fore - 0.02, -0.04); r.box(fl, I.PAPER, 0.072, 0.02, 0.112, 0, -fr.fore - 0.02, -0.04); // the cash, banded
+      skull(I.WHITE, I.SKIN, false);
+      for (const s of [-1, 1]) {
+        const d = r.box(head, I.BLUE, 0.1, 0.1, 0.02, s * 0.088, HY - 0.01, zf(0.088, -0.01) + 0.004, 0, 0, Math.PI / 4); void d; // the blue diamonds
+        r.ball(head, I.BLACK, 0.046, s * 0.088, HY - 0.012, zf(0.088, -0.012) - 0.004, 0.9, 1.15, 0.45); // big glossy eyes
+        r.ball(head, I.WHITE, 0.013, s * 0.088 + 0.016, HY + 0.012, zf(0.088, 0.01) - 0.014);
+        r.box(head, I.RED, 0.09, 0.02, 0.02, s * 0.095, HY + 0.085, zf(0.095, 0.085) + 0.004, 0, 0, s * 0.3); // angry red brows
+        r.box(head, I.ORANGE, 0.03, 0.02, 0.02, s * 0.14, HY + 0.095, zf(0.14, 0.095) + 0.004, 0, 0, s * 0.3);
+      }
+      r.ball(head, I.ORANGE, 0.022, 0, HY - 0.06, zf(0, -0.06) - 0.004, 1.3, 0.9, 0.6); // an orange nose
+      r.put(head, I.RED, new THREE.TorusGeometry(0.13, 0.03, 4, 14, Math.PI), 0, HY - 0.075, zf(0, -0.12) + 0.02, 0, 0, Math.PI, 1, 0.55, 1); // the grin, painted ear to ear
+      for (const s of [-1, 1]) r.box(head, I.BLACK, 0.035, 0.01, 0.015, s * 0.014, HY - 0.135, zf(0.014, -0.135) - 0.002, 0, 0, s * 0.7); // a small v mouth
+      dome(I.BROWN, 0.258, Math.PI * 0.55, 0.012, 0.05, 1.1, 0.92, 1.08);
+      curtain(I.BROWN, 0.27, 0.32, 0.34, -0.09, 0.72, 0.012); // the bob, open at the face
+      r.box(head, I.BROWN, 0.34, 0.07, 0.05, 0, HY + 0.135, zf(0, 0.135) + 0.012, -0.35); // the fringe, over the brows
+      crown += 0.04;
+      break;
+    }
+    case 12: { // Ansem: deep brown skin, short black curls, a sideways look and a sly grin, a pale yellow tee
+      legs(I.BLUE, I.BLUE, I.WHITE, I.GRAPHITE);
+      chest(I.YELLOW);
+      r.put(torso, I.YELLOW, new THREE.TorusGeometry(0.095, 0.02, 5, 12), 0, 0.585, -0.015, Math.PI / 2);
+      arms(I.YELLOW, 0.5, I.DEEP, I.DEEP, { wide: 1.1 });
+      skull(I.DEEP);
+      for (const s of [-1, 1]) {
+        r.ball(head, I.WHITE, 0.03, s * 0.085, HY - 0.005, zf(0.085, -0.005) + 0.008, 1.2, 0.7, 0.45);
+        r.ball(head, I.BLACK, 0.018, s * 0.085 + 0.012, HY - 0.005, zf(0.085, -0.005) - 0.002, 1, 1, 0.5); // looking off to the side
+        r.box(head, I.BLACK, 0.08, 0.022, 0.03, s * 0.088, HY + 0.06, zf(0.088, 0.06) + 0.01, 0, 0, s > 0 ? -0.18 : 0.05); // one brow up
+      }
+      nose(I.DEEP, -0.045, 0.034);
+      r.put(head, I.WHITE, new THREE.CircleGeometry(0.07, 10, Math.PI, Math.PI), 0.01, HY - 0.098, zf(0, -0.11) - 0.005, 0, Math.PI, 0.12); // the grin, all teeth
+      r.box(head, I.BLACK, 0.145, 0.012, 0.016, 0.01, HY - 0.098, zf(0, -0.1) - 0.002, 0, 0, 0.12);
+      dome(I.BLACK, 0.262, Math.PI * 0.45, 0.05, 0.1, 1.06, 1.12, 1.06);
+      for (let k = 0; k < 14; k++) { const a = k * 2.399, rr = 0.1 + (k % 5) * 0.03; r.ball(head, I.BLACK, 0.06, Math.cos(a) * rr, HY + 0.2 + ((k * 7) % 3) * 0.02, Math.sin(a) * rr, 1, 0.8, 1, 6, 4); } // the curls on top
+      crown += 0.08;
+      break;
+    }
     case 0:
     default: { // Scribble: a hoodie (its colour changes player to player), jeans, a beanie with a pom-pom, a backpack
       legs(I.BLUE, I.BLUE, I.GRAPHITE, I.WHITE);
@@ -809,7 +855,8 @@ export interface Figure {
 // 3 Robo Pen (box head, antenna), 4 Captain Blot (tricorn, eyepatch, red coat), 5 Chill House (a house for
 // a head), 6 Cupsey (a plush gumdrop), 7 Retardio (clown face, orange bob, black cap), 8 Kimchi (bowl cut,
 // cream tee, silver chain), 9 Unipcs (a round yellow robot with headphones), 10 Alon (grey hair, cycling
-// cap, white shades, STOP BEING POOR). Every one has the same bones, so they all run, aim, glide, ride and
+// cap, white shades, STOP BEING POOR), 11 Mitch (brown bob, painted clown face, red web tee, cash),
+// 12 Ansem (short black curls, yellow tee). Every one has the same bones, so they all run, aim, glide, ride and
 // fall the same way.
 export function buildFigure(ink: InkRenderer, id: number, skin = id % SKINS.length): Figure {
   const L = lookOf(skin, id), fr = L.fr, rest = restOf(fr);
@@ -1045,7 +1092,13 @@ export function poseRider(f: Figure, at: THREE.Vector3, q: THREE.Quaternion | nu
 }
 
 // a flat triangle (or a strip of them) from a flat list of corners: paper is folded, not modelled
-const sheet = (pts: number[], m: Mat) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.computeVertexNormals(); return new THREE.Mesh(g, m); };
+// both faces: paper has two sides, and the ink materials draw one (seen from behind, half the plane and the
+// glider's wing were missing)
+const sheet = (pts: number[], m: Mat) => {
+  const both = [...pts];
+  for (let i = 0; i < pts.length; i += 9) both.push(...pts.slice(i, i + 3), ...pts.slice(i + 6, i + 9), ...pts.slice(i + 3, i + 6));
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(both, 3)); g.computeVertexNormals(); return new THREE.Mesh(g, m);
+};
 type V3 = [number, number, number];
 const lerp3 = (a: V3, b: V3, k: number): V3 => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
 // a ruled ink line across a paper panel (a, b, c): from the a-b edge to the a-c edge at k, lifted off the paper

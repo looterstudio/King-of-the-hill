@@ -24,7 +24,7 @@ export function matchPoints(mode: Mode, place: number, kills: number, won: boole
   return (won ? POINTS.win[mode] : place > 0 && place <= top ? POINTS.top : 0) + Math.min(kills, POINTS.killCap) * POINTS.kill;
 }
 // characters to pick from before a match: looks only, every one plays the same
-export const SKINS = ['Scribble', 'Crayon Knight', 'Ink Ninja', 'Robo Pen', 'Captain Blot', 'Chill House', 'Cupsey', 'Retardio', 'Kimchi', 'Unipcs', 'Alon'];
+export const SKINS = ['Scribble', 'Crayon Knight', 'Ink Ninja', 'Robo Pen', 'Captain Blot', 'Chill House', 'Cupsey', 'Retardio', 'Kimchi', 'Unipcs', 'Alon', 'Mitch', 'Ansem'];
 export const OPEN_ROOMS = 5;          // rooms filling at the same time, across modes
 export const ROOM_MIN = 2;            // a room starts with fewer than 10 once the fill timer runs out
 export const FILL_WAIT_MS = 45_000;   // how long a room waits for more players after the 2nd joins
