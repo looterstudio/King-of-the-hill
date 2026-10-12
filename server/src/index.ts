@@ -92,7 +92,7 @@ function handleHttp(req: IncomingMessage, res: ServerResponse) {
 
 function serveHttp(req: IncomingMessage, res: ServerResponse) {
   const url = new URL('http://x' + (req.url?.startsWith('/') ? req.url : '/'));
-  if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, build: BUILD, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
+  if (url.pathname === '/health') { const h = mm.host.stats(); return json(res, 200, { ok: true, build: BUILD, hold: { minUsd: config.holdMinUsd, tokenUsd: price.usd(), solUsd: price.solUsd(), requirementTokens: epochs.requirement(), mint: config.tokenMint, potSource: config.potSource }, clients: clients.size, rooms: mm.rooms.size, queued: mm.queued, tickMs: +h.tickMs.toFixed(2), lobbyMs: +mm.lastTickMs.toFixed(2), workers: h.workers }); }
   if (url.pathname === '/api/pot') return json(res, 200, potView());
   if (url.pathname === '/api/rooms') return json(res, 200, mm.lobby(Date.now()));
   if (url.pathname === '/api/admin/flags') {
