@@ -69,7 +69,7 @@ export function teamDrops(bots: Bot[], teams: Map<number, number>, rand: () => n
   const taken: { x: number; z: number }[] = [];
   const pick = (b: Bot) => {
     let best = { x: b.dropX, z: b.dropZ }, far = -1;
-    for (let k = 0; k < 12; k++) {
+    for (let k = 0; k < 60; k++) {
       const c = k === 0 && !line ? best : line ? strip(line, rand) : { x: (rand() - 0.5) * 660, z: (rand() - 0.5) * 660 };
       let d = Infinity; for (const o of taken) d = Math.min(d, Math.hypot(o.x - c.x, o.z - c.z));
       if (d > far) { far = d; best = c; }
@@ -435,8 +435,9 @@ export function botInput(b: Bot, sim: Sim): Input {
           // they're close; a person: a fair chance from the start (but never everyone at once, above)
           // like a player: an enemy in sight is a fight when we carry a gun (bots and people alike); far ones less
           // often, and with nothing to shoot with we keep out of it unless they start it
-          // a fight at arm's length (3 m) is always on; a longer one warms up with the match (looting first, then the hunt), as in a real game
-          const warm = clamp((t - b.landT - 45) / 300, 0, 1), dq = near[i].d, chance = !armedSelf ? (near[i].d < 8 ? (bot ? 0 : 0.9) : 0.05) : dq < 3 ? 1 : 0.04 + 0.96 * warm * warm; // (with only the pickaxe: a person close by is a fight; other bots rarely, or every landing is a brawl)
+          // armed and an enemy in sight: shoot (a bot that walks past someone without firing reads as broken). With only the
+          // pickaxe: a person close by is a fight, other bots are left alone, or every landing is a brawl
+          const chance = !armedSelf ? (near[i].d < 8 ? (bot ? 0 : 0.9) : 0.05) : 1;
           if (R() >= chance) { b.peace.set(q.id, t + 20); near.splice(i, 1); continue; }
           b.peace.set(q.id, -1);
         }
@@ -899,7 +900,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   else if (empty && self.reloadT === 0) inp.reload = true;
   if (b.reaction <= 0) {
     // a person's aim is off by a little most of the time and by a lot now and then, worse far away and on a moving target
-    b.aimErr = (R() - 0.5) * (0.05 + (1 - b.skill) * 0.14) * (0.7 + Math.min(1.5, d / 40) + Math.hypot(tgt.vx, tgt.vz) * 0.05) * (R() < 0.18 ? 2.8 : 1.8);
+    b.aimErr = (R() - 0.5) * (0.05 + (1 - b.skill) * 0.14) * (0.7 + Math.min(1.5, d / 40) + Math.hypot(tgt.vx, tgt.vz) * 0.05) * (R() < 0.2 ? 3.2 : 2.4);
     b.reaction = 0.3 + R() * 0.4; if (R() < 0.06) b.strafe *= -1;
     if (b.flank.until < t && d > 14 && R() < 0.12 + 0.35 * b.rush) b.flank = { side: R() < 0.5 ? -1 : 1, until: t + 2.5 + R() * 3 }; // go round them
   }
@@ -923,7 +924,7 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
     const ux = (tgt.x - self.x) / (d || 1), uz = (tgt.z - self.z) / (d || 1), along = (q.x - self.x) * ux + (q.z - self.z) * uz;
     if (along > 0 && along < d && Math.abs((q.x - self.x) * uz - (q.z - self.z) * ux) < 1.1) { mate = true; break; }
   }
-  const ready = t - b.acqT > 0.15 + (1 - b.skill) * 0.35;
+  const ready = t - b.acqT > 0.25 + (1 - b.skill) * 0.45;
   if (def && !inp.slot && !mate && ready && vals[self.cur] > 0 && self.mags[self.cur] > 0) {
     // automatics fire in bursts with a breath between; the rest are tapped
     if (def.spinUp) inp.fire = true;
@@ -938,11 +939,14 @@ function fight(b: Bot, sim: Sim, self: PlayerState, tgt: PlayerState, d: number,
   // move: strafe, close in or back off to the gun's range, flip when a wall stops the strafe; the storm comes first
   const pref = !def ? 20 : def.melee ? 1.5 : push ? (def.proj ? 14 : 4) : def.pellets > 1 ? 6 : def.zoom >= 2.4 ? 55 : def.proj ? 30 : def.range < 70 ? 14 : 24;
   const want = pref * (1 - 0.5 * b.rush); // those who play forward close in
+  // a big fight: not straight into the middle of it (hold the angle, strafe; only the boldest charge)
+  let crowd = 0;
+  for (const q of sim.players.values()) if (q.alive && q.team !== self.team && !q.gliding && Math.hypot(q.x - self.x, q.z - self.z) < 25) crowd++;
   const ux = (tgt.x - self.x) / (d || 1), uz = (tgt.z - self.z) / (d || 1);
   let mx = -uz * b.strafe, mz = ux * b.strafe;
   if (still) { mx = 0; mz = 0; }
   else if (safe) { const s = steer(b, sim, self, safe.x, safe.z, 0); const l = Math.hypot(s.x, s.z) || 1; mx = (s.x / l) * 2 + mx * 0.3; mz = (s.z / l) * 2 + mz * 0.3; if (s.hop) hop(b, self, inp, t); }
-  else if (d > want + (push ? 2 : 12 - 8 * b.rush) || mate) {
+  else if ((d > want + (push ? 2 : 12 - 8 * b.rush) && !(crowd >= 3 && b.rush < 0.8 && !push)) || mate) {
     // round the side when they hold a line, straight at them otherwise
     let gx = tgt.x, gz = tgt.z;
     if (b.flank.until > t && d > 12) { const a = Math.atan2(self.z - tgt.z, self.x - tgt.x) + b.flank.side * 0.9; gx = tgt.x + Math.cos(a) * d * 0.8; gz = tgt.z + Math.sin(a) * d * 0.8; }
