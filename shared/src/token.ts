@@ -2,7 +2,7 @@
 // the lobby shows it with buy links, the server checks holders' balances against it (TOKEN_MINT in
 // the server's environment overrides it), and the demo build shows it too.
 export const TOKEN = {
-  mint: '',             // the CA, e.g. 'So1aNa...pump'
+  mint: 'Fc89CovCoBCSgqnXGxyEPZpx5Tq8L3Kx6yChJgGLpump', // the CA
   symbol: 'KOTH',
   holdMinUsd: 25,       // hold at least this much of the token all hour to qualify for the hourly prize
   holdTokens: 0,        // optional cap in tokens (whichever is less); 0 = dollars only

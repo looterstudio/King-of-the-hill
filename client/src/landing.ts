@@ -4,7 +4,7 @@
 // brings it back. The numbers on it come from the game's own rules (shared/src), nothing else.
 import './landing.css';
 import { MODES, POINTS, ROOM_MAX, topPlaces, type Mode } from '../../shared/src/constants.ts';
-import { TOKEN } from '../../shared/src/token.ts';
+import { TOKEN, buyLinks } from '../../shared/src/token.ts';
 import { PotJar } from './potjar.ts';
 
 const VIDEO = { mp4: 'media/gameplay.mp4', poster: 'media/gameplay.jpg' };
@@ -110,6 +110,7 @@ function html() {
         <div class="lp-pt"><b><small>+</small>${POINTS.kill}</b><span>every kill</span></div>
       </div>
       <div class="lp-who"><b>Who plays for it:</b> holders of $${TOKEN.symbol} with a connected Solana wallet, holding at least $${TOKEN.holdMinUsd} through the round. Guests play free, just not for the pot.
+        ${TOKEN.mint ? `<span class="lp-ca"><b>CA</b> <code>${TOKEN.mint}</code> <button type="button" data-copy-ca>copy</button> <a href="${buyLinks(TOKEN.mint).pump}" target="_blank" rel="noopener">pump.fun</a> <a href="${buyLinks(TOKEN.mint).dexscreener}" target="_blank" rel="noopener">chart</a></span>` : ''}
         <span class="lp-wallets">Phantom, Solflare or Backpack. Signing in is free, no transaction. Duos win ${POINTS.win.duo} each, squads ${POINTS.win.squad} each.</span></div>
     </div>
   </section>
@@ -178,6 +179,7 @@ export function initLanding() {
     if (play) { loadFilm(); video.play().catch(() => {}); } else video.pause();
     filmBtn.textContent = play ? 'Pause' : 'Play';
   };
+  root.querySelector<HTMLButtonElement>('[data-copy-ca]')?.addEventListener('click', (e) => { const b = e.currentTarget as HTMLButtonElement; void navigator.clipboard?.writeText(TOKEN.mint).then(() => { b.textContent = 'copied ✓'; setTimeout(() => { b.textContent = 'copy'; }, 1500); }); });
   filmBtn.onclick = () => { userPaused = !video.paused; setFilm(!userPaused); };
   try {
     new IntersectionObserver((es) => { for (const e of es) if (open) setFilm(e.isIntersecting && !userPaused); }, { rootMargin: '200px 0px' }).observe(video);
